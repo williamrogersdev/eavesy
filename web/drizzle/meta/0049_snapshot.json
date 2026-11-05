@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "b3fc5f6e-993d-4a81-b5cd-c7aeed6ec0d5",
+  "id": "9290f1f0-7d7c-4842-b6d9-d0d1adea9c46",
   "prevId": "fbb0162f-4c37-45eb-a9cb-5bb43eccc331",
   "tables": {
     "activity_log": {
@@ -636,6 +636,20 @@
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
+        },
+        "scopes": {
+          "name": "scopes",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "calendars_json": {
+          "name": "calendars_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -739,6 +753,20 @@
           "notNull": true,
           "autoincrement": false,
           "default": "'[]'"
+        },
+        "description": {
+          "name": "description",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "calendar_id": {
+          "name": "calendar_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "auto_record": {
           "name": "auto_record",
@@ -1671,13 +1699,6 @@
           "notNull": true,
           "autoincrement": false,
           "default": 0
-        },
-        "note": {
-          "name": "note",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         },
         "sent_at": {
           "name": "sent_at",
@@ -4436,66 +4457,6 @@
           "autoincrement": false,
           "default": false
         },
-        "email_recaps_set_at": {
-          "name": "email_recaps_set_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "email_recaps_off_reason": {
-          "name": "email_recaps_off_reason",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "email_recaps_auto_enabled_at": {
-          "name": "email_recaps_auto_enabled_at",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "email_recaps_notice_pending": {
-          "name": "email_recaps_notice_pending",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
-        "email_recaps_off_token": {
-          "name": "email_recaps_off_token",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "share_notes_offer": {
-          "name": "share_notes_offer",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": true
-        },
-        "share_notes_scope": {
-          "name": "share_notes_scope",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "'everyone'"
-        },
-        "share_notes_auto": {
-          "name": "share_notes_auto",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": false
-        },
         "is_anonymous": {
           "name": "is_anonymous",
           "type": "integer",
@@ -4566,13 +4527,6 @@
           "name": "users_anonymous_token_uq",
           "columns": [
             "anonymous_session_token"
-          ],
-          "isUnique": true
-        },
-        "users_recaps_off_token_uq": {
-          "name": "users_recaps_off_token_uq",
-          "columns": [
-            "email_recaps_off_token"
           ],
           "isUnique": true
         },

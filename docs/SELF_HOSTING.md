@@ -105,6 +105,10 @@ bunx wrangler secret put OPS_METRICS_TOKEN     # random string, protects /api/op
 bunx wrangler secret put BYO_KEY_SECRET        # random 32+ chars; encrypts users' own provider keys
 bunx wrangler secret put GOOGLE_CLIENT_ID      # optional: Settings → Connections → Google Calendar
 bunx wrangler secret put GOOGLE_CLIENT_SECRET
+# Optional: let people pick which of their Google calendars to sync (not just the
+# primary one). First add the `calendar.calendarlist.readonly` scope to your OAuth
+# consent screen in Google Cloud, then:
+bunx wrangler secret put GOOGLE_CALENDAR_LIST  # value: on
 ```
 
 For Google Calendar, create an OAuth client (type "Web application") in Google

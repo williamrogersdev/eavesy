@@ -46,6 +46,7 @@ export const Route = createFileRoute('/api/connections/google/callback')({
             provider: 'google',
             accountEmail: grant.email,
             refreshTokenEncrypted: sealed,
+            scopes: grant.scopes.join(' '),
           });
           // Linked from here on: a failed first sync is retried when Settings next loads.
           await calendarRepo

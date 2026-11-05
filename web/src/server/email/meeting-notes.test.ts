@@ -93,16 +93,16 @@ async function run(env: Parameters<typeof queue>[1], body: ProcessingMessage) {
 }
 
 describe('default-on recaps migration', () => {
-  /** Applies every migration before 0049, inserts accounts, then applies 0049 and the rest. */
+  /** Applies every migration before 0050, inserts accounts, then applies 0050 and the rest. */
   function migrate(seed: (db: Database) => void) {
     const db = new Database(':memory:');
     const files = readdirSync(MIGRATIONS).filter((f) => f.endsWith('.sql')).sort();
     const apply = (file: string) => {
       for (const chunk of readFileSync(join(MIGRATIONS, file), 'utf8').split('--> statement-breakpoint')) if (chunk.trim()) db.exec(chunk);
     };
-    for (const file of files.filter((f) => f < '0049')) apply(file);
+    for (const file of files.filter((f) => f < '0050')) apply(file);
     seed(db);
-    for (const file of files.filter((f) => f >= '0049')) apply(file);
+    for (const file of files.filter((f) => f >= '0050')) apply(file);
     return db.query('SELECT id, email_recaps, email_recaps_off_reason, email_recaps_notice_pending, email_recaps_auto_enabled_at FROM users ORDER BY id').all() as {
       id: string; email_recaps: number; email_recaps_off_reason: string | null; email_recaps_notice_pending: number; email_recaps_auto_enabled_at: number | null;
     }[];

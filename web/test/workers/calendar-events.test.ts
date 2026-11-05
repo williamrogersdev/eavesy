@@ -285,7 +285,7 @@ describe('PATCH /api/calendar-events/$id', () => {
       to: now + 24 * 60 * MIN,
       complete: false,
       now,
-      events: [{ providerEventId: 'g_evt_next', title: 'Standup (moved)', startsAt: now + 90 * MIN, endsAt: now + 100 * MIN, meetingUrl: 'https://meet.google.com/abc-defg-hij', platform: 'meet', participants: [] }],
+      events: [{ providerEventId: 'g_evt_next', title: 'Standup (moved)', startsAt: now + 90 * MIN, endsAt: now + 100 * MIN, meetingUrl: 'https://meet.google.com/abc-defg-hij', platform: 'meet', participants: [], description: null, calendarId: 'primary' }],
     });
     const synced = await row<{ title: string; record_choice: string | null }>('SELECT title, record_choice FROM calendar_events WHERE id = ?', 'evt_next');
     expect(synced).toEqual({ title: 'Standup (moved)', record_choice: 'skip' });

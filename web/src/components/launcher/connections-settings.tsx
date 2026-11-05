@@ -2,13 +2,15 @@
 
 import { Asterisk, Check, ChevronDown, ChevronUp, Copy, MessageCircle, Plug, SquareTerminal, Terminal, type LucideIcon } from 'lucide-react';
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Button, Card, Menu, Segmented } from '@/components/launcher/ui';
+import { Button, Card, Menu, Segmented, Switch } from '@/components/launcher/ui';
 import {
   connectGoogle,
   disconnectCalendar,
   getCalendarStatus,
   getUpcomingMeetings,
   NOT_REVOKED,
+  setSyncedCalendars,
+  type CalendarChoice,
   type CalendarStatus,
   type UpcomingMeeting,
 } from '@/lib/api/calendar';
@@ -150,15 +152,49 @@ function ConnectedMenu({ label, busy, items }: { label: string; busy: boolean; i
   );
 }
 
-function syncedLine(upcoming: number): string {
-  if (upcoming === 0) return 'Calendar · no meetings in the next two weeks';
-  return `Calendar · ${upcoming} ${upcoming === 1 ? 'meeting' : 'meetings'} in the next two weeks`;
+function syncedLine(upcoming: number, calendars: CalendarChoice[] | null = null): string {
+  const synced = calendars?.filter((c) => c.selected).length ?? 1;
+  const what = synced > 1 ? `${synced} calendars` : 'Calendar';
+  if (upcoming === 0) return `${what} · no meetings in the next two weeks`;
+  return `${what} · ${upcoming} ${upcoming === 1 ? 'meeting' : 'meetings'} in the next two weeks`;
 }
 
 const WAIT_POLL_MS = 3000;
 const WAIT_LIMIT_MS = 5 * 60 * 1000;
 /** Longer than the app's own 10s limit on asking Claude Code. */
 const ASK_LIMIT_MS = 20_000;
+
+/**
+ * Which of one account's calendars Eavesy reads. The primary one is always on;
+ * a change syncs the account again, so its meetings come or go within seconds.
+ */
+function CalendarPicker({ connectionId, calendars, onSaved }: { connectionId: string; calendars: CalendarChoice[]; onSaved: (next: CalendarChoice[]) => void }) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const toggle = (calendar: CalendarChoice, selected: boolean) => {
+    setBusy(calendar.id);
+    setError(null);
+    void setSyncedCalendars(connectionId, [{ id: calendar.id, selected }])
+      .then(onSaved)
+      .catch((e: unknown) => setError(errMsg(e, 'Couldn’t save that. Try again.')))
+      .finally(() => setBusy(null));
+  };
+  return (
+    <div className="ev-conn-calendars">
+      {calendars.map((calendar) => (
+        <Switch
+          key={calendar.id}
+          checked={calendar.selected}
+          onCheckedChange={(selected) => toggle(calendar, selected)}
+          disabled={calendar.primary || busy !== null}
+          label={calendar.name}
+          hint={calendar.primary ? 'Your main calendar, always synced' : undefined}
+        />
+      ))}
+      {error && <p role="alert" className="ev-set-hint">{error}</p>}
+    </div>
+  );
+}
 
 /** Google Calendar: connect in one click, then the account, what's used, and Disconnect. */
 function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) {
@@ -168,6 +204,11 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
   const [busy, setBusy] = useState<string | null>(null);
   /** The connection Google couldn't be told about, so Disconnect kept it. */
   const [stuck, setStuck] = useState<string | null>(null);
+  /** The connection whose calendar list is open. */
+  const [picking, setPicking] = useState<string | null>(null);
+  /** The look-again after a calendar choice, so a newer one (or leaving) cancels it. */
+  const recheck = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (recheck.current) clearTimeout(recheck.current); }, []);
   const load = useCallback(() => {
     void getCalendarStatus()
       .then((next) => { setStatus(next); setError(null); })
@@ -221,8 +262,8 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
   return (
     <>
       {google.map((connection) => (
+        <div key={connection.id}>
         <AppRow
-          key={connection.id}
           mark={<GoogleMark />}
           name="Google Calendar"
           detail={
@@ -230,7 +271,7 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
               <span className="block truncate">{connection.accountEmail}</span>
               {connection.needsReconnect
                 ? <span className="ev-conn-warn">Google stopped sharing this calendar. Connect it again.</span>
-                : syncedLine(connection.upcoming)}
+                : syncedLine(connection.upcoming, connection.calendars)}
             </>
           }
           action={
@@ -241,13 +282,30 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
                   label={`Google Calendar, ${connection.accountEmail}: connected`}
                   busy={busy === connection.id}
                   items={[
+                    ...(connection.calendars && connection.calendars.length > 1
+                      ? [{ label: picking === connection.id ? 'Hide calendars' : 'Choose calendars', onSelect: () => setPicking(picking === connection.id ? null : connection.id) }]
+                      : []),
+                    ...(connection.canAddCalendars ? [{ label: 'Sync my other calendars too', onSelect: connect }] : []),
                     { label: 'Add another Google account', onSelect: connect },
-                    { label: 'Disconnect', tone: 'warn', onSelect: () => disconnect(connection.id) },
+                    { label: 'Disconnect', tone: 'warn' as const, onSelect: () => disconnect(connection.id) },
                   ]}
                 />
               )
           }
         />
+        {picking === connection.id && connection.calendars && (
+          <CalendarPicker
+            connectionId={connection.id}
+            calendars={connection.calendars}
+            onSaved={(next) => {
+              setStatus((current) => current && { ...current, connections: current.connections.map((c) => (c.id === connection.id ? { ...c, calendars: next } : c)) });
+              // The sync runs after the save; look again shortly for the new meeting count.
+              if (recheck.current) clearTimeout(recheck.current);
+              recheck.current = setTimeout(load, 4_000);
+            }}
+          />
+        )}
+        </div>
       ))}
       {(google.length === 0 || waiting !== null) && (
         <AppRow

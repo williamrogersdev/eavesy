@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, gte, inArray, isNull, lt, lte, or } from 'drizzle-orm';
+import { and, asc, eq, gt, gte, inArray, isNull, lt, lte, ne, or, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { decode, encode } from '../codec';
 import { pid } from '../ids';
@@ -7,6 +7,97 @@ import { UNTITLED_EVENT } from '@/lib/calendar/match';
 import type { CalendarEventInput } from '@/server/google-calendar';
 
 export type CalendarConnection = typeof calendarConnections.$inferSelect;
+
+/** One of a connected account's calendars, and whether Eavesy syncs it. */
+export type StoredCalendar = { id: string; name: string; primary: boolean; selected: boolean };
+
+export function storedCalendars(connection: Pick<CalendarConnection, 'calendarsJson'>): StoredCalendar[] {
+  return decode<StoredCalendar[]>(connection.calendarsJson, []);
+}
+
+/** Connections whose last sync attempt is older than `staleMs` (or never ran), longest-waiting first, across all accounts. Broken grants are left for the person to reconnect. */
+export async function listDueConnections(db: AppDb, now: number, staleMs: number, limit: number): Promise<CalendarConnection[]> {
+  return db
+    .select()
+    .from(calendarConnections)
+    .where(
+      and(
+        or(isNull(calendarConnections.lastSyncStatus), ne(calendarConnections.lastSyncStatus, 'reconnect')),
+        or(isNull(calendarConnections.lastAttemptAt), lt(calendarConnections.lastAttemptAt, now - staleMs)),
+      ),
+    )
+    .orderBy(sql`coalesce(${calendarConnections.lastAttemptAt}, 0)`)
+    .limit(limit);
+}
+
+/** `calendars_json` still holding `previous` (null-safe): the guard that keeps a write from undoing one made since it was read. */
+function unchangedSince(previous: string | null) {
+  return previous === null ? isNull(calendarConnections.calendarsJson) : eq(calendarConnections.calendarsJson, previous);
+}
+
+/**
+ * Keeps the calendar list read from Google, with each calendar's sync choice,
+ * but only if nobody changed the list since `previous` was read. False when
+ * someone did: the caller reads it again rather than undoing their tick.
+ */
+export async function saveCalendarList(db: AppDb, connectionId: string, calendars: StoredCalendar[], previous: string | null): Promise<boolean> {
+  const saved = await db
+    .update(calendarConnections)
+    .set({ calendarsJson: encode(calendars) })
+    .where(and(eq(calendarConnections.id, connectionId), unchangedSince(previous)))
+    .returning({ id: calendarConnections.id });
+  return saved.length > 0;
+}
+
+/** Longer than any one sync runs (the background budget is 4 minutes): a claim older than this isn't live. */
+const IN_FLIGHT_MS = 5 * 60 * 1000;
+
+/**
+ * Applies the person's ticks to a connection's calendars (ids it doesn't
+ * know are ignored; the primary calendar can't be unticked) and marks it due,
+ * so the next sync adds or drops those calendars' events. A sync under way
+ * keeps its claim and picks the change up itself. Each try writes only
+ * if the list is unchanged since it was read, so two saves at once (the Mac
+ * and a browser) both land. `not_found` when the connection isn't theirs;
+ * `not_listed` when its calendars haven't been read from Google yet;
+ * `conflict` when the list kept changing under it.
+ */
+export async function setSelectedCalendars(
+  db: AppDb,
+  userId: string,
+  connectionId: string,
+  choices: { id: string; selected: boolean }[],
+  now = Date.now(),
+): Promise<'ok' | 'not_found' | 'not_listed' | 'conflict'> {
+  const wanted = new Map(choices.map((choice) => [choice.id, choice.selected]));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const connection = await getConnection(db, userId, connectionId);
+    if (!connection) return 'not_found';
+    if (!connection.calendarsJson) return 'not_listed';
+    const calendars = storedCalendars(connection).map((calendar) => ({
+      ...calendar,
+      selected: calendar.primary || (wanted.get(calendar.id) ?? calendar.selected),
+    }));
+    const saved = await db
+      .update(calendarConnections)
+      .set({
+        calendarsJson: encode(calendars),
+        // Due again now, unless a sync is under way: that one reads the new
+        // choice before it finishes, and a second sync beside it would race it.
+        // A claim can't be told from a failed try (both stamp only the
+        // attempt), so after a failure the tick wins and the sync runs now.
+        lastAttemptAt: sql`CASE WHEN ${calendarConnections.lastAttemptAt} IS NULL
+          OR ${calendarConnections.lastAttemptAt} = ${calendarConnections.lastSyncAt}
+          OR coalesce(${calendarConnections.lastSyncStatus}, '') <> 'ok'
+          OR ${calendarConnections.lastAttemptAt} < ${now - IN_FLIGHT_MS} THEN NULL
+          ELSE ${calendarConnections.lastAttemptAt} END`,
+      })
+      .where(and(eq(calendarConnections.id, connectionId), eq(calendarConnections.userId, userId), unchangedSince(connection.calendarsJson)))
+      .returning({ id: calendarConnections.id });
+    if (saved.length) return 'ok';
+  }
+  return 'conflict';
+}
 
 export async function listConnections(db: AppDb, userId: string): Promise<CalendarConnection[]> {
   return db.select().from(calendarConnections).where(eq(calendarConnections.userId, userId));
@@ -24,7 +115,7 @@ export async function getConnection(db: AppDb, userId: string, id: string): Prom
 /** One row per account: connecting the same Google account again replaces its token. */
 export async function saveConnection(
   db: AppDb,
-  args: { userId: string; provider: 'google' | 'outlook'; accountEmail: string; refreshTokenEncrypted: string },
+  args: { userId: string; provider: 'google' | 'outlook'; accountEmail: string; refreshTokenEncrypted: string; scopes?: string | null },
 ): Promise<string> {
   const existing = (
     await db
@@ -42,12 +133,12 @@ export async function saveConnection(
   if (existing) {
     await db
       .update(calendarConnections)
-      .set({ refreshTokenEncrypted: args.refreshTokenEncrypted, lastAttemptAt: null, lastSyncStatus: null })
+      .set({ refreshTokenEncrypted: args.refreshTokenEncrypted, scopes: args.scopes ?? null, lastAttemptAt: null, lastSyncStatus: null })
       .where(eq(calendarConnections.id, existing.id));
     return existing.id;
   }
   const id = pid('cal');
-  await db.insert(calendarConnections).values({ id, ...args, lastSyncAt: null, lastAttemptAt: null, lastSyncStatus: null });
+  await db.insert(calendarConnections).values({ id, ...args, scopes: args.scopes ?? null, lastSyncAt: null, lastAttemptAt: null, lastSyncStatus: null });
   return id;
 }
 
@@ -67,6 +158,14 @@ export async function claimAttempt(db: AppDb, id: string, now: number, staleMs: 
     )
     .returning({ id: calendarConnections.id });
   return claimed.length > 0;
+}
+
+/** Makes the connection due again by undoing the attempt stamped at `claimedAt` (a claim that never got to sync, or a sync that read an outdated choice). */
+export async function releaseAttempt(db: AppDb, id: string, claimedAt: number): Promise<void> {
+  await db
+    .update(calendarConnections)
+    .set({ lastAttemptAt: null })
+    .where(and(eq(calendarConnections.id, id), eq(calendarConnections.lastAttemptAt, claimedAt)));
 }
 
 /** Records how a sync attempt went, so a broken grant shows Reconnect without asking Google again. */
@@ -115,6 +214,8 @@ export async function replaceEvents(
       meetingUrl: event.meetingUrl,
       platform: event.platform,
       participantsJson: encode(event.participants),
+      description: event.description,
+      calendarId: event.calendarId,
     };
     return db
       .insert(calendarEvents)
@@ -151,6 +252,7 @@ export type StoredEvent = {
   meetingUrl: string | null;
   platform: string | null;
   participants: { email: string; name: string | null }[];
+  description: string | null;
   recordChoice: 'record' | 'skip' | null;
   recordedMeetingId: string | null;
 };
@@ -186,6 +288,7 @@ export async function eventsAround(db: AppDb, userId: string, from: number, to: 
     meetingUrl: row.meetingUrl,
     platform: row.platform,
     participants: decode<{ email: string; name: string | null }[]>(row.participantsJson, []),
+    description: row.description,
     recordChoice: row.recordChoice,
     recordedMeetingId: row.recordedMeetingId,
   })), own);

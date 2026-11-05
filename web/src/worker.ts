@@ -2,6 +2,8 @@ import { withErrorReporting, type ObservabilityEnv } from '@/server/observabilit
 import { withRequestTiming } from '@/server/perf';
 import { hubNamespace } from '@/server/drops-hub';
 import handler from '@tanstack/react-start/server-entry';
+import { getDb } from '@/db/client';
+import { BACKGROUND_SYNC_CRON, syncAllDue } from '@/server/calendar-sync';
 
 export { DropsHub } from '@/server/drops-hub';
 
@@ -37,6 +39,11 @@ const worker = {
       return framed;
     }
     return response;
+  },
+
+  /** Every five minutes: refresh connected calendars, so upcoming meetings are known without the app open. */
+  async scheduled(controller: ScheduledController): Promise<void> {
+    if (controller.cron === BACKGROUND_SYNC_CRON) await syncAllDue(getDb());
   },
 };
 
