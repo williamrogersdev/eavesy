@@ -111,6 +111,15 @@ pub struct Event {
     pub meeting_url: Option<String>,
     #[serde(default)]
     pub record_choice: Option<String>,
+    #[serde(default)]
+    pub attendees: Vec<Attendee>,
+}
+
+#[derive(Clone, Debug, Deserialize, serde::Serialize, PartialEq)]
+pub struct Attendee {
+    pub email: String,
+    #[serde(default)]
+    pub name: Option<String>,
 }
 
 /// The meeting under way at `now` (or starting within EARLY_JOIN_MS), nearest start first.
@@ -219,6 +228,18 @@ struct Watch {
 }
 
 static WATCH: Mutex<Option<Watch>> = Mutex::new(None);
+/// Set when something changed a meeting (its record choice): fetch the calendar on the next tick.
+static CALENDAR_STALE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The calendar's meetings as last fetched.
+pub fn events() -> Vec<Event> {
+    with_watch(|watch| watch.events.clone())
+}
+
+/// Fetches the calendar again on the next tick rather than within the minute.
+pub fn calendar_changed() {
+    CALENDAR_STALE.store(true, std::sync::atomic::Ordering::SeqCst);
+}
 
 fn with_watch<T>(f: impl FnOnce(&mut Watch) -> T) -> T {
     let mut guard = WATCH.lock().unwrap_or_else(|error| error.into_inner());
@@ -237,13 +258,15 @@ pub fn start(app: &AppHandle) {
     tauri::async_runtime::spawn(async move {
         let mut calendar_at: Option<Instant> = None;
         loop {
-            if calendar_at.is_none_or(|at| at.elapsed() >= CALENDAR_EVERY) {
+            let stale = CALENDAR_STALE.swap(false, std::sync::atomic::Ordering::SeqCst);
+            if stale || calendar_at.is_none_or(|at| at.elapsed() >= CALENDAR_EVERY) {
                 calendar_at = Some(Instant::now());
                 if let Some(events) = fetch_events(&ticker).await {
                     with_watch(|watch| watch.events = events);
                 }
             }
             tick(&ticker);
+            crate::meeting_bar::refresh(&ticker);
             tokio::time::sleep(TICK).await;
         }
     });
@@ -300,7 +323,8 @@ async fn fetch_events(app: &AppHandle) -> Option<Vec<Event>> {
         #[serde(default)]
         upcoming: Vec<Event>,
     }
-    let credential = settings::device_credential(app)?;
+    // Signed out: no calendar, so nothing to announce.
+    let Some(credential) = settings::device_credential(app) else { return Some(Vec::new()) };
     let client = crate::sync::http_client().ok()?;
     let response = client
         .get(crate::base_url::join(&credential.base, "/api/calendar-events"))
@@ -507,6 +531,7 @@ mod tests {
             ends_at: T + end_min * 60_000,
             meeting_url: Some("https://meet.google.com/abc-defg-hij".into()),
             record_choice: choice.map(String::from),
+            attendees: Vec::new(),
         }
     }
 
