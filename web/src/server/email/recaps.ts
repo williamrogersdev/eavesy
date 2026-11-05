@@ -158,13 +158,25 @@ export function toBase64(text: string) {
   return btoa(binary);
 }
 
-/** Whether this address has bounced for good or complained before; such addresses get nothing more. */
-export async function suppressed(db: AppDb, recipient: string) {
-  const rows = await db.select({ status: emailDeliveries.status, detail: emailDeliveries.statusDetail }).from(emailDeliveries)
-    .where(and(eq(emailDeliveries.recipient, recipient), inArray(emailDeliveries.status, ['bounced', 'complained', 'failed'])));
-  return rows.some((row) => row.status === 'complained'
+/**
+ * Which of these addresses get nothing more: a permanent bounce or provider
+ * suppression is a fact about the address, so it counts whoever sent; a spam
+ * complaint is about one sender, so with `fromUserId` it counts only when it
+ * was about that account's email.
+ */
+export async function suppressedAmong(db: AppDb, recipients: string[], fromUserId?: string) {
+  if (!recipients.length) return new Set<string>();
+  const rows = await db.select({ recipient: emailDeliveries.recipient, userId: emailDeliveries.userId, status: emailDeliveries.status, detail: emailDeliveries.statusDetail })
+    .from(emailDeliveries)
+    .where(and(inArray(emailDeliveries.recipient, recipients), inArray(emailDeliveries.status, ['bounced', 'complained', 'failed'])));
+  return new Set(rows.filter((row) => (row.status === 'complained' && (!fromUserId || row.userId === fromUserId))
     || (row.status === 'bounced' && row.detail === 'permanent')
-    || (row.status === 'failed' && row.detail === 'provider_suppressed'));
+    || (row.status === 'failed' && row.detail === 'provider_suppressed')).map((row) => row.recipient));
+}
+
+/** Whether this address has bounced for good or complained before; such addresses get nothing more. */
+export async function suppressed(db: AppDb, recipient: string, fromUserId?: string) {
+  return (await suppressedAmong(db, [recipient], fromUserId)).has(recipient);
 }
 
 async function setStatus(db: AppDb, id: string, from: DeliveryStatus, values: Partial<EmailDelivery>) {
@@ -176,9 +188,9 @@ async function setStatus(db: AppDb, id: string, from: DeliveryStatus, values: Pa
 /**
  * Queue job: emails the owner the recap of a completed meeting. Safe to run
  * again: the delivery row is keyed per meeting and recipient, and only a row
- * still `queued` is ever sent (see `deliver`). Answers `recapped` once the
- * owner's recap has been dealt with (sent, tried, or skipped as suppressed),
- * which is when notes may go on to attendees automatically.
+ * still `queued` is ever sent (see `deliver`). Answers `recapped` only once
+ * the provider accepted the owner's recap, which is when notes may go on to
+ * attendees automatically: never while the owner's own copy failed.
  */
 export async function sendRecap(db: AppDb, env: RecapEnv, meetingId: string, now = Date.now()): Promise<'recapped' | 'not_sent'> {
   if (!emailConfigured(env)) return 'not_sent';
@@ -204,11 +216,11 @@ export async function sendRecap(db: AppDb, env: RecapEnv, meetingId: string, now
   const delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.idempotencyKey, idempotencyKey)).limit(1))[0];
   if (!delivery) return 'not_sent';
   // Sent, settled, or attempted without an answer: never send it again.
-  if (delivery.status !== 'queued') return 'recapped';
+  if (delivery.status !== 'queued') return delivery.status === 'sent' || delivery.status === 'delivered' ? 'recapped' : 'not_sent';
 
   if (await suppressed(db, recipient)) {
     await setStatus(db, delivery.id, 'queued', { status: 'failed', statusDetail: 'suppressed_recipient' });
-    return 'recapped';
+    return 'not_sent';
   }
 
   const summary = (await db.select().from(summaries).where(eq(summaries.meetingId, meetingId)).limit(1))[0];
@@ -229,11 +241,11 @@ export async function sendRecap(db: AppDb, env: RecapEnv, meetingId: string, now
   });
 
   const outcome = await deliver(db, env, delivery, { to: recipient, ...rendered, attachments });
-  if (outcome !== 'not_sent' && user.emailRecapsNoticePending) {
-    // Said once is enough, whether or not the provider confirmed it.
+  if (outcome === 'sent' && user.emailRecapsNoticePending) {
+    // Said once is enough. A rejected or unconfirmed send keeps it for the next recap.
     await db.update(users).set({ emailRecapsNoticePending: false }).where(eq(users.id, user.id));
   }
-  return outcome === 'not_sent' ? 'not_sent' : 'recapped';
+  return outcome === 'sent' ? 'recapped' : 'not_sent';
 }
 
 /** The transcript as a text attachment, or a note saying why it isn't attached. */
@@ -265,7 +277,8 @@ export async function recapsOffToken(db: AppDb, user: Pick<User, 'id' | 'emailRe
 export async function turnOffRecapsByToken(db: AppDb, token: string, now = Date.now()) {
   if (!/^[A-Za-z0-9_-]{16,64}$/.test(token)) return false;
   const changed = await db.update(users)
-    .set({ emailRecaps: false, emailRecapsOffReason: 'user', emailRecapsSetAt: now, emailRecapsNoticePending: false, updatedAt: now })
+    // The link works once: a forwarded old recap can't turn them off again later.
+    .set({ emailRecaps: false, emailRecapsOffReason: 'user', emailRecapsSetAt: now, emailRecapsNoticePending: false, emailRecapsOffToken: null, updatedAt: now })
     .where(eq(users.emailRecapsOffToken, token))
     .returning({ id: users.id });
   return changed.length > 0;
@@ -294,7 +307,9 @@ export async function deliver(
     const sent = await sendEmail(env, {
       ...email,
       tags: { [DELIVERY_TAG]: delivery.id, kind: delivery.kind },
-      idempotencyKey: delivery.id,
+      // A later attempt only happens after one that certainly didn't send
+      // (rate limited, rejected, or a resend of failed notes), so it gets its own key.
+      idempotencyKey: delivery.attempts ? `${delivery.id}:${delivery.attempts + 1}` : delivery.id,
     });
     await db.update(emailDeliveries).set({ providerMessageId: sent.id })
       .where(and(eq(emailDeliveries.id, delivery.id), isNull(emailDeliveries.providerMessageId)));

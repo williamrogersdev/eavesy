@@ -20,6 +20,7 @@ const {
   recipientAllowed,
   sendMeetingNotes,
   shareOverview,
+  MAX_NOTE_RECIPIENTS_PER_DAY,
 } = await import('./meeting-notes');
 
 const MIGRATIONS = join(import.meta.dir, '../../../drizzle');
@@ -28,10 +29,12 @@ afterEach(() => { globalThis.fetch = realFetch; });
 
 interface Call { to: string[]; subject: string; html: string; text: string; attachments?: { filename: string }[]; tags: { name: string; value: string }[] }
 
-function mockResend() {
-  const calls: Call[] = [];
+function mockResend(reject: (call: Call) => boolean = () => false) {
+  const calls: (Call & { key: string })[] = [];
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    calls.push(JSON.parse(String(init?.body ?? '{}')) as Call);
+    const call = { ...(JSON.parse(String(init?.body ?? '{}')) as Call), key: new Headers(init?.headers).get('idempotency-key') ?? '' };
+    calls.push(call);
+    if (reject(call)) return Response.json({ name: 'validation_error' }, { status: 422 });
     return Response.json({ id: `re_${calls.length}` });
   }) as typeof fetch;
   return calls;
@@ -321,5 +324,76 @@ describe('sending notes to attendees', () => {
     // A retried recap job doesn't queue anyone twice.
     await autoSendMeetingNotes(on.db, on.env, 'm1');
     expect(on.rows()).toHaveLength(1);
+  });
+});
+
+describe('review fixes', () => {
+  test('a send that certainly failed can be sent again; one that went out cannot', async () => {
+    const t = setup();
+    const calls = mockResend((call) => call.to[0] === 'bea@acme.com' && calls.length === 1);
+    await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com'] });
+    await sendMeetingNotes(t.db, t.env, 'm1');
+    expect(t.rows().map((r) => r.status)).toEqual(['failed']);
+
+    const again = await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com'] });
+    expect(again).toEqual([{ email: 'bea@acme.com', outcome: 'queued' }]);
+    await sendMeetingNotes(t.db, t.env, 'm1');
+    expect(t.rows().map((r) => r.status)).toEqual(['sent']);
+    // The second attempt uses its own provider key, so the provider doesn't drop it as a repeat.
+    expect(calls.map((c) => c.key)).toEqual([String(t.rows()[0].id), `${String(t.rows()[0].id)}:2`]);
+    expect((await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com'] }))[0].outcome).toBe('already_sent');
+  });
+
+  test("another account's spam complaint doesn't block this owner's notes; a permanent bounce does", async () => {
+    const t = setup();
+    t.sqlite.run(`INSERT INTO users (id, email, created_at, updated_at) VALUES ('u2', 'someone@else.com', 1, 1)`);
+    t.sqlite.run(`INSERT INTO email_deliveries (id, user_id, kind, recipient, idempotency_key, provider, status, created_at, updated_at)
+                  VALUES ('c', 'u2', 'meeting_notes', 'bea@acme.com', 'c', 'resend', 'complained', 1, 1),
+                         ('b', 'u2', 'meeting_notes', 'cy@partner.io', 'b', 'resend', 'bounced', 1, 1)`);
+    t.sqlite.run(`UPDATE email_deliveries SET status_detail = 'permanent' WHERE id = 'b'`);
+    const results = await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com', 'cy@partner.io'] });
+    expect(results.map((r) => r.outcome)).toEqual(['queued', 'suppressed']);
+  });
+
+  test("no automatic sending while the owner's own recap failed", async () => {
+    const t = setup({ auto: true });
+    mockResend(() => true);
+    await run(t.env, { kind: 'send-recap', meetingId: 'm1' });
+    expect(t.rows('meeting_recap').map((r) => r.status)).toEqual(['failed']);
+    expect(t.rows()).toHaveLength(0);
+    await run(t.env, { kind: 'send-recap', meetingId: 'm1' });
+    expect(t.rows()).toHaveLength(0);
+  });
+
+  test('the migration notice survives a rejected recap, and the off link works once', async () => {
+    const t = setup();
+    t.sqlite.run(`UPDATE users SET email_recaps_notice_pending = 1 WHERE id = 'u1'`);
+    mockResend(() => true);
+    await sendRecap(t.db, t.env, 'm1');
+    expect((await t.user()).emailRecapsNoticePending).toBe(true);
+    const token = (await t.user()).emailRecapsOffToken!;
+    expect(await turnOffRecapsByToken(t.db, token)).toBe(true);
+    expect(await turnOffRecapsByToken(t.db, token)).toBe(false);
+  });
+
+  test('each account emails at most MAX_NOTE_RECIPIENTS_PER_DAY people a day', async () => {
+    const t = setup();
+    const now = Date.now();
+    for (let i = 0; i < MAX_NOTE_RECIPIENTS_PER_DAY - 1; i++) {
+      t.sqlite.run(`INSERT INTO email_deliveries (id, user_id, kind, recipient, idempotency_key, provider, status, created_at, updated_at)
+                    VALUES (?, 'u1', 'meeting_notes', ?, ?, 'resend', 'sent', ?, ?)`, [`d${i}`, `p${i}@x.com`, `k${i}`, now, now]);
+    }
+    const results = await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com', 'cy@partner.io'] });
+    expect(results.map((r) => r.outcome)).toEqual(['queued', 'daily_limit']);
+  });
+
+  test('queued notes for a meeting that is no longer complete are not sent', async () => {
+    const t = setup();
+    const calls = mockResend();
+    await queueMeetingNotes(t.db, t.env, { user: await t.user(), meeting: await t.meeting(), recipients: ['bea@acme.com'] });
+    t.sqlite.run(`UPDATE meetings SET status = 'processing' WHERE id = 'm1'`);
+    await sendMeetingNotes(t.db, t.env, 'm1');
+    expect(calls).toHaveLength(0);
+    expect(t.rows().map((r) => r.status)).toEqual(['failed']);
   });
 });

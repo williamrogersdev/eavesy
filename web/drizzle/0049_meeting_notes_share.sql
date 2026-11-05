@@ -22,7 +22,7 @@ UPDATE `users` SET `email_recaps_off_reason` = 'user'
 -- recap says so with a link to turn them off. Nothing is deleted.
 UPDATE `users` SET
     `email_recaps` = 1,
-    `email_recaps_auto_enabled_at` = CAST(unixepoch('subsec') * 1000 AS INTEGER),
+    `email_recaps_auto_enabled_at` = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER),
     `email_recaps_notice_pending` = 1
   WHERE `email_recaps` = 0 AND `email_recaps_off_reason` IS NULL
     AND `is_anonymous` = 0 AND `email` IS NOT NULL AND trim(`email`) <> '';

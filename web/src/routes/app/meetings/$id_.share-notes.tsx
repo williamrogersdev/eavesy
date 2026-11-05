@@ -35,7 +35,7 @@ interface Overview {
   attendees: Person[];
 }
 
-type Outcome = 'queued' | 'already_sent' | 'suppressed' | 'not_allowed' | 'invalid' | 'owner';
+type Outcome = 'queued' | 'already_sent' | 'suppressed' | 'not_allowed' | 'invalid' | 'owner' | 'daily_limit';
 const OUTCOME_LABEL: Record<Outcome, string> = {
   queued: 'Sending',
   already_sent: 'Already had it',
@@ -43,7 +43,12 @@ const OUTCOME_LABEL: Record<Outcome, string> = {
   not_allowed: 'Skipped: outside your company’s domain',
   invalid: 'Skipped: not an email address',
   owner: 'Skipped: that’s you',
+  daily_limit: 'Skipped: you’ve reached today’s limit of people to email',
 };
+
+/** A delivery in one of these states has, or may have, reached them: never sent again. */
+const HAS_NOTES = new Set(['queued', 'unknown', 'sent', 'delivered']);
+const hasNotes = (status: string | null) => status !== null && HAS_NOTES.has(status);
 
 const EMAIL = /^[^\s@<>,;"]+@[^\s@<>,;"]+\.[^\s@<>,;"]+$/;
 const input = 'h-9 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-coat';
@@ -79,7 +84,7 @@ function ShareNotesPage() {
       .then((value) => {
         // Everyone who can get it and doesn't have it yet starts ticked.
         setSelected(new Set(value.attendees
-          .filter((p) => p.email && p.allowed && !p.suppressed && !p.status)
+          .filter((p) => p.email && p.allowed && !p.suppressed && !hasNotes(p.status))
           .map((p) => p.email!)));
       })
       .catch((cause: unknown) => setLoadError(cause instanceof Error ? cause.message : 'Could not load this meeting.'));
@@ -112,7 +117,7 @@ function ShareNotesPage() {
     return listed;
   }, [data, typed, added, ownerDomain, allowed]);
 
-  const recipients = rows.filter((r) => r.address && selected.has(r.key) && r.allowed && !r.suppressed && !r.status).map((r) => r.address!);
+  const recipients = rows.filter((r) => r.address && selected.has(r.key) && r.allowed && !r.suppressed && !hasNotes(r.status)).map((r) => r.address!);
 
   const toggle = (key: string, on: boolean) => setSelected((current) => {
     const next = new Set(current);
@@ -211,19 +216,21 @@ function ShareNotesPage() {
       <AppSection title="Who gets it" description={data.attendees.some((a) => a.source === 'calendar') ? 'From the calendar invite.' : data.attendees.length ? 'There was no calendar invite, so these are the speakers you named. Add their addresses.' : 'There was no calendar invite. Add people by email.'}>
         <ul className="flex flex-col divide-y divide-ev-line">
           {rows.map((row) => {
-            const done = Boolean(row.status);
+            const done = hasNotes(row.status);
+            // An earlier send that certainly failed can be tried again.
+            const failedBefore = row.status !== null && !done;
             const blocked = !row.allowed || row.suppressed;
-            const id = `share-${row.key}`;
+            const rowId = `share-${row.key}`;
             return (
               <li key={row.key} className="flex items-center gap-3 py-2.5">
                 <input
-                  id={id}
+                  id={rowId}
                   type="checkbox"
                   checked={!done && !blocked && Boolean(row.address) && selected.has(row.key)}
                   disabled={done || blocked || !row.address}
                   onChange={(e) => toggle(row.key, e.target.checked)}
                 />
-                <label htmlFor={id} className="min-w-0 flex-1 text-sm">
+                <label htmlFor={rowId} className="min-w-0 flex-1 text-sm">
                   <span className="block truncate text-ev-ink">{row.name ?? row.address ?? 'Unnamed speaker'}</span>
                   {row.email && row.name ? <span className="block truncate text-xs text-ev-ink-2">{row.email}</span> : null}
                 </label>
@@ -243,7 +250,8 @@ function ShareNotesPage() {
                 ) : null}
                 <span className="flex shrink-0 flex-wrap justify-end gap-1">
                   {row.address && row.external ? <Tag tone="warn">External</Tag> : null}
-                  {done ? <Tag>Already sent</Tag> : null}
+                  {done ? <Tag>{row.status === 'queued' ? 'Sending' : 'Already sent'}</Tag> : null}
+                  {failedBefore && !blocked ? <Tag>Didn’t go through before</Tag> : null}
                   {!done && row.suppressed ? <Tag>Bounced before</Tag> : null}
                   {!done && !row.suppressed && !row.allowed ? <Tag>Not allowed</Tag> : null}
                 </span>

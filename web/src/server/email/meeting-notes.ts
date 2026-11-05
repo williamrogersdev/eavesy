@@ -5,13 +5,13 @@
  * Each send is an `email_deliveries` row of kind `meeting_notes`, keyed per
  * meeting and recipient, so an address gets a meeting's notes at most once.
  */
-import { and, eq, inArray, isNull, lt, or } from 'drizzle-orm';
+import { and, count, eq, gte, inArray, isNull, lt, or } from 'drizzle-orm';
 import { calendarEvents, emailDeliveries, meetings, summaries, users } from '@/db/schema';
 import { type ActionItem, type Decision, decode } from '@/db/codec';
 import { pid } from '@/db/ids';
 import type { AppDb } from '@/db/client';
 import { parseSpeakerNames } from '@/lib/transcription/two-track';
-import { type RecapEnv, deliver, escapeHtml, recapIdempotencyKey, recipientAddress, suppressed, transcriptFiles } from './recaps';
+import { type RecapEnv, deliver, escapeHtml, recapIdempotencyKey, recipientAddress, suppressedAmong, transcriptFiles } from './recaps';
 import { appUrl, emailConfigured } from './resend';
 
 type User = typeof users.$inferSelect;
@@ -20,6 +20,9 @@ export type ShareScope = User['shareNotesScope'];
 
 /** Most recipients one send may name. */
 export const MAX_NOTE_RECIPIENTS = 50;
+/** Most people one account emails notes to in 24 hours, however many sends that takes. */
+export const MAX_NOTE_RECIPIENTS_PER_DAY = 200;
+const DAY_MS = 24 * 60 * 60 * 1_000;
 export const MAX_NOTE_LENGTH = 2_000;
 /** How long a share link made for emailed notes stays open. */
 export const SHARE_LINK_TTL_MS = 90 * 24 * 60 * 60 * 1_000;
@@ -107,12 +110,18 @@ export async function ensureShareLink(db: AppDb, meeting: Pick<Meeting, 'id' | '
   return row?.slug ?? slug;
 }
 
-export type QueueOutcome = 'queued' | 'already_sent' | 'suppressed' | 'not_allowed' | 'invalid' | 'owner';
+export type QueueOutcome = 'queued' | 'already_sent' | 'suppressed' | 'not_allowed' | 'invalid' | 'owner' | 'daily_limit';
+
+/** Statuses that mean an address has (or may have) this meeting's notes, so it is never sent again. */
+export const HAS_NOTES: readonly EmailDelivery['status'][] = ['queued', 'unknown', 'sent', 'delivered'];
+type EmailDelivery = typeof emailDeliveries.$inferSelect;
 
 /**
  * Records one delivery per allowed recipient and queues the job that sends
- * them. An address that already has this meeting's notes (or its recap) is
- * left alone, so nothing goes out twice.
+ * them. An address that has, or may have, this meeting's notes is left alone,
+ * so nothing goes out twice; one whose earlier send certainly failed (refused
+ * by the provider, blocked by a since-changed setting) can be sent again.
+ * Each account emails at most `MAX_NOTE_RECIPIENTS_PER_DAY` people a day.
  */
 export async function queueMeetingNotes(
   db: AppDb,
@@ -123,8 +132,8 @@ export async function queueMeetingNotes(
   const owner = recipientAddress(args.user.email);
   const note = args.note?.trim().slice(0, MAX_NOTE_LENGTH) || null;
   const results: { email: string; outcome: QueueOutcome }[] = [];
+  const candidates: string[] = [];
   const seen = new Set<string>();
-  let queued = 0;
   for (const raw of args.recipients.slice(0, MAX_NOTE_RECIPIENTS)) {
     const email = recipientAddress(raw);
     if (!email) {
@@ -135,30 +144,63 @@ export async function queueMeetingNotes(
     seen.add(email);
     if (email === owner) results.push({ email, outcome: 'owner' });
     else if (!recipientAllowed(args.user.shareNotesScope, args.user.email, email)) results.push({ email, outcome: 'not_allowed' });
-    else if (await suppressed(db, email)) results.push({ email, outcome: 'suppressed' });
+    else candidates.push(email);
+  }
+
+  const [blocked, existing, [{ today }]] = await Promise.all([
+    suppressedAmong(db, candidates, args.user.id),
+    candidates.length
+      ? db.select().from(emailDeliveries).where(inArray(emailDeliveries.idempotencyKey, candidates.map((e) => recapIdempotencyKey(args.meeting.id, e))))
+      : Promise.resolve([] as EmailDelivery[]),
+    db.select({ today: count() }).from(emailDeliveries).where(and(
+      eq(emailDeliveries.userId, args.user.id),
+      eq(emailDeliveries.kind, 'meeting_notes'),
+      gte(emailDeliveries.updatedAt, now - DAY_MS),
+      inArray(emailDeliveries.status, HAS_NOTES),
+    )),
+  ]);
+  const existingBy = new Map(existing.map((row) => [row.recipient, row]));
+  let budget = MAX_NOTE_RECIPIENTS_PER_DAY - today;
+  let queued = 0;
+  for (const email of candidates) {
+    const before = existingBy.get(email);
+    if (before && HAS_NOTES.includes(before.status)) results.push({ email, outcome: 'already_sent' });
+    else if (blocked.has(email)) results.push({ email, outcome: 'suppressed' });
+    else if (budget <= 0) results.push({ email, outcome: 'daily_limit' });
     else {
-      const inserted = await db.insert(emailDeliveries).values({
-        id: pid('eml', now),
-        userId: args.user.id,
-        meetingId: args.meeting.id,
-        kind: 'meeting_notes',
-        recipient: email,
-        idempotencyKey: recapIdempotencyKey(args.meeting.id, email),
-        provider: 'resend',
-        status: 'queued',
-        note,
-        createdAt: now,
-        updatedAt: now,
-      }).onConflictDoNothing({ target: emailDeliveries.idempotencyKey }).returning({ id: emailDeliveries.id });
-      if (inserted.length) queued++;
-      results.push({ email, outcome: inserted.length ? 'queued' : 'already_sent' });
+      // A certainly-failed earlier send is queued again on the same row (its own provider key per attempt).
+      const changed = before
+        ? await db.update(emailDeliveries)
+          .set({ status: 'queued', statusDetail: 'resend', note, kind: 'meeting_notes', updatedAt: now })
+          .where(and(eq(emailDeliveries.id, before.id), eq(emailDeliveries.status, 'failed'), eq(emailDeliveries.kind, 'meeting_notes')))
+          .returning({ id: emailDeliveries.id })
+        : await db.insert(emailDeliveries).values({
+          id: pid('eml', now),
+          userId: args.user.id,
+          meetingId: args.meeting.id,
+          kind: 'meeting_notes',
+          recipient: email,
+          idempotencyKey: recapIdempotencyKey(args.meeting.id, email),
+          provider: 'resend',
+          status: 'queued',
+          note,
+          createdAt: now,
+          updatedAt: now,
+        }).onConflictDoNothing({ target: emailDeliveries.idempotencyKey }).returning({ id: emailDeliveries.id });
+      if (changed.length) {
+        queued++;
+        budget--;
+      }
+      results.push({ email, outcome: changed.length ? 'queued' : 'already_sent' });
     }
   }
   if (queued) {
     await ensureShareLink(db, args.meeting, now);
     await env.PROCESSING_QUEUE.send({ kind: 'send-meeting-notes', meetingId: args.meeting.id });
   }
-  return results;
+  // In the order the owner listed them.
+  const order = new Map(args.recipients.map((raw, i) => [recipientAddress(raw) ?? raw.slice(0, 254), i] as const).reverse());
+  return results.sort((a, b) => (order.get(a.email) ?? 0) - (order.get(b.email) ?? 0));
 }
 
 /**
@@ -249,7 +291,7 @@ export async function sendMeetingNotes(db: AppDb, env: RecapEnv, meetingId: stri
   if (!pending.length) return;
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
   const user = meeting && (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
-  if (!meeting || meeting.deletedAt || !user || user.isAnonymous) {
+  if (!meeting || meeting.deletedAt || meeting.status !== 'complete' || !user || user.isAnonymous) {
     await db.update(emailDeliveries).set({ status: 'failed', statusDetail: 'meeting_gone', updatedAt: Date.now() })
       .where(and(inArray(emailDeliveries.id, pending.map((d) => d.id)), eq(emailDeliveries.status, 'queued')));
     return;
@@ -259,7 +301,9 @@ export async function sendMeetingNotes(db: AppDb, env: RecapEnv, meetingId: stri
   const { attachments, attachmentNote } = user.emailRecapTranscript
     ? await transcriptFiles(db, meeting)
     : { attachments: [], attachmentNote: null };
+  // Renews the link only when it has already expired, so earlier emails never lose a working link.
   const slug = await ensureShareLink(db, meeting);
+  const blocked = await suppressedAmong(db, pending.map((d) => d.recipient), user.id);
   const ownerName = user.displayName?.trim() || recipientAddress(user.email) || 'Someone';
   const base = {
     ownerName,
@@ -279,7 +323,7 @@ export async function sendMeetingNotes(db: AppDb, env: RecapEnv, meetingId: stri
         .where(and(eq(emailDeliveries.id, delivery.id), eq(emailDeliveries.status, 'queued')));
       continue;
     }
-    if (await suppressed(db, delivery.recipient)) {
+    if (blocked.has(delivery.recipient)) {
       await db.update(emailDeliveries).set({ status: 'failed', statusDetail: 'suppressed_recipient', updatedAt: Date.now() })
         .where(and(eq(emailDeliveries.id, delivery.id), eq(emailDeliveries.status, 'queued')));
       continue;
@@ -298,13 +342,14 @@ export async function shareOverview(db: AppDb, env: RecapEnv, user: User, meetin
     db.select().from(summaries).where(eq(summaries.meetingId, meeting.id)).limit(1).then((rows) => rows[0]),
   ]);
   const statusBy = new Map(sent.map((row) => [row.recipient, row.status]));
-  const rows = await Promise.all(attendees.map(async (a) => ({
+  const blocked = await suppressedAmong(db, [...attendees.flatMap((a) => (a.email ? [a.email] : [])), ...sent.map((row) => row.recipient)], user.id);
+  const rows = attendees.map((a) => ({
     ...a,
     external: a.email ? isExternal(user.email, a.email) : false,
     allowed: a.email ? recipientAllowed(user.shareNotesScope, user.email, a.email) : true,
-    suppressed: a.email ? await suppressed(db, a.email) : false,
+    suppressed: a.email ? blocked.has(a.email) : false,
     status: a.email ? statusBy.get(a.email) ?? null : null,
-  })));
+  }));
   // People added by hand on an earlier send.
   const listed = new Set(attendees.map((a) => a.email));
   const added = sent.filter((row) => !listed.has(row.recipient)).map((row) => ({
@@ -313,7 +358,7 @@ export async function shareOverview(db: AppDb, env: RecapEnv, user: User, meetin
     source: 'added' as const,
     external: isExternal(user.email, row.recipient),
     allowed: recipientAllowed(user.shareNotesScope, user.email, row.recipient),
-    suppressed: false,
+    suppressed: blocked.has(row.recipient),
     status: row.status,
   }));
   return {

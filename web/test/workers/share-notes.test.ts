@@ -150,7 +150,10 @@ describe('Send to everyone', () => {
     expect(open.status).toBe(200);
     expect(await open.json()).toMatchObject({ title: 'Test meeting', tldr: 'Ship Friday.' });
 
-    await testEnv.DB.prepare('UPDATE meetings SET share_expires_at = 1 WHERE id = ?').bind(MEETING).run();
+    await testEnv.DB.prepare('UPDATE meetings SET deleted_at = 1 WHERE id = ?').bind(MEETING).run();
+    expect((await getShare({ request: new Request('https://eavesy.test/x'), params: { slug: meeting!.share_slug } })).status).toBe(404);
+
+    await testEnv.DB.prepare('UPDATE meetings SET deleted_at = NULL, share_expires_at = 1 WHERE id = ?').bind(MEETING).run();
     expect((await getShare({ request: new Request('https://eavesy.test/x'), params: { slug: meeting!.share_slug } })).status).toBe(404);
   });
 });
