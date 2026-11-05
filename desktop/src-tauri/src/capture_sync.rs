@@ -72,6 +72,11 @@ pub(crate) fn nudged() -> bool {
     NUDGED.load(Ordering::SeqCst)
 }
 
+/// Whether the server asked this Mac to slow down (429) and that pause still runs.
+pub(crate) fn paused<R: Runtime>(app: &AppHandle<R>) -> bool {
+    load_state(app).is_ok_and(|state| state.paused_until.is_some_and(|until| now_ms() < until))
+}
+
 /// Clears the request, as a pass is starting.
 pub(crate) fn take_nudge() {
     NUDGED.store(false, Ordering::SeqCst);

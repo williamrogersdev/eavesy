@@ -325,9 +325,10 @@ pub(crate) fn report_recovery_wait<R:Runtime>(app:&AppHandle<R>,error:&str) {
 const HEALTHY_RUN: Duration = Duration::from_secs(10 * 60);
 /// The longest one screenshot and image sync may run in the background.
 const CAPTURE_SYNC_LIMIT: Duration = Duration::from_secs(30 * 60);
-/// The shortest gap between capture passes asked for by `capture_sync::nudge`,
-/// so opening and closing the launcher quickly does not hammer the server.
-const CAPTURE_NUDGE_GAP: Duration = Duration::from_secs(3);
+/// The shortest gap between a capture pass and one asked for by
+/// `capture_sync::nudge`: however often the launcher opens or captures are
+/// saved, nudges add at most one pass per gap.
+const CAPTURE_NUDGE_GAP: Duration = Duration::from_secs(10);
 
 /// Runs the sync loop for the life of the app. A loop that fails or panics
 /// is started again after a pause, so uploads never stop until a relaunch.
@@ -419,9 +420,10 @@ impl CaptureTask {
         rejected
     }
 
-    /// Whether a pass was asked for and may start before `next`.
-    fn nudge_due(&self) -> bool {
-        nudge_due(crate::capture_sync::nudged(), self.failed, self.finished, Instant::now())
+    /// Whether a pass was asked for and may start before `next`: not while
+    /// the server asked this Mac to slow down.
+    fn nudge_due(&self, app: &AppHandle) -> bool {
+        nudge_due(crate::capture_sync::nudged(), self.failed, self.finished, Instant::now()) && !crate::capture_sync::paused(app)
     }
 
     fn start_if_due(&mut self, app: &AppHandle, api: &Api, token: &str) {
@@ -429,7 +431,7 @@ impl CaptureTask {
         if self.running.is_some() {
             return;
         }
-        let nudged = self.nudge_due();
+        let nudged = self.nudge_due(app);
         if !nudged && self.next.as_ref().is_some_and(|(last, at)| last == token && Instant::now() < *at) {
             return;
         }
@@ -437,8 +439,10 @@ impl CaptureTask {
             Ok(root) => root,
             Err(error) => {
                 tracing::warn!("capture sync: {error}");
-                self.next = Some((token.to_string(), Instant::now() + CLOUD_PULL_INTERVAL));
-                // The nudge stays set for the next try, which waits for `next`.
+                // A capture waiting to go up is tried again soon, not a full interval later.
+                let retry = if crate::capture_sync::nudged() { CAPTURE_NUDGE_GAP } else { CLOUD_PULL_INTERVAL };
+                self.next = Some((token.to_string(), Instant::now() + retry));
+                // The nudge stays set for that try, which waits for `next`.
                 self.failed = true;
                 return;
             }
@@ -545,7 +549,7 @@ async fn run_loop(app: AppHandle) -> Result<std::convert::Infallible> {
                 } else {
                     // A note or image just saved, or the launcher just opened,
                     // should not wait for a long meeting upload to finish.
-                    if rejected.is_none() && capture.nudge_due() {
+                    if rejected.is_none() && capture.nudge_due(&app) {
                         capture.start_if_due(&app, &api, &token);
                     }
                     sleep(Duration::from_millis(250)).await;
