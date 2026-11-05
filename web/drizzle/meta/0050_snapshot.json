@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "f650327a-0c66-4d40-9f96-f1dd27300c30",
+  "id": "1fe5d4b3-d981-4f85-b514-27e4129ada52",
   "prevId": "9290f1f0-7d7c-4842-b6d9-d0d1adea9c46",
   "tables": {
     "activity_log": {
@@ -783,6 +783,13 @@
           "notNull": false,
           "autoincrement": false
         },
+        "capture_mode": {
+          "name": "capture_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "recorded_meeting_id": {
           "name": "recorded_meeting_id",
           "type": "text",
@@ -1000,15 +1007,6 @@
           "columns": [
             "user_id",
             "created_at"
-          ],
-          "isUnique": false
-        },
-        "captures_user_kind_updated_idx": {
-          "name": "captures_user_kind_updated_idx",
-          "columns": [
-            "user_id",
-            "kind",
-            "updated_at"
           ],
           "isUnique": false
         },
@@ -2188,6 +2186,20 @@
           "notNull": false,
           "autoincrement": false
         },
+        "calendar_event_id": {
+          "name": "calendar_event_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "bot_name": {
+          "name": "bot_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "provider": {
           "name": "provider",
           "type": "text",
@@ -2325,6 +2337,13 @@
           "name": "meeting_bots_meeting_idx",
           "columns": [
             "meeting_id"
+          ],
+          "isUnique": false
+        },
+        "meeting_bots_calendar_event_idx": {
+          "name": "meeting_bots_calendar_event_idx",
+          "columns": [
+            "calendar_event_id"
           ],
           "isUnique": false
         }
@@ -4465,6 +4484,21 @@
           "notNull": true,
           "autoincrement": false,
           "default": false
+        },
+        "meeting_capture_default": {
+          "name": "meeting_capture_default",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'mac'"
+        },
+        "notetaker_name": {
+          "name": "notetaker_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         },
         "is_anonymous": {
           "name": "is_anonymous",

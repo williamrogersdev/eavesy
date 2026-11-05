@@ -5,6 +5,7 @@ import { pid } from '../ids';
 import { calendarConnections, calendarEvents } from '../schema';
 import { UNTITLED_EVENT } from '@/lib/calendar/match';
 import type { CalendarEventInput } from '@/server/google-calendar';
+import type { CaptureMode } from '@/lib/meetings/capture-plan';
 
 export type CalendarConnection = typeof calendarConnections.$inferSelect;
 
@@ -254,6 +255,7 @@ export type StoredEvent = {
   participants: { email: string; name: string | null }[];
   description: string | null;
   recordChoice: 'record' | 'skip' | null;
+  captureMode: CaptureMode | null;
   recordedMeetingId: string | null;
 };
 
@@ -290,6 +292,7 @@ export async function eventsAround(db: AppDb, userId: string, from: number, to: 
     participants: decode<{ email: string; name: string | null }[]>(row.participantsJson, []),
     description: row.description,
     recordChoice: row.recordChoice,
+    captureMode: row.captureMode,
     recordedMeetingId: row.recordedMeetingId,
   })), own);
 }
@@ -318,7 +321,7 @@ function titleTimeKey(event: StoredEvent): string | null {
 
 /** Which copy stands for the meeting: the recorded one, else one with a record choice, else the first. */
 function rank(event: StoredEvent): number {
-  return event.recordedMeetingId ? 2 : event.recordChoice ? 1 : 0;
+  return event.recordedMeetingId ? 2 : event.captureMode || event.recordChoice ? 1 : 0;
 }
 
 /**
@@ -408,7 +411,9 @@ export function mergeShared(events: StoredEvent[], ownEmails: readonly string[] 
     }
     const linked = kept.meetingUrl ? kept : copies.find((copy) => copy.meetingUrl) ?? kept;
     const recordChoice = kept.recordChoice ?? copies.find((copy) => copy.recordChoice)?.recordChoice ?? null;
-    return { ...kept, meetingUrl: linked.meetingUrl, platform: linked.platform, participants: [...participants.values()], recordChoice };
+    const captureMode = kept.captureMode ?? copies.find((copy) => copy.captureMode)?.captureMode ?? null;
+    const description = kept.description ?? copies.find((copy) => copy.description)?.description ?? null;
+    return { ...kept, meetingUrl: linked.meetingUrl, platform: linked.platform, participants: [...participants.values()], recordChoice, captureMode, description };
   });
 }
 
@@ -424,7 +429,28 @@ export async function markRecorded(db: AppDb, userId: string, eventId: string, m
 export async function setRecordChoice(db: AppDb, userId: string, eventId: string, choice: 'record' | 'skip' | null): Promise<boolean> {
   const updated = await db
     .update(calendarEvents)
-    .set({ recordChoice: choice })
+    .set({
+      recordChoice: choice,
+      // "Record" from an older Mac adds the Mac to a Notetaker plan rather than dropping the Notetaker.
+      captureMode: choice === null ? null : choice === 'skip' ? 'skip'
+        : sql`CASE WHEN ${calendarEvents.captureMode} IN ('notetaker', 'both') THEN 'both' ELSE 'mac' END`,
+    })
+    .where(and(eq(calendarEvents.id, eventId), eq(calendarEvents.userId, userId)))
+    .returning({ id: calendarEvents.id });
+  return updated.length > 0;
+}
+
+/**
+ * Records how to capture this meeting; null goes back to the account default.
+ * `recordChoice` is kept in step for Mac apps from before capture modes:
+ * `mac`/`both` record, `notetaker`/`skip` keep the Mac out. False when the
+ * event isn't the user's.
+ */
+export async function setCaptureMode(db: AppDb, userId: string, eventId: string, mode: CaptureMode | null): Promise<boolean> {
+  const recordChoice = mode === null ? null : mode === 'mac' || mode === 'both' ? 'record' : 'skip';
+  const updated = await db
+    .update(calendarEvents)
+    .set({ captureMode: mode, recordChoice })
     .where(and(eq(calendarEvents.id, eventId), eq(calendarEvents.userId, userId)))
     .returning({ id: calendarEvents.id });
   return updated.length > 0;
