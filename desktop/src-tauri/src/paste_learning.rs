@@ -21,6 +21,8 @@ mod mac {
         #[cfg(test)]
         fn AXIsProcessTrusted() -> bool;
         fn AXUIElementCreateSystemWide() -> Ref;
+        fn AXUIElementCreateApplication(pid: i32) -> Ref;
+        fn AXUIElementGetPid(element: Ref, pid: *mut i32) -> i32;
         fn AXUIElementSetMessagingTimeout(element: Ref, timeout: f32) -> i32;
         fn AXUIElementCopyAttributeValue(element: Ref, attr: Ref, value: *mut Ref) -> i32;
         fn AXUIElementSetAttributeValue(element: Ref, attr: Ref, value: Ref) -> i32;
@@ -240,11 +242,24 @@ mod mac {
         /// words aren't known any more.
         lost: bool,
     }
+    /// How long `LiveField::focused` waits for a field to become readable.
+    const FIELD_APPEARS: Duration = Duration::from_millis(1500);
     impl LiveField {
         /// The focused field, when it is text Eavesy can read back: words go
         /// in where its caret is, over whatever is selected, as a paste would.
         pub fn focused() -> Option<LiveField> {
-            let target = capture()?;
+            // An app asked to expose its text fields only now (see
+            // `expose_text_fields`) takes a moment to build them.
+            let give_up = std::time::Instant::now() + FIELD_APPEARS;
+            let target = loop {
+                if let Some(target) = capture() {
+                    break target;
+                }
+                if std::time::Instant::now() >= give_up {
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            };
             let field = target.0 as Ref;
             let value = unsafe { field_text(field) }?;
             let (start, length) = unsafe { selection(field) }?;
@@ -406,8 +421,20 @@ mod mac {
         AXUIElementSetMessagingTimeout(root, 0.25);
         // Some hosts cannot resolve the system-wide focused element directly.
         // Query the focused application first, then its focused text field.
-        let focused = if let Some(application) = attribute(root, "AXFocusedApplication") {
+        // Electron apps with a long page (Claude, Slack) can miss the timeout
+        // for the focused application: then ask the frontmost app, read from
+        // NSWorkspace, as delivery does.
+        let application = attribute(root, "AXFocusedApplication").or_else(|| {
+            let (pid, _) = crate::app_menu::frontmost()?;
+            let application = AXUIElementCreateApplication(pid);
+            (!application.is_null()).then_some(application)
+        });
+        let focused = if let Some(application) = application {
             AXUIElementSetMessagingTimeout(application, 0.25);
+            let mut pid = 0;
+            if AXUIElementGetPid(application, &mut pid) == 0 {
+                crate::dictation::expose_text_fields(application, pid);
+            }
             let field = attribute(application, "AXFocusedUIElement");
             CFRelease(application);
             field

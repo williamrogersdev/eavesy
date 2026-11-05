@@ -617,6 +617,9 @@ fn front_app_and_role() -> Option<(Target, Option<String>)> {
             tracing::info!(pid, "no paste target: the focused app is Eavesy");
             return None;
         }
+        // Asked at the press, so the app's text fields can be read by the
+        // time live typing, the paste check and paste learning look at them.
+        expose_text_fields(app.0, pid);
         let role = copy_attribute(app.0, "AXFocusedUIElement")
             .map(Owned)
             .and_then(|element| copy_attribute(element.0, "AXRole").map(Owned))
@@ -654,6 +657,35 @@ fn rules_out_text(role: Option<&str>) -> bool {
     )
 }
 
+/// Chromium-based apps (Electron ones such as Claude, Slack and ChatGPT, and
+/// Chrome itself) build their accessibility tree only once an assistive app
+/// asks for it: until then their text boxes can't be read, so nothing can be
+/// typed live or checked after a paste. Asks `app` (with process `pid`) once.
+/// Apps that don't know the attribute ignore it.
+#[cfg(target_os = "macos")]
+pub(crate) unsafe fn expose_text_fields(app: ax::CFTypeRef, pid: i32) {
+    use std::sync::Mutex;
+    /// Processes already asked, newest last: pids are reused, so keep a few.
+    static ASKED: Mutex<Vec<i32>> = Mutex::new(Vec::new());
+    const KEEP: usize = 32;
+    let mut asked = ASKED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if asked.contains(&pid) {
+        return;
+    }
+    let result = ax::set_true(app, "AXManualAccessibility");
+    // A timeout says nothing: ask again next time.
+    if result == ax::CANNOT_COMPLETE {
+        return;
+    }
+    if asked.len() >= KEEP {
+        asked.remove(0);
+    }
+    asked.push(pid);
+    if result == 0 {
+        tracing::info!(pid, "asked the app to expose its text fields");
+    }
+}
+
 #[cfg(not(target_os = "macos"))]
 fn front_app_and_role() -> Option<(Target, Option<String>)> {
     None
@@ -672,6 +704,15 @@ mod ax {
         fn AXUIElementCopyAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: *mut CFTypeRef) -> i32;
         pub fn AXUIElementGetPid(element: CFTypeRef, pid: *mut i32) -> i32;
         pub fn AXUIElementSetMessagingTimeout(element: CFTypeRef, seconds: f32) -> i32;
+        fn AXUIElementSetAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: CFTypeRef) -> i32;
+    }
+
+    /// kAXErrorCannotComplete: the app didn't answer in time.
+    pub const CANNOT_COMPLETE: i32 = -25204;
+
+    pub unsafe fn set_true(element: CFTypeRef, name: &str) -> i32 {
+        let attr = cf_str(name);
+        AXUIElementSetAttributeValue(element, attr.0, crate::cf::kCFBooleanTrue)
     }
 
     pub unsafe fn copy_attribute(element: CFTypeRef, name: &str) -> Option<CFTypeRef> {
