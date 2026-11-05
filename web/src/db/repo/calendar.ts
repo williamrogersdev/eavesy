@@ -142,6 +142,7 @@ export async function countUpcoming(db: AppDb, connectionId: string, from: numbe
 
 export type StoredEvent = {
   id: string;
+  connectionId: string;
   providerEventId: string;
   title: string;
   startsAt: number;
@@ -173,6 +174,7 @@ export async function eventsAround(db: AppDb, userId: string, from: number, to: 
     .orderBy(asc(calendarEvents.startsAt), asc(calendarEvents.id));
   return mergeShared(rows.map((row) => ({
     id: row.id,
+    connectionId: row.connectionId,
     providerEventId: row.providerEventId,
     title: row.title,
     startsAt: row.startsAt,
@@ -195,10 +197,16 @@ function linkKey(url: string): string {
   }
 }
 
-/** Ways two stored events can be the same meeting: same Google event, same call link, or same title and times. */
-function sameMeetingKeys(event: StoredEvent): string[] {
-  const keys = [`id:${event.providerEventId}@${event.startsAt}`, `at:${event.title}@${event.startsAt}-${event.endsAt}`];
-  if (event.meetingUrl) keys.push(`url:${linkKey(event.meetingUrl)}@${event.startsAt}`);
+/**
+ * Ways two stored events can be the same meeting: the same Google event, the
+ * same call link, or (only across different calendars) the same title and times.
+ */
+function sameMeetingKeys(event: StoredEvent): { key: string; acrossOnly: boolean }[] {
+  const keys = [
+    { key: `id:${event.providerEventId}@${event.startsAt}`, acrossOnly: false },
+    { key: `at:${event.title}@${event.startsAt}-${event.endsAt}`, acrossOnly: true },
+  ];
+  if (event.meetingUrl) keys.push({ key: `url:${linkKey(event.meetingUrl)}@${event.startsAt}`, acrossOnly: false });
   return keys;
 }
 
@@ -210,34 +218,58 @@ function rank(event: StoredEvent): number {
 /**
  * Collapses copies of one meeting that arrive from more than one connected
  * calendar (an invite between two of your own accounts, say) into one, keeping
- * order. The copy kept is stable, so a record choice or recording set on it
- * stays on it; its attendees are everyone's, and it takes a call link if it
- * lacked one.
+ * order. Copies chain: one sharing a Google id with a second and a call link
+ * with a third joins all three. Two blocks on one calendar that only share a
+ * title and times stay apart. The copy kept is stable (recorded, else one with
+ * a record choice, else the first), so a choice or recording set on it stays
+ * on it; if it has no choice it takes another copy's. Its attendees are
+ * everyone's, and it takes a call link if it lacked one.
  */
 export function mergeShared(events: StoredEvent[]): StoredEvent[] {
-  const groups: StoredEvent[][] = [];
-  const byKey = new Map<string, StoredEvent[]>();
-  for (const event of events) {
-    const keys = sameMeetingKeys(event);
-    const group = keys.map((key) => byKey.get(key)).find((found) => found !== undefined);
+  const parent = events.map((_, i) => i);
+  const find = (i: number): number => {
+    while (parent[i] !== i) {
+      parent[i] = parent[parent[i]];
+      i = parent[i];
+    }
+    return i;
+  };
+  const seen = new Map<string, number[]>();
+  events.forEach((event, i) => {
+    for (const { key, acrossOnly } of sameMeetingKeys(event)) {
+      const earlier = seen.get(key) ?? [];
+      for (const j of earlier) {
+        if (acrossOnly && events[j].connectionId === event.connectionId) continue;
+        const a = find(i);
+        const b = find(j);
+        if (a !== b) parent[Math.max(a, b)] = Math.min(a, b);
+      }
+      earlier.push(i);
+      seen.set(key, earlier);
+    }
+  });
+  const groups = new Map<number, StoredEvent[]>();
+  events.forEach((event, i) => {
+    const root = find(i);
+    const group = groups.get(root);
     if (group) group.push(event);
-    else groups.push([event]);
-    const target = group ?? groups[groups.length - 1];
-    for (const key of keys) if (!byKey.has(key)) byKey.set(key, target);
-  }
-  return groups.map((copies) => {
+    else groups.set(root, [event]);
+  });
+  // Roots are each group's first index, so the Map keeps the input's order.
+  return [...groups.values()].map((copies) => {
     if (copies.length === 1) return copies[0];
     const kept = copies.reduce((best, event) => (rank(event) > rank(best) ? event : best));
     const participants = new Map<string, { email: string; name: string | null }>();
     for (const copy of copies) {
       for (const person of copy.participants) {
         const email = person.email.toLowerCase();
-        const seen = participants.get(email);
-        if (!seen || (!seen.name && person.name)) participants.set(email, person);
+        const known = participants.get(email);
+        if (!known || (!known.name && person.name)) participants.set(email, person);
       }
     }
     const linked = kept.meetingUrl ? kept : copies.find((copy) => copy.meetingUrl) ?? kept;
-    return { ...kept, meetingUrl: linked.meetingUrl, platform: linked.platform, participants: [...participants.values()] };
+    const recordChoice = kept.recordChoice ?? copies.find((copy) => copy.recordChoice)?.recordChoice ?? null;
+    return { ...kept, meetingUrl: linked.meetingUrl, platform: linked.platform, participants: [...participants.values()], recordChoice };
   });
 }
 

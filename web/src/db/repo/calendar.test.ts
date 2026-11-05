@@ -6,6 +6,7 @@ const HOUR = 60 * 60 * 1000;
 
 function stored(over: Partial<StoredEvent> & { id: string }): StoredEvent {
   return {
+    connectionId: 'cal_a',
     providerEventId: `g_${over.id}`,
     title: 'Design review',
     startsAt: AT,
@@ -35,11 +36,26 @@ describe('mergeShared', () => {
     expect(merged[0]!.participants).toEqual([{ email: 'sam@work.com', name: 'Sam' }, { email: 'dana@x.com', name: 'Dana' }]);
   });
 
-  test('matches by Google event id, or by title and time, when there is no link', () => {
-    expect(mergeShared([stored({ id: 'a', providerEventId: 'same' }), stored({ id: 'b', providerEventId: 'same', title: 'Renamed' })])).toHaveLength(1);
-    const merged = mergeShared([stored({ id: 'a' }), stored({ id: 'b', meetingUrl: 'https://meet.google.com/abc-defg-hij', platform: 'meet' })]);
+  test('matches by Google event id, or by title and time across calendars, when there is no link', () => {
+    expect(mergeShared([stored({ id: 'a', providerEventId: 'same' }), stored({ id: 'b', connectionId: 'cal_b', providerEventId: 'same', title: 'Renamed' })])).toHaveLength(1);
+    const merged = mergeShared([stored({ id: 'a' }), stored({ id: 'b', connectionId: 'cal_b', meetingUrl: 'https://meet.google.com/abc-defg-hij', platform: 'meet' })]);
     expect(merged).toHaveLength(1);
     expect(merged[0]).toMatchObject({ id: 'a', meetingUrl: 'https://meet.google.com/abc-defg-hij', platform: 'meet' });
+  });
+
+  test('two same-title blocks on one calendar stay apart', () => {
+    expect(mergeShared([stored({ id: 'a', title: '(No title)' }), stored({ id: 'b', title: '(No title)' })]).map((e) => e.id)).toEqual(['a', 'b']);
+  });
+
+  test('a copy that matches two others by different keys joins them into one', () => {
+    const link = 'https://meet.google.com/abc-defg-hij';
+    const merged = mergeShared([
+      stored({ id: 'a', providerEventId: 'x', title: 'One' }),
+      stored({ id: 'b', connectionId: 'cal_b', providerEventId: 'y', title: 'Two', meetingUrl: link }),
+      stored({ id: 'c', connectionId: 'cal_c', providerEventId: 'x', title: 'Three', meetingUrl: link }),
+    ]);
+    expect(merged.map((e) => e.id)).toEqual(['a']);
+    expect(merged[0]!.meetingUrl).toBe(link);
   });
 
   test('the same link at another time is another meeting', () => {
@@ -49,6 +65,7 @@ describe('mergeShared', () => {
 
   test('keeps the copy that was recorded, or that has a record choice', () => {
     expect(mergeShared([stored({ id: 'a', providerEventId: 'x' }), stored({ id: 'b', providerEventId: 'x', recordChoice: 'skip' })])[0]!.id).toBe('b');
-    expect(mergeShared([stored({ id: 'a', providerEventId: 'x', recordChoice: 'record' }), stored({ id: 'b', providerEventId: 'x', recordedMeetingId: 'm1' })])[0]!.id).toBe('b');
+    const recorded = mergeShared([stored({ id: 'a', providerEventId: 'x', recordChoice: 'skip' }), stored({ id: 'b', providerEventId: 'x', recordedMeetingId: 'm1' })])[0]!;
+    expect(recorded).toMatchObject({ id: 'b', recordChoice: 'skip' });
   });
 });
