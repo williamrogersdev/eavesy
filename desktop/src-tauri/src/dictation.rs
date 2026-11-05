@@ -646,7 +646,7 @@ fn says_text(role: Option<&str>) -> bool {
 /// Focus that can't take typed words. Anything else, an unreadable role
 /// included, could be a text box: web views often don't say.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn rules_out_text(role: Option<&str>) -> bool {
+pub(crate) fn rules_out_text(role: Option<&str>) -> bool {
     matches!(
         role,
         Some(
@@ -660,30 +660,13 @@ fn rules_out_text(role: Option<&str>) -> bool {
 /// Chromium-based apps (Electron ones such as Claude, Slack and ChatGPT, and
 /// Chrome itself) build their accessibility tree only once an assistive app
 /// asks for it: until then their text boxes can't be read, so nothing can be
-/// typed live or checked after a paste. Asks `app` (with process `pid`) once.
-/// Apps that don't know the attribute ignore it.
+/// typed live or checked after a paste. Asked of the dictation's target at
+/// each press (one call; apps that don't know the attribute ignore it). The
+/// app keeps the tree for its lifetime, as it does for any assistive app.
 #[cfg(target_os = "macos")]
-pub(crate) unsafe fn expose_text_fields(app: ax::CFTypeRef, pid: i32) {
-    use std::sync::Mutex;
-    /// Processes already asked, newest last: pids are reused, so keep a few.
-    static ASKED: Mutex<Vec<i32>> = Mutex::new(Vec::new());
-    const KEEP: usize = 32;
-    let mut asked = ASKED.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if asked.contains(&pid) {
-        return;
-    }
+unsafe fn expose_text_fields(app: ax::CFTypeRef, pid: i32) {
     let result = ax::set_true(app, "AXManualAccessibility");
-    // A timeout says nothing: ask again next time.
-    if result == ax::CANNOT_COMPLETE {
-        return;
-    }
-    if asked.len() >= KEEP {
-        asked.remove(0);
-    }
-    asked.push(pid);
-    if result == 0 {
-        tracing::info!(pid, "asked the app to expose its text fields");
-    }
+    tracing::debug!(pid, result, "asked the app to expose its text fields");
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -706,9 +689,6 @@ mod ax {
         pub fn AXUIElementSetMessagingTimeout(element: CFTypeRef, seconds: f32) -> i32;
         fn AXUIElementSetAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: CFTypeRef) -> i32;
     }
-
-    /// kAXErrorCannotComplete: the app didn't answer in time.
-    pub const CANNOT_COMPLETE: i32 = -25204;
 
     pub unsafe fn set_true(element: CFTypeRef, name: &str) -> i32 {
         let attr = cf_str(name);

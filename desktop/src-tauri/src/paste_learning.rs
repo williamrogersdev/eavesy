@@ -22,7 +22,6 @@ mod mac {
         fn AXIsProcessTrusted() -> bool;
         fn AXUIElementCreateSystemWide() -> Ref;
         fn AXUIElementCreateApplication(pid: i32) -> Ref;
-        fn AXUIElementGetPid(element: Ref, pid: *mut i32) -> i32;
         fn AXUIElementSetMessagingTimeout(element: Ref, timeout: f32) -> i32;
         fn AXUIElementCopyAttributeValue(element: Ref, attr: Ref, value: *mut Ref) -> i32;
         fn AXUIElementSetAttributeValue(element: Ref, attr: Ref, value: Ref) -> i32;
@@ -248,18 +247,22 @@ mod mac {
         /// The focused field, when it is text Eavesy can read back: words go
         /// in where its caret is, over whatever is selected, as a paste would.
         pub fn focused() -> Option<LiveField> {
-            // An app asked to expose its text fields only now (see
-            // `expose_text_fields`) takes a moment to build them.
+            // An app asked to expose its text fields at the press (see
+            // `dictation::expose_text_fields`) takes a moment to build them.
             let give_up = std::time::Instant::now() + FIELD_APPEARS;
-            let target = loop {
-                if let Some(target) = capture() {
-                    break target;
+            loop {
+                if let Some(live) = Self::read() {
+                    return Some(live);
                 }
-                if std::time::Instant::now() >= give_up {
+                if std::time::Instant::now() >= give_up || not_text() {
                     return None;
                 }
                 std::thread::sleep(Duration::from_millis(100));
-            };
+            }
+        }
+
+        fn read() -> Option<LiveField> {
+            let target = capture()?;
             let field = target.0 as Ref;
             let value = unsafe { field_text(field) }?;
             let (start, length) = unsafe { selection(field) }?;
@@ -424,6 +427,7 @@ mod mac {
         // Electron apps with a long page (Claude, Slack) can miss the timeout
         // for the focused application: then ask the frontmost app, read from
         // NSWorkspace, as delivery does.
+        // (`frontmost` never answers Eavesy itself.)
         let application = attribute(root, "AXFocusedApplication").or_else(|| {
             let (pid, _) = crate::app_menu::frontmost()?;
             let application = AXUIElementCreateApplication(pid);
@@ -431,10 +435,6 @@ mod mac {
         });
         let focused = if let Some(application) = application {
             AXUIElementSetMessagingTimeout(application, 0.25);
-            let mut pid = 0;
-            if AXUIElementGetPid(application, &mut pid) == 0 {
-                crate::dictation::expose_text_fields(application, pid);
-            }
             let field = attribute(application, "AXFocusedUIElement");
             CFRelease(application);
             field
@@ -461,6 +461,18 @@ mod mac {
                 return None;
             }
             Some(Target(field as usize))
+        }
+    }
+    /// Whether the focus plainly isn't a text box to type into (a button, a
+    /// password field): no point waiting for it to become readable.
+    fn not_text() -> bool {
+        unsafe {
+            let Some(focused) = focused_element() else { return false };
+            AXUIElementSetMessagingTimeout(focused, 0.25);
+            let role = string(focused, "AXRole");
+            let secure = string(focused, "AXSubrole").as_deref() == Some("AXSecureTextField");
+            CFRelease(focused);
+            secure || crate::dictation::rules_out_text(role.as_deref())
         }
     }
     fn still_focused(target: &Target) -> bool {
