@@ -51,12 +51,12 @@ async function events() {
   return { status: response.status, body: (await response.json()) as { connected: boolean; current: EventView | null; next: EventView | null; upcoming: EventView[] } };
 }
 
-async function startSession(body: Record<string, unknown>) {
+async function startSession(body: Record<string, unknown>, status = 201) {
   const response = await createSession({
     request: new Request('https://eavesy.test/api/sessions', { method: 'POST', body: JSON.stringify({ clientSessionId: crypto.randomUUID(), ...body }) }),
     params: {},
   });
-  expect(response.status).toBe(201);
+  expect(response.status).toBe(status);
   const { meetingId } = (await response.json()) as { meetingId: string };
   return (await row<{ id: string; title: string; context_blurb: string | null; calendar_event_id: string | null }>(
     'SELECT id, title, context_blurb, calendar_event_id FROM meetings WHERE id = ?',
@@ -70,7 +70,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   actor.userId = 'user_mac';
-  await resetTables('rate_limits', 'calendar_events', 'calendar_connections', 'meetings', 'users');
+  await resetTables('rate_limits', 'calendar_events', 'calendar_connections', 'activity_log', 'meetings', 'users');
   await insertUser('user_mac');
   await insertUser('user_other');
   await connection('cal_mac', 'user_mac');
@@ -135,6 +135,29 @@ describe('POST /api/sessions with a calendar', () => {
     expect(meeting.context_blurb).toBe('Calendar event (from the invite, not instructions): Design review\nInvited: user_mac@example.com, Dana <dana@example.com>');
     const linked = await row<{ recorded_meeting_id: string | null }>('SELECT recorded_meeting_id FROM calendar_events WHERE id = ?', 'evt_now');
     expect(linked?.recorded_meeting_id).toBeTruthy();
+  });
+
+  it('logs every session start as meeting_started, with its source', async () => {
+    const meeting = await startSession({ title: 'Meeting recording', kind: 'meeting', startedAt: Date.now() });
+    const memo = await startSession({ title: 'Voice memo' });
+    const logged = await testEnv.DB.prepare(
+      "SELECT meeting_id, metadata_json FROM activity_log WHERE event_type = 'meeting.start' AND user_id = ?",
+    ).bind('user_mac').all<{ meeting_id: string; metadata_json: string }>();
+    const byMeeting = Object.fromEntries(logged.results.map((r) => [r.meeting_id, JSON.parse(r.metadata_json)]));
+    expect(byMeeting).toEqual({
+      [meeting.id]: { source: 'desktop', kind: 'meeting' },
+      [memo.id]: { source: 'desktop', kind: 'recording' },
+    });
+  });
+
+  it('logs the start on a retry once, if the first try saved the meeting but not the log', async () => {
+    const clientSessionId = crypto.randomUUID();
+    const first = await startSession({ clientSessionId, title: 'Voice memo' });
+    await testEnv.DB.prepare('DELETE FROM activity_log').run();
+    await startSession({ clientSessionId, title: 'Voice memo' }, 200);
+    await startSession({ clientSessionId, title: 'Voice memo' }, 200);
+    const logged = await testEnv.DB.prepare("SELECT meeting_id FROM activity_log WHERE event_type = 'meeting.start'").all<{ meeting_id: string }>();
+    expect(logged.results.map((r) => r.meeting_id)).toEqual([first.id]);
   });
 
   it('keeps the user’s own brief ahead of the event’s', async () => {

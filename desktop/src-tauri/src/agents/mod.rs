@@ -689,6 +689,11 @@ pub fn answer_with(dictation: &str, claim: voice::Claim) {
     *ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((dictation.to_string(), claim));
 }
 
+/// Whether this dictation answers the card, without taking it.
+pub fn is_answer(dictation: &str) -> bool {
+    ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref().is_some_and(|(id, _)| id == dictation)
+}
+
 /// What this dictation answers, if it answers the card. Takes it.
 pub fn take_answer(dictation: &str) -> Option<voice::Claim> {
     let mut answering = ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());

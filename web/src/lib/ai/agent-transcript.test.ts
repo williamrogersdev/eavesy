@@ -61,12 +61,28 @@ describe('polishDictation', () => {
 
 test('short dictations use learned context and keep confirmed spellings', async () => {
   const { client, calls } = fakeClient('Open a pull request.');
-  const result = await polishDictation(client, { text: 'Open a pool request.', context: 'Human correction: pool -> pull', hasCorrections: true, corrections: [{ from: 'pool', to: 'pull' }] });
+  const result = await polishDictation(client, { text: 'Open a pool request.', context: 'Human correction: pool -> pull', corrections: [{ from: 'pool', to: 'pull' }] });
   expect(calls).toHaveLength(1);
   expect(result.text).toBe('Open a pull request.');
   const wrong = fakeClient('The information was transcribed and typed in the saved transcript.');
   const text = 'The information was transcribed and kept in the saved transcript.';
   expect(await polishDictation(wrong.client, { text, context: null, confirmedSpellings: ['kept'] })).toEqual({ text, polished: false });
+});
+
+test('a dictionary alone does not send a short dictation to the model', async () => {
+  const { client, calls } = fakeClient('unused');
+  const result = await polishDictation(client, { text: 'sounds good', context: 'More terms: Repackify', terms: ['Repackify'], corrections: [{ from: 'repack of', to: 'Repackify' }] });
+  expect(result).toEqual({ text: 'Sounds good', polished: false });
+  expect(calls).toHaveLength(0);
+});
+
+test('a polish that drops in a dictionary word nobody said is not used', async () => {
+  const text = 'Can you check whether the orders went out last night?';
+  const { client } = fakeClient('Can you check whether the Repackify orders went out last night?');
+  expect(await polishDictation(client, { text, context: 'More terms: Repackify', terms: ['Repackify'] })).toEqual({ text, polished: false });
+  const fixed = fakeClient('Can you check whether the Repackify orders went out?');
+  const heard = 'Can you check whether the repack of orders went out?';
+  expect(await polishDictation(fixed.client, { text: heard, context: 'More terms: Repackify', terms: ['Repackify'] })).toEqual({ text: 'Can you check whether the Repackify orders went out?', polished: true });
 });
 
 describe('dictation styles', () => {

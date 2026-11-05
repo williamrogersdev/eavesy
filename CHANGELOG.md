@@ -6,6 +6,18 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.7] - 2026-11-05 - desktop
+
+### Fixed
+
+- Mac app: read text fields in Chromium apps so live typing works ([#328](https://github.com/williamrogersdev/eavesy/pull/328))
+
+## [0.9.6] - 2026-11-04 - desktop
+
+### Added
+
+- Mac app: type dictation at the cursor as you talk ([#325](https://github.com/williamrogersdev/eavesy/pull/325))
+
 ## [0.9.5] - 2026-11-03 - desktop
 
 ### Added

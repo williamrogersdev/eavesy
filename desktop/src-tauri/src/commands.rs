@@ -371,6 +371,12 @@ pub fn set_launcher_position(app: AppHandle, position: settings::LauncherPositio
         .map_err(|error| format!("could not reposition Eavesy: {error}"))
 }
 
+/// Turns "Type as I talk" on or off; it applies from the next dictation.
+#[tauri::command(async)]
+pub fn set_type_as_you_talk(app: AppHandle, enabled: bool) -> Result<(), String> {
+    settings::update(&app, |config| config.type_as_you_talk = Some(enabled)).map(drop)
+}
+
 /// Turns live captions on or off. Speech Recognition permission is asked for
 /// by the launcher when they are turned on, never by a recording.
 #[tauri::command(async)]

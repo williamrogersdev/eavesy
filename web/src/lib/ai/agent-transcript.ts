@@ -1,6 +1,7 @@
 import type { LearnedCorrection } from '@/lib/dictionary/learning';
 import { DEFAULT_DICTATION_STYLE, withoutSwearing, type DictationStyle } from '@/lib/transcription/dictation-style';
 import type Anthropic from '@anthropic-ai/sdk';
+import { count, inventedTerms } from '@/lib/transcription/invented-terms';
 import { MODELS } from './client';
 import {
   chunkTurns,
@@ -47,7 +48,7 @@ function dictationPrompt(context: string | null) {
   return `You clean up a dictation: one person speaking, whose words are typed at their cursor in whatever app they are using (a chat, an email, a coding agent, a document), as if they had typed them.
 
 ${SHARED_RULES}
-- Give your best reading of words that are hard to make out; never insert markers. The words come from speech recognition, so a word that makes no sense where it is may be a mishearing of a name or term from the context below: use that spelling only when it sounds alike and fits. Otherwise keep the word as heard.
+- Give your best reading of words that are hard to make out; never insert markers. The words come from speech recognition, so a word that makes no sense where it is may be a mishearing of a name or term from the context below: use that spelling only when the words heard sound almost the same as the term. Otherwise keep the word as heard. Most dictations mention none of those terms: never put one in place of words that were clearly said.
 - Keep a short dictation as plain sentences. Break a long one into short paragraphs by topic, and when the speaker lists things ("first… then…", "a few things: …"), make it a numbered or bulleted list.
 
 Example: "Yeah so, like, I think we should, um, you know, move the the call to like Thursday, and, like, invite Sam." becomes "I think we should move the call to Thursday and invite Sam."${contextBlock(context)}`;
@@ -56,7 +57,7 @@ Example: "Yeah so, like, I think we should, um, you know, move the the call to l
 const RESTYLE_RULES = `Always:
 - Keep every concrete detail the speaker gave: names, numbers, dates, file paths, commands, URLs, error messages and examples. Quote error messages and anything read out word for word exactly.
 - Write code identifiers, file names, paths, commands, flags, packages and URLs in backticks, spelled as code. Only do this when it is clearly code.
-- Spell names and terms the way the context below spells them.
+- Spell names and terms the way the context below spells them, but only where the speaker said them. Never add a name or term from the context that the speaker didn't say.
 - Keep the language the speaker used, and write as the speaker, in the first person.
 - Drop filler, stutters, false starts, repetition and swearing. When the speaker corrects themselves, keep only the corrected version.
 - Give your best reading of words that are hard to make out; never insert markers.
@@ -189,22 +190,26 @@ const MIN_POLISH_WORDS = 4;
  */
 export async function polishDictation(
   client: Anthropic | null,
-  args: { text: string; context: string | null; style?: DictationStyle; forAgents?: boolean; hasCorrections?: boolean; confirmedSpellings?: string[]; corrections?: LearnedCorrection[]; asked?: boolean },
+  args: { text: string; context: string | null; style?: DictationStyle; forAgents?: boolean; confirmedSpellings?: string[]; corrections?: LearnedCorrection[]; terms?: readonly string[]; asked?: boolean },
 ): Promise<{ text: string; polished: boolean }> {
   const style = args.style ?? DEFAULT_DICTATION_STYLE;
   const restyle = style !== 'natural' || !!args.forAgents;
   const said = args.text.trim();
   const plain = restyle ? withoutSwearing(stripFillers(said)) : stripFillers(said);
-  // A tone someone asked for is worth a call however short the words are.
-  if (!client || (!args.hasCorrections && !args.asked && said.split(/\s+/).length < MIN_POLISH_WORDS)) return { text: plain, polished: false };
+  const known = (args.corrections ?? []).filter(entry => count(said, entry.from) > 0).map(entry => entry.to).join(' ');
+  // A tone someone asked for is worth a call however short the words are, and
+  // so is a confirmed fix whose words were heard. A dictionary alone is not:
+  // a short "sounds good" has nothing to spell.
+  if (!client || (!known && !args.asked && said.split(/\s+/).length < MIN_POLISH_WORDS)) return { text: plain, polished: false };
   const turns: Turn[] = [{ speaker: null, text: said }];
   try {
     const system = restyle ? styledDictationPrompt(style, !!args.forAgents, args.context) : dictationPrompt(args.context);
     const candidate = await cleanChunk(client, turns, system);
-    const known = (args.corrections ?? []).filter(entry => said.toLowerCase().includes(entry.from.toLowerCase())).map(entry => entry.to).join(' ');
     const validationInput = known ? [...turns, { speaker: null, text: known }] : turns;
     const shapeKept = restyle ? restyledIsValid(validationInput, candidate) : cleanedChunkIsValid(validationInput, candidate, 'solo');
-    if (shapeKept && preservesSpellings(said, candidate, args.confirmedSpellings ?? [])) {
+    const terms = [...(args.terms ?? []), ...(args.confirmedSpellings ?? [])];
+    if (shapeKept && preservesSpellings(said, candidate, args.confirmedSpellings ?? [])
+      && inventedTerms(said, candidate, terms, args.corrections).length === 0) {
       return { text: restyle ? withoutSwearing(candidate) : candidate, polished: true };
     }
   } catch {
