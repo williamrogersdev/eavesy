@@ -72,13 +72,41 @@ export interface UpcomingMeeting {
   endsAt: number;
   meetingUrl: string | null;
   recordChoice: 'record' | 'skip' | null;
+  /** Who's invited, as the calendar lists them. */
+  attendees: MeetingAttendee[];
+}
+
+export interface MeetingAttendee {
+  email: string;
+  name: string | null;
+}
+
+function parseAttendees(value: unknown): MeetingAttendee[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => isRecord(item) && typeof item.email === 'string'
+    ? [{ email: item.email, name: typeof item.name === 'string' && item.name.trim() ? item.name : null }]
+    : []);
+}
+
+/** One meeting from `/api/calendar-events` (or the Mac app's menu bar), or null when it isn't one. */
+export function parseUpcomingMeeting(item: unknown): UpcomingMeeting | null {
+  if (!isRecord(item) || typeof item.id !== 'string' || typeof item.title !== 'string') return null;
+  if (typeof item.startsAt !== 'number' || typeof item.endsAt !== 'number') return null;
+  const choice = item.recordChoice === 'record' || item.recordChoice === 'skip' ? item.recordChoice : null;
+  return {
+    id: item.id,
+    title: item.title,
+    startsAt: item.startsAt,
+    endsAt: item.endsAt,
+    meetingUrl: typeof item.meetingUrl === 'string' ? item.meetingUrl : null,
+    recordChoice: choice,
+    attendees: parseAttendees(item.attendees),
+  };
 }
 
 function parseMeeting(item: unknown): UpcomingMeeting[] {
-  if (!isRecord(item) || typeof item.id !== 'string' || typeof item.title !== 'string') return [];
-  if (typeof item.startsAt !== 'number' || typeof item.endsAt !== 'number') return [];
-  const choice = item.recordChoice === 'record' || item.recordChoice === 'skip' ? item.recordChoice : null;
-  return [{ id: item.id, title: item.title, startsAt: item.startsAt, endsAt: item.endsAt, meetingUrl: typeof item.meetingUrl === 'string' ? item.meetingUrl : null, recordChoice: choice }];
+  const meeting = parseUpcomingMeeting(item);
+  return meeting ? [meeting] : [];
 }
 
 /** `/api/calendar-events`' upcoming meetings, or null when it isn't that answer. */
