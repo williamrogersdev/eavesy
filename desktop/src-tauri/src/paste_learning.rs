@@ -120,6 +120,36 @@ mod mac {
         CFRelease(value);
         if result == 0 { Ok(()) } else { Err(format!("the app refused the selection ({result})")) }
     }
+    /// Selects `length` units from `start` and waits for the app to report
+    /// exactly that range holding `expected`: Chrome applies a selection a
+    /// moment after accepting it, so an immediate read returns the old one.
+    unsafe fn select_exactly(field: Ref, start: usize, length: usize, expected: &str) -> Result<bool, String> {
+        select(field, start, length)?;
+        let expected = super::normalize(expected);
+        let give_up = std::time::Instant::now() + SELECTION_SETTLES;
+        while std::time::Instant::now() < give_up {
+            std::thread::sleep(Duration::from_millis(20));
+            if selection(field) == Some((start, length))
+                && string(field, "AXSelectedText").map(|s| super::normalize(&s)).as_deref() == Some(expected.as_str())
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+    /// Puts the caret at `at`, waiting for the app to apply it, so a selection
+    /// that landed late can't stay for the user's next key to type over.
+    unsafe fn put_caret(field: Ref, at: usize) {
+        for _ in 0..2 {
+            if select_exactly(field, at, 0, "") == Ok(true) {
+                return;
+            }
+        }
+        tracing::warn!("the app didn't put the caret back after the words");
+    }
+    /// How long a selection gets to apply: each read is bounded by the 0.25 s
+    /// messaging timeout, so the wait can run that much over.
+    const SELECTION_SETTLES: Duration = Duration::from_millis(400);
     /// Swaps the passage Eavesy pasted last for `text`, when it is still in its
     /// field exactly as `previous`, that field still has the keyboard, and the
     /// app selects exactly that passage. Otherwise nothing in the app changes.
@@ -149,15 +179,18 @@ mod mac {
         GENERATION.fetch_add(1, Ordering::SeqCst);
         let start = paste.prefix.encode_utf16().count();
         let length = previous.encode_utf16().count();
-        if let Err(why) = unsafe { select(paste.field.0 as Ref, start, length) } {
-            last().get_or_insert(paste);
-            return Err(why);
-        }
-        if unsafe { string(paste.field.0 as Ref, "AXSelectedText") }.map(|selected| super::normalize(&selected)) != Some(paste.pasted.clone()) {
+        let selected = match unsafe { select_exactly(paste.field.0 as Ref, start, length, &paste.pasted) } {
+            Ok(selected) => selected,
+            Err(why) => {
+                last().get_or_insert(paste);
+                return Err(why);
+            }
+        };
+        if !selected {
             // Whatever the app did select must not stay selected: the user's
             // next keystroke would type over it. Put the caret back after
             // the pasted words, and keep them for a later try.
-            let _ = unsafe { select(paste.field.0 as Ref, start + length, 0) };
+            unsafe { put_caret(paste.field.0 as Ref, start + length) };
             last().get_or_insert(paste);
             return Err("the app didn't select the pasted words".into());
         }
@@ -283,7 +316,7 @@ mod mac {
             }
             let field = self.field.0 as Ref;
             let value = unsafe { field_text(field) }.ok_or("the field can't be read")?;
-            if super::passage(&value, &self.prefix, &self.suffix).as_deref() != Some(self.typed.as_str()) {
+            if super::typed_passage(&value, &self.prefix, &self.suffix).as_deref() != Some(self.typed.as_str()) {
                 return Err("the typed words were changed".into());
             }
             let end = super::units(&self.prefix) + super::units(&self.typed);
@@ -317,14 +350,11 @@ mod mac {
             if keep < self.typed.len() {
                 let from = start + super::units(&self.typed[..keep]);
                 let length = super::units(&self.typed[keep..]);
-                unsafe { select(field, from, length)? };
                 // Both the range and its text: the key press below replaces
                 // exactly what is selected, and nothing else may go with it.
-                let range = unsafe { selection(field) };
-                let selected = unsafe { string(field, "AXSelectedText") }.map(|s| super::normalize(&s));
-                if range != Some((from, length)) || selected.as_deref() != Some(&self.typed[keep..]) {
+                if !unsafe { select_exactly(field, from, length, &self.typed[keep..])? } {
                     // Never leave words selected: the user's next key would replace them.
-                    let _ = unsafe { select(field, start + super::units(&self.typed), 0) };
+                    unsafe { put_caret(field, start + super::units(&self.typed)) };
                     return Err("the app didn't select the words to retype".into());
                 }
             }
@@ -340,7 +370,7 @@ mod mac {
             // still this field right before they are posted.
             if stop.load(Ordering::SeqCst) || focus(&self.field) != Some(true) {
                 if keep < self.typed.len() {
-                    let _ = unsafe { select(field, start + super::units(&self.typed), 0) };
+                    unsafe { put_caret(field, start + super::units(&self.typed)) };
                 }
                 return Ok(false);
             }
@@ -357,7 +387,7 @@ mod mac {
             let mut found = None;
             loop {
                 std::thread::sleep(Duration::from_millis(30));
-                if let Some(now) = unsafe { field_text(field) }.and_then(|value| super::passage(&value, &self.prefix, &self.suffix)) {
+                if let Some(now) = unsafe { field_text(field) }.and_then(|value| super::typed_passage(&value, &self.prefix, &self.suffix)) {
                     if posted.is_ok() && now == text {
                         self.typed = text;
                         return Ok(true);
@@ -393,11 +423,8 @@ mod mac {
             let field = self.field.0 as Ref;
             let start = super::units(&self.prefix);
             let length = super::units(&self.typed);
-            unsafe { select(field, start, length)? };
-            let range = unsafe { selection(field) };
-            let selected = unsafe { string(field, "AXSelectedText") }.map(|s| super::normalize(&s));
-            if range != Some((start, length)) || selected.as_deref() != Some(self.typed.as_str()) {
-                let _ = unsafe { select(field, start + length, 0) };
+            if !unsafe { select_exactly(field, start, length, &self.typed)? } {
+                unsafe { put_caret(field, start + length) };
                 return Err("the app didn't select the typed words".into());
             }
             Ok(())
@@ -596,6 +623,24 @@ mod mac {
         }))
     }
 
+    /// Run explicitly with an empty text box focused (a ProseMirror editor in
+    /// Chrome reproduces Claude's message box), from a binary with
+    /// Accessibility: live typing types, revises, and selects its words.
+    #[cfg(test)]
+    #[test]
+    #[ignore = "requires a focused empty text field and Accessibility"]
+    fn live_typing_e2e() {
+        assert!(unsafe { AXIsProcessTrusted() }, "needs Accessibility");
+        let stop = AtomicBool::new(false);
+        let mut live = LiveField::focused().expect("a readable focused field");
+        for text in ["Hello", "Hello there friend", "Hello their friends, how", "Hello there friends, how are you?"] {
+            assert_eq!(live.sync(text, &stop), Ok(true), "typing {text:?}");
+            assert_eq!(live.typed, text);
+        }
+        live.select_typed().expect("selects the typed words");
+        press(KEY_DELETE, None).unwrap();
+    }
+
     /// Run explicitly with a disposable focused TextEdit document and the local test API.
     #[cfg(test)]
     #[test]
@@ -742,10 +787,25 @@ fn anchors(value: &str, pasted: &str, near: impl Fn(usize, usize) -> bool) -> Op
     };
     Some((value[..start].into(), value[start + pasted.len()..].into()))
 }
+
 pub fn passage(value: &str, prefix: &str, suffix: &str) -> Option<String> {
     let middle = value.strip_prefix(prefix)?.strip_suffix(suffix)?;
     Some(middle.into())
 }
+
+/// `passage` for live-typed words, whose caret is checked as well. Rich text
+/// editors (ProseMirror, as in Claude's message box) read back an empty
+/// paragraph as a lone newline and drop it once there is text, or add one
+/// back when the text goes: the field's last newline may come and go.
+pub fn typed_passage(value: &str, prefix: &str, suffix: &str) -> Option<String> {
+    let rest = value.strip_prefix(prefix)?;
+    let middle = rest
+        .strip_suffix(suffix)
+        .or_else(|| rest.strip_suffix(suffix.strip_suffix('\n')?))
+        .or_else(|| rest.strip_suffix('\n')?.strip_suffix(suffix))?;
+    Some(middle.into())
+}
+
 /// Text as live typing puts it in a field: as fields hand it back
 /// (`normalize`), on one line. A typed newline is a Return key press, which
 /// sends a chat message.
@@ -808,6 +868,17 @@ pub fn replace(_app: &tauri::AppHandle, _previous: &str, _text: &str) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn a_typed_field_s_last_newline_may_come_and_go() {
+        // An empty ProseMirror field reads "\n"; typed into, it drops it.
+        assert_eq!(typed_passage("Hello\u{a0}", "", "\n").as_deref(), Some("Hello\u{a0}"));
+        assert_eq!(typed_passage("Hello\n", "", "\n").as_deref(), Some("Hello"));
+        assert_eq!(typed_passage("Say Hello there", "Say ", "").as_deref(), Some("Hello there"));
+        // Only a last newline is forgiven.
+        assert_eq!(typed_passage("Hello", "", "\nmore"), None);
+        assert_eq!(typed_passage("Hello\n\n", "", "").as_deref(), Some("Hello\n\n"));
+    }
+
     #[test]
     fn isolates_only_the_pasted_passage() {
         let mut watch = Watch::start("Existing. pool request. After.", "pool request.", None).unwrap();
