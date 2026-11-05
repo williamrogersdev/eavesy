@@ -430,6 +430,9 @@ fn save_transcript<R: Runtime>(
         return Err(error);
     }
     if live { crate::live_edit::mark_saved(id, content); }
+    if previous.source == "note" {
+        crate::capture_sync::note_edited(app, id);
+    }
     Ok(true)
 }
 
@@ -454,15 +457,19 @@ pub fn apply_external_edit<R: Runtime>(
     role: &str,
     content: String,
 ) -> Result<(), String> {
-    mutate(app, id, |rec| {
+    let note = mutate(app, id, |rec| {
         match role {
             "summary" => rec.summary = Some(content),
             "transcript" => rec.transcript = Some(content),
             "notes" => rec.notes = Some(content),
             _ => return Err(format!("unsupported recording file role: {role}")),
         };
-        Ok(())
+        Ok(rec.source == "note")
     })?;
+    // A note's text is its transcript: an edit to it goes to the user's other Macs.
+    if role == "transcript" && note == Some(true) {
+        crate::capture_sync::note_edited(app, id);
+    }
     Ok(())
 }
 pub fn set_folder_path<R: Runtime>(

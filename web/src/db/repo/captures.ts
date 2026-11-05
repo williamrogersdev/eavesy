@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { captures, devices } from '../schema';
@@ -127,6 +127,69 @@ export async function listForDevice(
     .orderBy(desc(captures.createdAt), desc(captures.id))
     .limit(args.limit)
     .offset(args.offset);
+}
+
+/**
+ * Notes changed after a cursor, oldest change first, from every device
+ * (the one asking too): a Mac brings in edits made on the user's other Macs,
+ * including edits to notes it first wrote itself. The cursor is the last
+ * change seen and its id, for notes changed at the same moment.
+ */
+export async function listNoteChanges(
+  db: AppDb,
+  args: { userId: string; since: number; afterId: string; limit: number },
+) {
+  return await db
+    .select({
+      id: captures.id,
+      clientCaptureId: captures.clientCaptureId,
+      title: captures.title,
+      contentType: captures.contentType,
+      createdAt: captures.createdAt,
+      updatedAt: captures.updatedAt,
+    })
+    .from(captures)
+    .where(
+      and(
+        eq(captures.userId, args.userId),
+        eq(captures.kind, 'note'),
+        isNull(captures.deletedAt),
+        or(
+          gt(captures.updatedAt, args.since),
+          and(eq(captures.updatedAt, args.since), gt(captures.id, args.afterId)),
+        ),
+      ),
+    )
+    .orderBy(asc(captures.updatedAt), asc(captures.id))
+    .limit(args.limit);
+}
+
+/** Replaces a note's text (and title, when given) after an edit on one of the user's Macs. */
+export async function replaceNote(
+  db: AppDb,
+  args: { captureId: string; userId: string; text: string; bytes: number; title?: string | null },
+): Promise<number | null> {
+  const updatedAt = Date.now();
+  const rows = await db
+    .update(captures)
+    .set({
+      transcript: args.text,
+      transcriptStatus: 'complete',
+      transcriptError: null,
+      bytes: args.bytes,
+      ...(args.title ? { title: args.title } : {}),
+      updatedAt,
+    })
+    .where(
+      and(
+        eq(captures.id, args.captureId),
+        eq(captures.userId, args.userId),
+        eq(captures.kind, 'note'),
+        isNull(captures.deletedAt),
+      ),
+    )
+    .returning({ id: captures.id });
+  return rows.length > 0 ? updatedAt : null;
 }
 
 /** Returns false when `ifStatus` was given and the row had moved on. */

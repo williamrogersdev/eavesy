@@ -49,6 +49,10 @@ const RATE_PAUSE_MS: i64 = 60 * 60 * 1_000;
 /// A device the server will not take captures from (403) asks again when its
 /// credential changes, or after this long.
 const REFUSED_RECHECK_MS: i64 = DAY_MS;
+/// Notes changed on other devices asked for per check.
+const CHANGES_PAGE: usize = 50;
+/// On the first check for edits made elsewhere, only notes changed this recently are looked at.
+const FIRST_CHANGES_WINDOW_MS: i64 = 3 * DAY_MS;
 
 static STATE: StateFile = StateFile::new("capture_sync.json");
 static FAILED: RetryGate = RetryGate::new(FAILED_RETRY);
@@ -114,6 +118,23 @@ struct SyncState {
     /// The folder of each capture being pulled, used again if its save was cut short.
     #[serde(default)]
     saving: BTreeMap<String, PathBuf>,
+    /// Notes edited on this Mac whose new text may not be on the server yet.
+    #[serde(default)]
+    edited: BTreeSet<String>,
+    /// A hash of each shared note's text as last sent or brought in, so an
+    /// edit goes up once and one brought in is not sent back. A note missing
+    /// here was last synced as its `note.md`.
+    #[serde(default)]
+    note_hashes: BTreeMap<String, String>,
+    /// When every shared note was last checked for an edit not yet sent.
+    #[serde(default)]
+    edits_swept_at: Option<i64>,
+    /// The newest change to a note brought in from the cloud, and its cloud
+    /// id for notes changed at the same moment. `None` until the first check.
+    #[serde(default)]
+    note_changes_since: Option<i64>,
+    #[serde(default)]
+    note_changes_after: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -148,12 +169,32 @@ impl CloudCapture {
     /// The id it has in every Mac's history: the one the Mac that took it gave
     /// it, or the cloud id for one from the web.
     fn local_id(&self) -> String {
-        self.client_capture_id
-            .as_deref()
-            .filter(|id| uuid::Uuid::parse_str(id).is_ok())
-            .unwrap_or(&self.id)
-            .to_string()
+        local_id(self.client_capture_id.as_deref(), &self.id)
     }
+}
+
+fn local_id(client_capture_id: Option<&str>, cloud_id: &str) -> String {
+    client_capture_id
+        .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+        .unwrap_or(cloud_id)
+        .to_string()
+}
+
+/// A note changed on any of the user's devices, oldest change first.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CloudNoteChange {
+    id: String,
+    #[serde(default)]
+    client_capture_id: Option<String>,
+    /// Missing from a server that has no change feed yet.
+    #[serde(default)]
+    updated_at: Option<i64>,
+}
+
+#[derive(Deserialize)]
+struct CloudNoteChanges {
+    items: Vec<CloudNoteChange>,
 }
 
 #[derive(Deserialize)]
@@ -183,6 +224,36 @@ pub fn origins<R: Runtime>(app: &AppHandle<R>) -> BTreeMap<String, String> {
     load_state(app).map(|state| state.origins).unwrap_or_default()
 }
 
+/// Called when a note's text was edited on this Mac: the new text goes to the
+/// user's other Macs on the next pass, which starts now.
+pub fn note_edited<R: Runtime>(app: &AppHandle<R>, id: &str) {
+    if let Err(error) = update_state(app, |state| state.edited.insert(id.to_string())) {
+        tracing::warn!(%id, "capture sync: could not record a note edit: {error}");
+    }
+    nudge();
+}
+
+fn text_hash(text: &str) -> String {
+    hex::encode(sha2::Sha256::digest(text.as_bytes()))
+}
+
+/// The note as first saved or brought in.
+fn note_file_text(recording: &StoredRecording) -> Option<String> {
+    let folder = recording.folder_path.as_deref()?;
+    let bytes = std::fs::read(Path::new(folder).join("note.md")).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// A note's text as this Mac shows it: its history text, which edits change, else its file.
+fn note_text(recording: &StoredRecording) -> Option<String> {
+    recording.transcript.clone().filter(|text| !text.trim().is_empty()).or_else(|| note_file_text(recording))
+}
+
+/// The hash of the text the server last had from, or gave, this Mac.
+fn synced_hash(state: &SyncState, recording: &StoredRecording) -> Option<String> {
+    state.note_hashes.get(&recording.id).cloned().or_else(|| note_file_text(recording).map(|text| text_hash(&text)))
+}
+
 /// Called before a capture is deleted: a pulled capture stays deleted on this
 /// Mac. Returns whether it was a pulled capture, for `undismiss`.
 pub fn dismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<bool, String> {
@@ -192,6 +263,7 @@ pub fn dismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<bool, String>
     update_state(app, |state| {
         state.pulled.remove(id);
         state.origins.remove(id);
+        state.edited.remove(id);
         state.dismissed.insert(id.to_string());
     })?;
     Ok(true)
@@ -209,8 +281,256 @@ pub fn undismiss<R: Runtime>(app: &AppHandle<R>, id: &str) -> Result<(), String>
 /// back sooner when more are waiting.
 pub(crate) async fn run<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str, root: &Path) -> Result<usize> {
     let sent = upload(app, api, token).await?;
+    let edits_sent = send_edits(app, api, token).await?;
     let arrived = pull(app, api, token, root).await?;
-    Ok(sent + arrived)
+    let edits_in = pull_edits(app, api, token).await?;
+    Ok(sent + edits_sent + arrived + edits_in)
+}
+
+/// Notes edited here to send this pass, each with its text now.
+struct EditPlan {
+    items: Vec<(StoredRecording, String)>,
+}
+
+/// The edited notes to send this pass, or `None` while the server asked us to
+/// wait. Notes with nothing new to send leave the queue. Once per launch and
+/// once a day every shared note is checked, for an edit whose mark was lost.
+fn plan_edits<R: Runtime>(app: &AppHandle<R>, credential: &str, now: i64) -> Result<Option<EditPlan>, String> {
+    let state = load_state(app)?;
+    if state.paused_until.is_some_and(|until| now < until) {
+        return Ok(None);
+    }
+    if state.refused.as_ref().is_some_and(|refused| refused.credential == credential && now - refused.at < REFUSED_RECHECK_MS) {
+        return Ok(None);
+    }
+    let sweep = deep_walk_due(state.edits_swept_at, now);
+    let mut candidates: Vec<&String> = state.edited.iter().collect();
+    if sweep {
+        candidates.extend(state.uploaded.iter().chain(state.pulled.iter()).filter(|id| !state.edited.contains(*id)));
+    }
+    let mut items = Vec::new();
+    let mut settled = Vec::new();
+    let mut complete = true;
+    for id in candidates {
+        if items.len() >= PER_PASS {
+            complete = false;
+            break;
+        }
+        // Not on the server yet: it stays queued until its first upload.
+        if !state.uploaded.contains(id) && !state.pulled.contains(id) {
+            continue;
+        }
+        if FAILED.failed_recently(id) {
+            continue;
+        }
+        let Some(recording) = store::get(app, id)?.filter(|recording| recording.source == "note") else {
+            settled.push(id.clone());
+            continue;
+        };
+        let text = note_text(&recording).filter(|text| !text.trim().is_empty() && text.len() as u64 <= MAX_NOTE_BYTES);
+        let Some(text) = text else {
+            settled.push(id.clone());
+            continue;
+        };
+        if synced_hash(&state, &recording).as_deref() == Some(text_hash(&text).as_str()) {
+            settled.push(id.clone());
+            continue;
+        }
+        items.push((recording, text));
+    }
+    let swept = sweep && complete;
+    if !settled.is_empty() || swept {
+        update_state(app, |state| {
+            for id in &settled {
+                state.edited.remove(id);
+            }
+            if swept {
+                state.edits_swept_at = Some(now);
+            }
+        })?;
+    }
+    Ok(Some(EditPlan { items }))
+}
+
+/// Sends the new text of notes edited on this Mac. Returns how many went up.
+async fn send_edits<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str) -> Result<usize> {
+    let now = now_ms();
+    let credential = fingerprint(token);
+    let plan = {
+        let app = app.clone();
+        let credential = credential.clone();
+        crate::sync::blocking(move || plan_edits(&app, &credential, now)).await?
+    };
+    let Some(plan) = plan else { return Ok(0) };
+    let mut sent = 0;
+    for (recording, text) in plan.items {
+        let id = recording.id.clone();
+        let hash = text_hash(&text);
+        let recorded = match put_note(api, token, &id, &text).await {
+            // The hash is recorded, not the queue cleared: an edit made since
+            // this text was read is then sent next pass.
+            Ok(true) => {
+                sent += 1;
+                hash
+            }
+            // The server has no such note (deleted elsewhere) or won't take this
+            // text: never sent again unless it changes once more.
+            Ok(false) => hash,
+            Err(error) if error.downcast_ref::<crate::sync::Unauthorized>().is_some() => return Err(error),
+            Err(error) if error.downcast_ref::<RateLimited>().is_some() || error.downcast_ref::<Refused>().is_some() => {
+                let pause = error.downcast_ref::<RateLimited>().map(|limited| limited.0);
+                let app = app.clone();
+                crate::sync::blocking(move || {
+                    update_state(&app, |state| match pause {
+                        Some(until) => state.paused_until = Some(until),
+                        None => state.refused = Some(Refusal { credential, at: now }),
+                    })
+                })
+                .await?;
+                return Ok(sent);
+            }
+            Err(error) => {
+                tracing::warn!(%id, "capture sync: could not send a note edit: {error:#}");
+                FAILED.mark(&id);
+                continue;
+            }
+        };
+        let app = app.clone();
+        crate::sync::blocking(move || update_state(&app, |state| state.note_hashes.insert(id, recorded))).await?;
+    }
+    Ok(sent)
+}
+
+/// Replaces the note's text on the server. `Ok(false)` when the server never
+/// will take it: it has no such note, or refuses the text.
+async fn put_note(api: &Api, token: &str, id: &str, text: &str) -> Result<bool> {
+    let response = api
+        .client
+        .put(api.url("/api/devices/captures"))
+        .bearer_auth(token)
+        .timeout(upload_timeout(text.len() as u64))
+        .header("content-type", NOTE_TYPE)
+        .header("x-client-capture-id", id)
+        .body(text.to_string())
+        .send()
+        .await
+        .context("send note edit")?;
+    let status = response.status();
+    if status.is_success() {
+        return Ok(true);
+    }
+    match status.as_u16() {
+        400 | 404 | 413 | 415 => Ok(false),
+        429 => Err(anyhow!(RateLimited(retry_after(&response, now_ms())))),
+        403 => Err(anyhow!(Refused)),
+        _ => Err(crate::sync::http_error("send note edit", response).await),
+    }
+}
+
+/// Brings in edits made on the user's other devices to notes this Mac has.
+/// Returns how many notes changed here.
+async fn pull_edits<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str) -> Result<usize> {
+    let state = {
+        let app = app.clone();
+        crate::sync::blocking(move || load_state(&app)).await?
+    };
+    let since = state.note_changes_since.unwrap_or_else(|| now_ms() - FIRST_CHANGES_WINDOW_MS);
+    let after = state.note_changes_after.clone().unwrap_or_default();
+    let response = api
+        .client
+        .get(api.url(&format!(
+            "/api/devices/captures?changedSince={since}&after={}&limit={CHANGES_PAGE}",
+            percent_encode(&after)
+        )))
+        .bearer_auth(token)
+        .send()
+        .await
+        .context("list note edits")?;
+    if !response.status().is_success() {
+        return Err(crate::sync::http_error("list note edits", response).await);
+    }
+    let listed: CloudNoteChanges = response.json().await.context("decode note edits")?;
+    let mut cursor = (since, after.clone());
+    let mut changed = 0;
+    for change in listed.items {
+        // A server without the change feed answers with the plain list.
+        let Some(updated_at) = change.updated_at else { break };
+        match apply_edit(app, api, token, &change).await {
+            Ok(applied) => changed += usize::from(applied),
+            Err(error) if error.downcast_ref::<crate::sync::Unauthorized>().is_some() => return Err(error),
+            // Tried again from here next pass.
+            Err(error) => {
+                tracing::warn!(id = %change.id, "capture sync: could not bring in a note edit: {error:#}");
+                break;
+            }
+        }
+        cursor = (updated_at, change.id);
+    }
+    if cursor != (since, after) || state.note_changes_since.is_none() {
+        let app = app.clone();
+        crate::sync::blocking(move || {
+            update_state(&app, |state| {
+                state.note_changes_since = Some(cursor.0);
+                state.note_changes_after = Some(cursor.1);
+            })
+        })
+        .await?;
+    }
+    if changed > 0 {
+        if let Err(error) = app.emit("recordings:updated", ()) {
+            tracing::warn!("capture sync: could not announce note edits: {error}");
+        }
+    }
+    Ok(changed)
+}
+
+/// Puts the cloud's text of one changed note into this Mac's history. False
+/// when nothing changed here: the note is not on this Mac (the pull brings
+/// its latest text), the text is the same, or this Mac has an edit of its own
+/// not sent yet, which wins and goes up next.
+async fn apply_edit<R: Runtime>(app: &AppHandle<R>, api: &Api, token: &str, change: &CloudNoteChange) -> Result<bool> {
+    let id = local_id(change.client_capture_id.as_deref(), &change.id);
+    let local = {
+        let (app, id) = (app.clone(), id.clone());
+        crate::sync::blocking(move || -> Result<Option<(String, Option<String>)>, String> {
+            let state = load_state(&app)?;
+            if state.dismissed.contains(&id) {
+                return Ok(None);
+            }
+            let Some(recording) = store::get(&app, &id)?.filter(|recording| recording.source == "note") else {
+                return Ok(None);
+            };
+            let text = note_text(&recording).unwrap_or_default();
+            Ok(Some((text_hash(&text), synced_hash(&state, &recording))))
+        })
+        .await?
+    };
+    let Some((local_hash, synced)) = local else { return Ok(false) };
+    if synced.as_deref() != Some(local_hash.as_str()) {
+        return Ok(false);
+    }
+    let body = download(api, token, &change.id).await?;
+    let text = String::from_utf8_lossy(&body).into_owned();
+    let hash = text_hash(&text);
+    let app = app.clone();
+    crate::sync::blocking(move || -> Result<bool, String> {
+        if hash == local_hash {
+            update_state(&app, |state| state.note_hashes.insert(id.clone(), hash))?;
+            return Ok(false);
+        }
+        // Recorded first, so the save's own edit mark finds nothing to send back.
+        let before = update_state(&app, |state| state.note_hashes.insert(id.clone(), hash))?;
+        if let Err(error) = store::save_preview_transcript(&app, &id, &text) {
+            // Put back, or this Mac's older text would look like an edit to send.
+            update_state(&app, |state| match before {
+                Some(before) => state.note_hashes.insert(id.clone(), before),
+                None => state.note_hashes.remove(&id),
+            })?;
+            return Err(error);
+        }
+        Ok(true)
+    })
+    .await
 }
 
 /// A history row the upload scan looked at.
@@ -909,6 +1229,94 @@ mod tests {
 
         assert_eq!(upload(handle, &api, "token").await.unwrap(), 1);
         assert_eq!(upload(handle, &api, "token").await.unwrap(), 0, "already uploaded");
+    }
+
+    /// A note of this Mac's that the server already has.
+    async fn uploaded_note(handle: &AppHandle<MockRuntime>, root: &Path, server: &MockServer, text: &str) -> String {
+        let id = uuid::Uuid::new_v4().to_string();
+        note(handle, root, &id, text);
+        let created = Mock::given(method("POST"))
+            .and(path("/api/devices/captures"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(serde_json::json!({ "id": "cap_1" })))
+            .expect(1)
+            .mount_as_scoped(server)
+            .await;
+        assert_eq!(upload(handle, &Api::new(server.uri()).unwrap(), "token").await.unwrap(), 1);
+        drop(created);
+        id
+    }
+
+    fn change(id: &str, updated_at: i64) -> ResponseTemplate {
+        listing(serde_json::json!([{ "id": "cap_1", "clientCaptureId": id, "title": "Note", "contentType": "text/markdown", "createdAt": 1_700_000_000_000_i64, "updatedAt": updated_at }]))
+    }
+
+    #[tokio::test]
+    async fn an_edited_note_is_sent_once_with_its_new_text() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        let id = uploaded_note(handle, &root, &server, "first").await;
+        let api = Api::new(server.uri()).unwrap();
+        assert_eq!(send_edits(handle, &api, "token").await.unwrap(), 0, "nothing edited yet");
+
+        store::save_preview_transcript(handle, &id, "first, then more").unwrap();
+        assert!(load_state(handle).unwrap().edited.contains(&id));
+        Mock::given(method("PUT"))
+            .and(path("/api/devices/captures"))
+            .and(header("x-client-capture-id", id.as_str()))
+            .and(header("content-type", "text/markdown"))
+            .and(wiremock::matchers::body_string("first, then more"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({ "id": "cap_1", "updatedAt": 1 })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        assert_eq!(send_edits(handle, &api, "token").await.unwrap(), 1);
+        assert_eq!(send_edits(handle, &api, "token").await.unwrap(), 0, "already sent");
+        assert!(!load_state(handle).unwrap().edited.contains(&id));
+    }
+
+    #[tokio::test]
+    async fn an_edit_from_another_mac_replaces_the_text_here_and_is_not_sent_back() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        let id = uploaded_note(handle, &root, &server, "first").await;
+        Mock::given(method("GET")).and(path("/api/devices/captures")).respond_with(change(&id, 1_700_000_500_000)).mount(&server).await;
+        Mock::given(method("GET"))
+            .and(path("/api/devices/captures/cap_1"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(b"edited on the laptop".to_vec()))
+            .mount(&server)
+            .await;
+        Mock::given(method("PUT")).and(path("/api/devices/captures")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&server).await;
+        let api = Api::new(server.uri()).unwrap();
+
+        assert_eq!(pull_edits(handle, &api, "token").await.unwrap(), 1);
+        assert_eq!(store::get(handle, &id).unwrap().unwrap().transcript.as_deref(), Some("edited on the laptop"));
+        let state = load_state(handle).unwrap();
+        assert_eq!(state.note_changes_since, Some(1_700_000_500_000));
+        assert_eq!(state.note_changes_after.as_deref(), Some("cap_1"));
+        assert_eq!(send_edits(handle, &api, "token").await.unwrap(), 0, "not sent back");
+        assert_eq!(pull_edits(handle, &api, "token").await.unwrap(), 0, "already here");
+    }
+
+    #[tokio::test]
+    async fn an_edit_made_here_and_not_sent_yet_wins_over_one_from_elsewhere() {
+        let (app, scratch) = app();
+        let handle = app.handle();
+        let root = scratch.0.join("Recordings");
+        let server = MockServer::start().await;
+        let id = uploaded_note(handle, &root, &server, "first").await;
+        store::save_preview_transcript(handle, &id, "edited here").unwrap();
+        Mock::given(method("GET")).and(path("/api/devices/captures")).respond_with(change(&id, 1_700_000_500_000)).mount(&server).await;
+        Mock::given(method("GET")).and(path("/api/devices/captures/cap_1")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&server).await;
+        let api = Api::new(server.uri()).unwrap();
+
+        assert_eq!(pull_edits(handle, &api, "token").await.unwrap(), 0);
+        assert_eq!(store::get(handle, &id).unwrap().unwrap().transcript.as_deref(), Some("edited here"));
+        assert!(load_state(handle).unwrap().edited.contains(&id), "still to send");
     }
 
     #[tokio::test]

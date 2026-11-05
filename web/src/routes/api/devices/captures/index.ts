@@ -43,6 +43,13 @@ export const Route = createFileRoute('/api/devices/captures/')({
         }
         const search = new URL(request.url).searchParams;
         const limit = clampLimit(search.get('limit'), 50, 200);
+        // Notes changed since a cursor, from every device: how edits reach the user's other Macs.
+        if (search.has('changedSince')) {
+          const since = Math.max(Math.floor(Number(search.get('changedSince')) || 0), 0);
+          const afterId = search.get('after') ?? '';
+          const items = await capturesRepo.listNoteChanges(getDb(), { userId: actor.userId, since, afterId, limit });
+          return Response.json({ items });
+        }
         const offset = Math.max(Math.floor(Number(search.get('offset')) || 0), 0);
         if (offset > MAX_OFFSET) return Response.json({ items: [] });
         const items = await capturesRepo.listForDevice(getDb(), {
@@ -152,6 +159,55 @@ export const Route = createFileRoute('/api/devices/captures/')({
           if (winner) return Response.json({ id: winner.id, idempotent: true });
           throw error;
         }
+      },
+
+      // A note edited on one of the user's Macs: its whole new text, under the id
+      // the Mac that wrote it gave it. Any of the user's devices may edit it. 404
+      // when there is no such note yet, so the Mac uploads it with POST instead.
+      PUT: async ({ request }) => {
+        let actor;
+        try {
+          actor = await resolveIngestActor(request);
+        } catch {
+          return Response.json({ error: 'unauthenticated' }, { status: 401 });
+        }
+        const clientId = clientIdSchema.safeParse(request.headers.get('x-client-capture-id'));
+        if (!clientId.success) return Response.json({ error: 'invalid x-client-capture-id' }, { status: 400 });
+        const contentType = (request.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
+        if (contentType !== 'text/markdown') {
+          return Response.json({ error: `unsupported media type: ${contentType || 'unknown'}` }, { status: 415 });
+        }
+        const bytes = Number(request.headers.get('content-length') ?? '');
+        if (!Number.isFinite(bytes) || bytes <= 0) return Response.json({ error: 'empty or unsized upload' }, { status: 411 });
+        if (bytes > NOTE.maxBytes) return Response.json({ error: `note too large (${NOTE.maxBytes / (1024 * 1024)} MB max)` }, { status: 413 });
+        if (!request.body) return Response.json({ error: 'empty upload' }, { status: 400 });
+
+        const db = getDb();
+        const existing = await capturesRepo.getByClientId(db, { userId: actor.userId, clientCaptureId: clientId.data });
+        if (!existing || existing.deletedAt !== null || existing.kind !== 'note') {
+          return Response.json({ error: 'not found' }, { status: 404 });
+        }
+        const chargedAt = Date.now();
+        const overQuota = await guardUserQuota(actor.userId, 'capture-sync', chargedAt);
+        if (overQuota) return overQuota;
+
+        const body = await readCappedBody(request.body, bytes);
+        if (!body || body.byteLength !== bytes) {
+          await refundUserQuota(actor.userId, 'capture-sync', chargedAt);
+          return Response.json({ error: 'upload interrupted' }, { status: 400 });
+        }
+        const text = new TextDecoder().decode(body);
+        // The object first: a reader who sees the new change time then gets the new text.
+        await putObject(existing.r2Key, body, contentType);
+        const updatedAt = await capturesRepo.replaceNote(db, {
+          captureId: existing.id,
+          userId: actor.userId,
+          text,
+          bytes,
+          title: headerText(request.headers.get('x-title')),
+        });
+        if (updatedAt === null) return Response.json({ error: 'not found' }, { status: 404 });
+        return Response.json({ id: existing.id, updatedAt });
       },
     },
   },
