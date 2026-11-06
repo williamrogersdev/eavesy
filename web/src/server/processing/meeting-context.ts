@@ -11,7 +11,10 @@ import type { Db } from './shared';
 
 /** How far back the last meeting with the same people is looked for. */
 const PREVIOUS_WITHIN_MS = 120 * 24 * 60 * 60 * 1_000;
-/** Earlier calendar meetings with notes compared, newest first. */
+/**
+ * Earlier calendar meetings with notes compared, newest first. A match older
+ * than this many meetings is missed: fine for notes, which want the recent one.
+ */
 const PREVIOUS_CANDIDATES = 100;
 
 type MeetingRef = { id: string; userId: string; calendarEventId: string | null; startedAt: number };
@@ -51,7 +54,7 @@ export async function loadMeetingContext(
 
 /**
  * The newest finished meeting before this one, from the calendar, with the
- * same people (or, for a recurring meeting, the same title), that has notes.
+ * same people, that has notes.
  */
 async function previousMeeting(
   db: Db,
@@ -84,19 +87,14 @@ async function previousMeeting(
       isNull(meetings.deletedAt),
       lt(meetings.startedAt, meeting.startedAt),
       gt(meetings.startedAt, meeting.startedAt - PREVIOUS_WITHIN_MS),
-      ne(summaries.tldr, ''),
     ))
     .orderBy(desc(meetings.startedAt))
     .limit(PREVIOUS_CANDIDATES);
-  const title = context.title.trim().toLowerCase();
-  const mine = new Set(emails);
   for (const candidate of candidates) {
+    if (!candidate.tldr.trim()) continue;
+    // Matched by people, not title: unrelated meetings share titles like "Sync".
     const theirs = attendeesFrom(decode<unknown[]>(candidate.participantsJson, []), ownerEmail).map((p) => p.email);
-    // A recurring meeting's guests drift, so the same title counts with someone in common;
-    // a generic title ("Sync") with nobody shared is a different meeting.
-    const recurring = title !== '(no title)' && candidate.eventTitle.trim().toLowerCase() === title && theirs.some((email) => mine.has(email));
-    if (!sameCrowd(emails, theirs) && !recurring) continue;
-    return { title: candidate.title, startedAt: candidate.startedAt, tldr: candidate.tldr };
+    if (sameCrowd(emails, theirs)) return { title: candidate.title, startedAt: candidate.startedAt, tldr: candidate.tldr };
   }
   return null;
 }

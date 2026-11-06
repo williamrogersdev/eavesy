@@ -626,10 +626,10 @@ describe('calendar context', () => {
     expect(t.meeting().title).toBe('Meeting recording');
   });
 
-  test('a same-titled meeting with nobody in common is not the previous meeting', async () => {
+  test('a same-titled meeting with only one guest in common is not the previous meeting', async () => {
     const t = setup();
     linkEvent(t);
-    t.sqlite.run(`UPDATE calendar_events SET title = 'Sync', participants_json = '[{"email":"zed@initech.com"}]' WHERE id = 'e0'`);
+    t.sqlite.run(`UPDATE calendar_events SET title = 'Sync', participants_json = '[{"email":"tom@globex.com"},{"email":"zed@initech.com"},{"email":"amy@initech.com"}]' WHERE id = 'e0'`);
     t.sqlite.run(`UPDATE calendar_events SET title = 'Sync' WHERE id = 'e1'`);
     t.addSegment(0, 'complete', 'system');
     t.sqlite.run(`INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, speaker_id, text) VALUES ('a', 'm1', 0, 1000, 'them', 'Hello.')`);
@@ -638,6 +638,22 @@ describe('calendar context', () => {
     await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
     const request = api.calls[0] as { messages: { content: string }[] };
     expect(request.messages[0].content).not.toContain('previous_meeting');
+  });
+
+  test("a notetaker's meeting is a call before its speakers are named", async () => {
+    const t = setup();
+    t.sqlite.run(`UPDATE meetings SET source = 'bot'`);
+    t.addSegment(0, 'complete', 'mixed');
+    t.sqlite.run(`UPDATE meeting_segments SET duration_ms = 600000`);
+    t.sqlite.run(
+      `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, speaker_id, text) VALUES
+       ('a', 'm1', 0, 1000, NULL, 'Welcome, everyone.'),
+       ('b', 'm1', 200000, 201000, NULL, 'Let us start with pricing.')`,
+    );
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect((api.calls[0] as { system: string }).system).toContain('not a voice note');
   });
 
   test('a solo recording during an event is not called a conversation', async () => {

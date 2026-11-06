@@ -279,8 +279,9 @@ async function writeSummary(
     othersName: rendered.othersName,
     labelled: rendered.labelled,
     meetingContext: meetingContextBlock(calendar) || undefined,
-    // Judged by who was heard: an event alone can be a solo block the user dictated in.
-    call: rendered.labelled,
+    // Judged by who was heard (an event alone can be a solo block the user dictated in);
+    // a notetaker is always in a call, even before its speaker timeline names anyone.
+    call: rendered.labelled || meeting.source === 'bot',
     chapters: wantChapters,
     notesLanguage: userRow?.notesLanguage,
   };
