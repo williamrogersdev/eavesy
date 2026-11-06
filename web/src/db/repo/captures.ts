@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
 import { captures, devices } from '../schema';
@@ -127,6 +127,86 @@ export async function listForDevice(
     .orderBy(desc(captures.createdAt), desc(captures.id))
     .limit(args.limit)
     .offset(args.offset);
+}
+
+/**
+ * Notes changed after a cursor, oldest change first, from every device
+ * (the one asking too): a Mac brings in edits made on the user's other Macs,
+ * including edits to notes it first wrote itself. The cursor is the last
+ * change seen and its id, for notes changed at the same moment.
+ */
+export async function listNoteChanges(
+  db: AppDb,
+  args: { userId: string; since: number; afterId: string; limit: number },
+) {
+  return await db
+    .select({
+      id: captures.id,
+      clientCaptureId: captures.clientCaptureId,
+      title: captures.title,
+      contentType: captures.contentType,
+      createdAt: captures.createdAt,
+      updatedAt: captures.updatedAt,
+    })
+    .from(captures)
+    .where(
+      and(
+        eq(captures.userId, args.userId),
+        eq(captures.kind, 'note'),
+        isNull(captures.deletedAt),
+        or(
+          gt(captures.updatedAt, args.since),
+          and(eq(captures.updatedAt, args.since), gt(captures.id, args.afterId)),
+        ),
+      ),
+    )
+    .orderBy(asc(captures.updatedAt), asc(captures.id))
+    .limit(args.limit);
+}
+
+/**
+ * Points a note at its new text (and title, when given) after an edit on one
+ * of the user's Macs. Returns the change time, or null when there is no such
+ * live note. The change time is past every other note of the user's, so the
+ * change feed's cursor never skips an edit: not one made in the same
+ * millisecond, nor one stamped by a server whose clock runs behind.
+ */
+export async function replaceNote(
+  db: AppDb,
+  args: {
+    captureId: string;
+    userId: string;
+    text: string;
+    bytes: number;
+    r2Key: string;
+    /** Only while the row still points at this object: null when another edit moved it first. */
+    ifR2Key?: string;
+    title?: string | null;
+  },
+): Promise<number | null> {
+  const newest = sql`(SELECT COALESCE(MAX(c.updated_at), 0) + 1 FROM captures AS c WHERE c.user_id = ${args.userId} AND c.kind = 'note')`;
+  const rows = await db
+    .update(captures)
+    .set({
+      transcript: args.text,
+      transcriptStatus: 'complete',
+      transcriptError: null,
+      bytes: args.bytes,
+      r2Key: args.r2Key,
+      ...(args.title ? { title: args.title } : {}),
+      updatedAt: sql`MAX(${Date.now()}, ${newest})`,
+    })
+    .where(
+      and(
+        eq(captures.id, args.captureId),
+        eq(captures.userId, args.userId),
+        eq(captures.kind, 'note'),
+        isNull(captures.deletedAt),
+        args.ifR2Key === undefined ? undefined : eq(captures.r2Key, args.ifR2Key),
+      ),
+    )
+    .returning({ updatedAt: captures.updatedAt });
+  return rows[0]?.updatedAt ?? null;
 }
 
 /** Returns false when `ifStatus` was given and the row had moved on. */

@@ -379,6 +379,8 @@ fn toggle_launcher_on_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if panel::show(app, &window).is_ok() {
             let _ = app.emit(EVENT_LAUNCHER_OPENED, ());
+            // Bring in notes and images the user's other Macs just saved.
+            crate::capture_sync::nudge();
         }
     }
 }
@@ -405,6 +407,8 @@ fn show_launcher_on_main(app: &AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         if panel::show(app, &window).is_ok() && !was_visible {
             let _ = app.emit(EVENT_LAUNCHER_OPENED, ());
+            // Bring in notes and images the user's other Macs just saved.
+            crate::capture_sync::nudge();
         }
     }
 }

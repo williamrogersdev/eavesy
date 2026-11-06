@@ -26,6 +26,7 @@ pub async fn capture_screenshot(app: AppHandle) -> Result<String, String> {
     let recording = store::StoredRecording { id: id.clone(), title: "Screenshot".into(), started_at_ms: chrono::Utc::now().timestamp_millis(), duration_sec: 0, source: "screenshot".into(), status: "complete".into(), summary: None, transcript: None, notes: None, has_audio: false, has_video: false, folder_path: Some(folder.to_string_lossy().into_owned()) };
     std::fs::write(folder.join("capture.json"), serde_json::to_vec_pretty(&recording).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     store::append(&app, recording)?;
+    crate::capture_sync::nudge();
     let _ = app.emit("recordings:updated", ());
     // The HUD flashes a preview to copy or open; the clipboard is left as it was.
     hud::set_state(&app, hud::HudState { phase: hud::Phase::Done, session_id: Some(id.clone()), mode: Some("image".into()), started_at_ms: None, message: None, notice: None });
@@ -116,6 +117,7 @@ pub async fn paste_clip(app: AppHandle) -> Result<String, String> {
     };
     std::fs::write(folder.join("capture.json"), serde_json::to_vec_pretty(&recording).map_err(|error| error.to_string())?).map_err(|error| error.to_string())?;
     store::append(&app, recording)?;
+    crate::capture_sync::nudge();
     let _ = app.emit("recordings:updated", ());
     Ok(id)
 }

@@ -1,0 +1,1 @@
+CREATE INDEX `captures_user_kind_updated_idx` ON `captures` (`user_id`,`kind`,`updated_at`);
