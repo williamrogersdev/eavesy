@@ -1,4 +1,4 @@
-import { and, desc, eq, gt, isNull, lt, ne, or } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNull, lt, ne, or, sql } from 'drizzle-orm';
 import { calendarEvents, meetings, summaries, users } from '@/db/schema';
 import { decode } from '@/db/codec';
 import {
@@ -11,8 +11,8 @@ import type { Db } from './shared';
 
 /** How far back the last meeting with the same people is looked for. */
 const PREVIOUS_WITHIN_MS = 120 * 24 * 60 * 60 * 1_000;
-/** Earlier calendar meetings compared, newest first. */
-const PREVIOUS_CANDIDATES = 40;
+/** Earlier calendar meetings with notes compared, newest first. */
+const PREVIOUS_CANDIDATES = 100;
 
 type MeetingRef = { id: string; userId: string; calendarEventId: string | null; startedAt: number };
 
@@ -37,6 +37,8 @@ export async function loadMeetingContext(
           ? or(eq(calendarEvents.id, meeting.calendarEventId), eq(calendarEvents.recordedMeetingId, meeting.id))
           : eq(calendarEvents.recordedMeetingId, meeting.id),
       ))
+      // The event the recording started from wins over one later marked as recorded by it.
+      .orderBy(asc(sql`CASE WHEN ${calendarEvents.id} = ${meeting.calendarEventId ?? ''} THEN 0 ELSE 1 END`), asc(calendarEvents.id))
       .limit(1)
   )[0];
   if (!event) return null;
@@ -59,16 +61,19 @@ async function previousMeeting(
   ownerEmail: string | null | undefined,
 ): Promise<PreviousMeeting | null> {
   const emails = context.attendees.map((person) => person.email);
+  if (emails.length === 0) return null;
+  // Only meetings with notes, so a busy calendar's unsummarized ones don't use up the window.
   const candidates = await db
     .select({
-      id: meetings.id,
       title: meetings.title,
       startedAt: meetings.startedAt,
       eventTitle: calendarEvents.title,
       participantsJson: calendarEvents.participantsJson,
+      tldr: summaries.tldr,
     })
     .from(meetings)
     .innerJoin(calendarEvents, eq(calendarEvents.id, meetings.calendarEventId))
+    .innerJoin(summaries, eq(summaries.meetingId, meetings.id))
     .where(and(
       eq(meetings.userId, meeting.userId),
       ne(meetings.id, meeting.id),
@@ -79,17 +84,19 @@ async function previousMeeting(
       isNull(meetings.deletedAt),
       lt(meetings.startedAt, meeting.startedAt),
       gt(meetings.startedAt, meeting.startedAt - PREVIOUS_WITHIN_MS),
+      ne(summaries.tldr, ''),
     ))
     .orderBy(desc(meetings.startedAt))
     .limit(PREVIOUS_CANDIDATES);
   const title = context.title.trim().toLowerCase();
+  const mine = new Set(emails);
   for (const candidate of candidates) {
     const theirs = attendeesFrom(decode<unknown[]>(candidate.participantsJson, []), ownerEmail).map((p) => p.email);
-    const recurring = title !== '(no title)' && candidate.eventTitle.trim().toLowerCase() === title && emails.length > 0;
+    // A recurring meeting's guests drift, so the same title counts with someone in common;
+    // a generic title ("Sync") with nobody shared is a different meeting.
+    const recurring = title !== '(no title)' && candidate.eventTitle.trim().toLowerCase() === title && theirs.some((email) => mine.has(email));
     if (!sameCrowd(emails, theirs) && !recurring) continue;
-    const summary = (await db.select({ tldr: summaries.tldr }).from(summaries).where(eq(summaries.meetingId, candidate.id)).limit(1))[0];
-    if (!summary?.tldr.trim()) continue;
-    return { title: candidate.title, startedAt: candidate.startedAt, tldr: summary.tldr };
+    return { title: candidate.title, startedAt: candidate.startedAt, tldr: candidate.tldr };
   }
   return null;
 }

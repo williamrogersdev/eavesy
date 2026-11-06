@@ -615,7 +615,7 @@ describe('calendar context', () => {
     const request = api.calls[0] as { system: string; messages: { content: string }[] };
     const content = request.messages[0].content;
     expect(content).toStartWith('<calendar_invite title="Pricing review">');
-    expect(content).toContain('- Priya Raman <priya.raman@globex.com> (Globex)');
+    expect(content).toContain('- Priya Raman (priya.raman@globex.com), Globex');
     expect(content).toContain('Agenda: Q3 pricing.');
     expect(content).toContain('Globex wanted a volume discount.');
     // One turn per speaker, after the reference material.
@@ -624,6 +624,37 @@ describe('calendar context', () => {
     expect(request.system).toContain('not a voice note');
     // The event's name stays the meeting's title.
     expect(t.meeting().title).toBe('Meeting recording');
+  });
+
+  test('a same-titled meeting with nobody in common is not the previous meeting', async () => {
+    const t = setup();
+    linkEvent(t);
+    t.sqlite.run(`UPDATE calendar_events SET title = 'Sync', participants_json = '[{"email":"zed@initech.com"}]' WHERE id = 'e0'`);
+    t.sqlite.run(`UPDATE calendar_events SET title = 'Sync' WHERE id = 'e1'`);
+    t.addSegment(0, 'complete', 'system');
+    t.sqlite.run(`INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, speaker_id, text) VALUES ('a', 'm1', 0, 1000, 'them', 'Hello.')`);
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    const request = api.calls[0] as { messages: { content: string }[] };
+    expect(request.messages[0].content).not.toContain('previous_meeting');
+  });
+
+  test('a solo recording during an event is not called a conversation', async () => {
+    const t = setup();
+    linkEvent(t);
+    t.addSegment(0, 'complete', 'mic');
+    t.sqlite.run(`UPDATE meeting_segments SET duration_ms = 600000`);
+    t.sqlite.run(
+      `INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, speaker_id, text) VALUES
+       ('a', 'm1', 0, 1000, 'you', 'Notes to self before the pricing call.'),
+       ('b', 'm1', 200000, 201000, 'you', 'Ask about volume tiers.')`,
+    );
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    const request = api.calls[0] as { system: string };
+    expect(request.system).not.toContain('not a voice note');
   });
 
   test("a call where only the other side spoke is still a call", async () => {

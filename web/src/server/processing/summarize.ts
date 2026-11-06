@@ -279,7 +279,8 @@ async function writeSummary(
     othersName: rendered.othersName,
     labelled: rendered.labelled,
     meetingContext: meetingContextBlock(calendar) || undefined,
-    call: Boolean(calendar) || meeting.source === 'bot' || rendered.labelled,
+    // Judged by who was heard: an event alone can be a solo block the user dictated in.
+    call: rendered.labelled,
     chapters: wantChapters,
     notesLanguage: userRow?.notesLanguage,
   };

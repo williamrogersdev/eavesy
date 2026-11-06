@@ -131,6 +131,11 @@ function fenced(text: string): string {
   return text.replace(/<(\/?)(calendar_invite|previous_meeting|transcript)/gi, '&lt;$1$2');
 }
 
+/** One line of text with no tags at all: guests' names and addresses, attribute values. */
+function inline(text: string): string {
+  return text.replace(/[\r\n]+/g, ' ').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, "'").trim();
+}
+
 /**
  * The calendar's part of the notes prompt, sent ahead of the transcript. The
  * invite text and the last meeting are wrapped and labelled as reference
@@ -143,10 +148,10 @@ export function meetingContextBlock(context: MeetingContext | null): string {
   const people = context.attendees.slice(0, MAX_PROMPT_ATTENDEES).map((person) => {
     const name = attendeeName(person);
     const company = companyOf(person.email);
-    return `- ${name ?? person.email}${name ? ` <${person.email}>` : ''}${company ? ` (${company})` : ''}`;
+    return `- ${inline(name ?? person.email)}${name ? ` (${inline(person.email)})` : ''}${company ? `, ${company}` : ''}`;
   });
   const more = context.attendees.length - people.length;
-  lines.push(`<calendar_invite title="${fenced(context.title).replace(/"/g, "'")}">`);
+  lines.push(`<calendar_invite title="${inline(context.title)}">`);
   if (people.length) {
     lines.push('Invited (besides the recorder):', ...people);
     if (more > 0) lines.push(`- and ${more} more`);
@@ -160,7 +165,7 @@ export function meetingContextBlock(context: MeetingContext | null): string {
   if (context.previous) {
     const date = new Date(context.previous.startedAt).toISOString().slice(0, 10);
     lines.push(
-      `<previous_meeting title="${fenced(context.previous.title).replace(/"/g, "'")}" date="${date}">`,
+      `<previous_meeting title="${inline(context.previous.title)}" date="${date}">`,
       fenced(context.previous.tldr.trim()),
       '</previous_meeting>',
     );
