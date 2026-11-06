@@ -18,7 +18,9 @@ import { anthropicForUser } from '@/lib/ai/client';
 import { requestMeetingSummary, summaryModel } from '@/lib/ai/meeting-summary';
 import { combinedContext } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
-import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
+import { isConversation, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
+import { meetingContextBlock } from '@/lib/meetings/meeting-context';
+import { loadMeetingContext } from './meeting-context';
 import { openUserKeys } from '@/server/secret-box';
 import { queueRecap } from '@/server/email/recaps';
 import { emitWebhookEvent, webhookItem, type WebhookEnv } from '@/server/webhooks';
@@ -47,23 +49,50 @@ export function summaryRetryDelaySeconds(inFlight: number, waitedMs: number) {
   return 60;
 }
 
+/** A turn longer than this starts a new line, so chapters still have places to start. */
+export const TURN_MAX_MS = 90_000;
+const TURN_MAX_CHARS = 1_500;
+
+/**
+ * The transcript as the notes model reads it. In a conversation, each line is
+ * labelled with its speaker, and one speaker's consecutive lines are one turn,
+ * as people took turns, instead of Whisper's sentence-sized pieces.
+ */
 export function transcriptText(
   lines: { speakerId: string | null; startMs: number; text: string }[],
   speakerNamesJson: string | null,
   opts: { timestamps?: boolean } = {},
 ) {
-  const labelled = hasBothSides(lines);
+  const labelled = isConversation(lines);
   const names = parseSpeakerNames(speakerNamesJson);
-  const text = lines
-    .map((line) => {
-      const time = opts.timestamps ? `[${clock(line.startMs)}] ` : '';
-      const who = labelled && line.speakerId ? `${speakerName(line.speakerId, names)}: ` : '';
-      return `${time}${who}${line.text}`;
-    })
+  const turns: { startMs: number; speaker: string | null; text: string }[] = [];
+  for (const line of lines) {
+    const text = line.text.trim();
+    if (!text) continue;
+    const speaker = labelled && line.speakerId ? speakerName(line.speakerId, names) : null;
+    const last = turns.at(-1);
+    if (
+      last && speaker !== null && last.speaker === speaker &&
+      line.startMs - last.startMs < TURN_MAX_MS && last.text.length + text.length < TURN_MAX_CHARS
+    ) {
+      last.text = `${last.text} ${text}`;
+      continue;
+    }
+    turns.push({ startMs: line.startMs, speaker, text });
+  }
+  const text = turns
+    .map((turn) => `${opts.timestamps ? `[${clock(turn.startMs)}] ` : ''}${turn.speaker ? `${turn.speaker}: ` : ''}${turn.text}`)
     .join('\n');
   // Only the Mac's own track has a recorder; a notetaker bot's speakers are all participants.
   const recorded = labelled && lines.some((line) => line.speakerId === 'you');
-  return { text, labelled, recorderName: recorded ? speakerName('you', names) : undefined };
+  // The Mac heard the call but not its own mic: the recorder listened, or their mic was off.
+  const othersOnly = labelled && !recorded && lines.some((line) => line.speakerId === 'them');
+  return {
+    text,
+    labelled,
+    recorderName: recorded ? speakerName('you', names) : undefined,
+    othersName: recorded || othersOnly ? speakerName('them', names) : undefined,
+  };
 }
 
 export async function handleSummarize(
@@ -238,6 +267,8 @@ async function writeSummary(
   const userRow = (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
   const plan = resolveModelPlan(userRow ? await openUserKeys(userRow) : undefined);
   const project = await projectsRepo.getForMeeting(db, meeting);
+  // The calendar's view of the meeting; the last one with the same people only for the final notes.
+  const calendar = await loadMeetingContext(db, meeting, { previous: mode.final });
   const useCredits = env.AI_SUMMARY_PROVIDER === 'workers-ai' && meeting.source === 'import';
   const args = {
     transcript,
@@ -245,7 +276,12 @@ async function writeSummary(
     priorSummary,
     rolling: !mode.final,
     recorderName: rendered.recorderName,
+    othersName: rendered.othersName,
     labelled: rendered.labelled,
+    meetingContext: meetingContextBlock(calendar) || undefined,
+    // Judged by who was heard (an event alone can be a solo block the user dictated in);
+    // a notetaker is always in a call, even before its speaker timeline names anyone.
+    call: rendered.labelled || meeting.source === 'bot',
     chapters: wantChapters,
     notesLanguage: userRow?.notesLanguage,
   };

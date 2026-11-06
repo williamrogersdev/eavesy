@@ -1,4 +1,4 @@
-import { hasBothSides, speakerName } from '@/lib/transcription/two-track';
+import { isConversation, speakerName } from '@/lib/transcription/two-track';
 import { meetingFolderSlug } from '@/lib/utils';
 
 export interface MeetingForExport {
@@ -117,7 +117,7 @@ export function renderTranscriptMd(
     for (const chapter of opts.chapters) body.push(`- [${formatTimestamp(chapter.startMs)}] ${chapter.title}`);
     body.push('', '## Transcript', '');
   }
-  const labelled = hasBothSides(segments.map((seg) => ({ speakerId: seg.speakerId ?? null })));
+  const labelled = isConversation(segments.map((seg) => ({ speakerId: seg.speakerId ?? null })));
   for (const seg of segments) {
     const ts = formatTimestamp(seg.startMs);
     const speaker =

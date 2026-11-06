@@ -1,4 +1,4 @@
-import { hasBothSides, speakerName } from './two-track';
+import { isConversation, speakerName } from './two-track';
 
 export type TranscriptKind = 'solo' | 'conversation';
 
@@ -20,7 +20,7 @@ const PARAGRAPH_MAX_CHARS = 900;
 
 /** Both sides of a call spoke: who said what matters. Otherwise it is one voice. */
 export function transcriptKind(lines: { speakerId: string | null }[]): TranscriptKind {
-  return hasBothSides(lines) ? 'conversation' : 'solo';
+  return isConversation(lines) ? 'conversation' : 'solo';
 }
 
 /**

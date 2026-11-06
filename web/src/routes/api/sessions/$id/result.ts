@@ -4,7 +4,7 @@ import { getDb } from '@/db/client';
 import { meetingSegments, summaries, transcriptSegments, userNotes } from '@/db/schema';
 import { resolveIngestActor } from '@/server/device-auth';
 import { ownedMeeting, transcriptReady } from '@/server/session-ingest';
-import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
+import { isConversation, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 
 export const Route = createFileRoute('/api/sessions/$id/result')({
   server: {
@@ -40,7 +40,7 @@ export const Route = createFileRoute('/api/sessions/$id/result')({
         ]);
         const summary = summaryRows[0];
         const names = parseSpeakerNames(meeting.speakerNamesJson);
-        const labelled = hasBothSides(segments);
+        const labelled = isConversation(segments);
         const transcript = segments.map((segment) => ({
           startMs: segment.startMs,
           text: segment.text,

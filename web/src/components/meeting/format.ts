@@ -1,4 +1,4 @@
-import { hasBothSides, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
+import { isConversation, parseSpeakerNames, speakerName } from '@/lib/transcription/two-track';
 import { clockLabel } from './transcript-player';
 import { type MeetingData, type MeetingMeta } from './types';
 
@@ -41,7 +41,7 @@ export function buildContextMd(data: MeetingData): string {
   } else if (meeting.agentTranscriptMd?.trim()) {
     out.push('## Transcript', '', meeting.agentTranscriptMd.trim());
   } else if (segments?.length) {
-    const labelled = hasBothSides(segments.map((s) => ({ speakerId: s.speakerId ?? null })));
+    const labelled = isConversation(segments.map((s) => ({ speakerId: s.speakerId ?? null })));
     const names = parseSpeakerNames(meeting.speakerNamesJson);
     out.push('## Transcript');
     segments.forEach((s) => {
