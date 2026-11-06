@@ -2,6 +2,7 @@ import type Anthropic from '@anthropic-ai/sdk';
 import { notesLanguageRule } from '@/lib/transcription/language';
 import { CHAPTER_INSTRUCTIONS, CHAPTERS_SCHEMA } from './chapters';
 import { MODELS } from './client';
+import { MEETING_CONTEXT_RULES } from '@/lib/meetings/meeting-context';
 
 export const MEETING_SUMMARY_MODEL = MODELS.summary;
 export const ROLLING_NOTES_MODEL = MODELS.rollingNotes;
@@ -80,8 +81,14 @@ export interface MeetingSummaryRequest {
   priorSummary: string;
   rolling: boolean;
   recorderName?: string;
-  /** Lines carry participants' names (a notetaker bot's diarization) rather than the Mac's two sides. */
+  /** The label on the call side's lines ("Them", or what the user renamed it), when the Mac recorded the call. */
+  othersName?: string;
+  /** Lines carry speaker labels: the Mac's two sides, or a notetaker bot's participants. */
   labelled?: boolean;
+  /** What the calendar knew (`meetingContextBlock`): sent ahead of the transcript, as reference material. */
+  meetingContext?: string;
+  /** A meeting with other people (from the calendar, a notetaker, or the call's audio), not a voice note. */
+  call?: boolean;
   chapters?: boolean;
   /** The language to write notes in; absent keeps the meeting's own. */
   notesLanguage?: string | null;
@@ -97,11 +104,17 @@ function schemaFor(args: MeetingSummaryRequest) {
 }
 
 export function meetingSummarySystemPrompt(args: MeetingSummaryRequest): string {
+  const others = args.othersName ?? 'Them';
   const speakers = args.recorderName
-    ? `Lines are prefixed with the speaker. "${args.recorderName}" is the person who recorded the meeting, speaking into their own microphone; the other label is everyone they spoke with over the call.`
-    : args.labelled
-      ? 'Lines are prefixed with the speaker: each participant\'s name as the meeting platform showed it, or "Speaker N" when it showed none. Attribute decisions and action items to those speakers; do not invent other identities.'
-      : 'No speaker labels are available. Do not invent speaker identities.';
+    ? `Lines are prefixed with the speaker. "${args.recorderName}" is the person who recorded the meeting, speaking into their own microphone; "${others}" is everyone else on the call, possibly several people under one label. Tell those people apart only where the transcript makes it clear (someone is addressed by name, introduces themselves), and otherwise attribute to "${others}".`
+    : args.othersName
+      ? `Lines are prefixed with "${others}": everyone on the call except the person who recorded it, whose own microphone picked up nothing (they listened, or were muted). Several people can be behind that one label; tell them apart only where the transcript makes it clear.`
+      : args.labelled
+        ? 'Lines are prefixed with the speaker: each participant\'s name as the meeting platform showed it, or "Speaker N" when it showed none. Attribute decisions and action items to those speakers; do not invent other identities.'
+        : 'No speaker labels are available. Do not invent speaker identities.';
+  const kind = args.call
+    ? 'This is a conversation between several people, not a voice note: write the notes as a record of what the participants discussed, decided and committed to.'
+    : '';
   const context = args.contextBlurb
     ? `Context supplied by the user, to treat as ground truth:\n${args.contextBlurb}`
     : '';
@@ -111,8 +124,10 @@ export function meetingSummarySystemPrompt(args: MeetingSummaryRequest): string 
   return `You summarize a ${args.rolling ? 'rolling window from an ongoing' : 'completed'} meeting.
 
 ${speakers}
+${kind}
 ${context}
 ${prior}
+${args.meetingContext ? MEETING_CONTEXT_RULES : ''}
 
 Rules:
 - The TL;DR is at most 3 sentences.
@@ -121,6 +136,17 @@ Rules:
 - Decisions are concluded, not proposals still under debate.
 - Do not invent facts or attribution. Omit anything the transcript does not support.
 - ${notesLanguageRule(args.notesLanguage)}${args.chapters ? `\n- ${CHAPTER_INSTRUCTIONS}` : ''}`;
+}
+
+/**
+ * The message the notes are written from: the transcript, after the
+ * calendar's context when there is some. The transcript is then wrapped too,
+ * so the model can tell where the reference material ends.
+ */
+export function summaryUserContent(args: Pick<MeetingSummaryRequest, 'transcript' | 'meetingContext'>): string {
+  if (!args.meetingContext) return args.transcript;
+  const transcript = args.transcript.replace(/<(\/?transcript)/gi, '&lt;$1');
+  return `${args.meetingContext}\n\n<transcript>\n${transcript}\n</transcript>`;
 }
 
 export function parseMeetingSummary(message: Pick<Anthropic.Message, 'stop_reason' | 'content'>) {
@@ -157,7 +183,7 @@ export async function requestMeetingSummary(client: Anthropic, args: MeetingSumm
           effort: 'low',
           format: { type: 'json_schema', schema: schemaFor(args) },
         },
-        messages: [{ role: 'user', content: args.transcript }],
+        messages: [{ role: 'user', content: summaryUserContent(args) }],
       })
       .finalMessage();
     return parseMeetingSummary(message);
@@ -169,7 +195,7 @@ export async function requestMeetingSummary(client: Anthropic, args: MeetingSumm
     output_config: {
       format: { type: 'json_schema', schema: schemaFor(args) as unknown as Record<string, unknown> },
     },
-    messages: [{ role: 'user', content: args.transcript }],
+    messages: [{ role: 'user', content: summaryUserContent(args) }],
   });
   return parseMeetingSummary(message);
 }

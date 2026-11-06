@@ -413,6 +413,18 @@ describe('reports from the bot', () => {
     await recordingBot(t);
     expect(t.sqlite.query('SELECT language FROM meetings').get()).toEqual({ language: 'auto' });
   });
+
+  test("a calendar bot's meeting is linked to its event", async () => {
+    const t = setup();
+    const { body } = await schedule(t);
+    const id = body.bot!.id;
+    // Placed by the calendar plan: the meeting it makes carries the event, for its guests and agenda.
+    t.sqlite.run("UPDATE meeting_bots SET calendar_event_id = 'evt_1' WHERE id = ?", [id]);
+    await claimBotStart(t.db, id);
+    await event(t, id, { code: 'joining_call' });
+    await event(t, id, { code: 'in_call_recording' });
+    expect(t.sqlite.query('SELECT calendar_event_id FROM meetings').get()).toEqual({ calendar_event_id: 'evt_1' });
+  });
 });
 
 describe('collection', () => {

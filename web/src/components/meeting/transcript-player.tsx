@@ -6,7 +6,7 @@ import { LanguagePicker } from '@/components/translation/language-picker';
 import { isLanguage, type Language } from '@/lib/translation/languages';
 import { useMe } from '@/lib/api/use-me';
 import { languageName } from '@/lib/transcription/language';
-import { hasBothSides, parseSpeakerNames, partialAttributionMs, speakerName } from '@/lib/transcription/two-track';
+import { isConversation, parseSpeakerNames, partialAttributionMs, speakerName } from '@/lib/transcription/two-track';
 import { cn } from '@/lib/utils';
 import { placeAttachments } from './attachment-placement';
 import { AttachmentFigure, AttachmentViewer } from './attachments';
@@ -79,7 +79,7 @@ export function TranscriptPlayer({
   const translation = useTranslation(meetingId, shown, target, translationRevision);
   const translated = (line: TranscriptLine) => (translation.showing ? translation.textFor(line) : undefined);
 
-  const labelled = hasBothSides(shown.map((line) => ({ speakerId: line.speakerId ?? null })));
+  const labelled = isConversation(shown.map((line) => ({ speakerId: line.speakerId ?? null })));
   const names = parseSpeakerNames(speakerNamesJson);
   const nameOf = (id: string | null | undefined) => (labelled && id ? speakerName(id, names) : null);
 

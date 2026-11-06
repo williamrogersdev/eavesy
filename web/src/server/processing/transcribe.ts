@@ -19,8 +19,11 @@ import {
   isHallucination,
   isQuietAudio,
   isSilentTrack,
+  keptCallLines,
   speakerForTrack,
 } from '@/lib/transcription/two-track';
+import { meetingVocabulary } from '@/lib/meetings/meeting-context';
+import { loadMeetingContext } from './meeting-context';
 import { openUserKeys } from '@/server/secret-box';
 import { recordFirstTranscript } from '@/server/transcript-latency';
 import {
@@ -64,11 +67,12 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
   if (!object) throw new Error('recording audio object is missing');
   const entries = await dictionary.listForTranscription(db, meeting.userId);
   const project = await projectsRepo.getForMeeting(db, meeting);
+  const calendar = await loadMeetingContext(db, meeting);
   const transcription = await transcribeAudioFile({
     audio: new Uint8Array(await object.arrayBuffer()),
     language: meeting.language,
     contextBlurb: meeting.contextBlurb,
-    vocabulary: [...entries.map(e => e.to), ...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson).reverse()],
+    vocabulary: [...meetingVocabulary(calendar), ...entries.map(e => e.to), ...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson).reverse()],
     spoken: userRow ? spokenLanguages(userRow) : [],
     ai: env.AI,
   });
@@ -237,11 +241,14 @@ export async function handleTranscribeSegment(
       const transcriber = new WorkersAiSegmentTranscriber(meeting.source === 'import' ? createAiRunner(env, 'import-transcription') : env.AI);
       const prefs = await userPrefs(db, meeting.userId);
       const entries = await dictionary.listForTranscription(db, meeting.userId);
+      const calendar = meeting.source === 'import' ? null : await loadMeetingContext(db, meeting);
       const request = {
         audio,
         language: meeting.language,
         contextBlurb: meeting.contextBlurb,
         vocabulary: [
+          // The invite's names first: the words this meeting is surest to hear.
+          ...meetingVocabulary(calendar),
           ...entries.map(e => e.to),
           ...projectTerms(await projectsRepo.getForMeeting(db, meeting)),
           ...prefs.vocabulary,
@@ -269,9 +276,10 @@ export async function handleTranscribeSegment(
       const glossary = request.vocabulary;
       // A near-silent segment's stock phrases are invented, even on a mic-only note.
       const quiet = isQuietAudio(segment.activeMs);
-      let lines = transcription.segments.filter(
-        (relative) => !isHallucination(relative, { lenient: micOnly, quiet, glossary }),
-      );
+      // A call keeps short replies said among real speech ("Thanks, bye").
+      let lines = micOnly
+        ? transcription.segments.filter((relative) => !isHallucination(relative, { lenient: true, quiet, glossary }))
+        : keptCallLines(transcription.segments, { quiet, glossary });
       // Whisper's VAD can cut a quiet mic down to nothing. A mic-only clip is
       // the user's own note, so give it one more pass without VAD, keeping the
       // strict filter so silence does not turn into "Thank you."

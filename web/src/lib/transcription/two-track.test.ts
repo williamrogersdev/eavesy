@@ -1,10 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
   findEchoLines,
-  hasBothSides,
+  isConversation,
   isHallucination,
   isQuietAudio,
   isSilentTrack,
+  keptCallLines,
   speakerForTrack,
   speakerName,
   type AttributedLine,
@@ -38,12 +39,14 @@ describe('speaker attribution', () => {
     expect(isSilentTrack('mic', 100)).toBe(true);
   });
 
-  test('labels need both sides to have spoken', () => {
-    expect(hasBothSides([{ speakerId: 'you' }, { speakerId: 'you' }])).toBe(false);
-    expect(hasBothSides([{ speakerId: 'you' }, { speakerId: 'them' }])).toBe(true);
-    expect(hasBothSides([{ speakerId: null }])).toBe(false);
-    expect(hasBothSides([{ speakerId: 'speaker_0' }, { speakerId: 'speaker_0' }])).toBe(false);
-    expect(hasBothSides([{ speakerId: 'speaker_0' }, { speakerId: null }, { speakerId: 'speaker_2' }])).toBe(true);
+  test('anything heard from the call makes it a conversation', () => {
+    expect(isConversation([{ speakerId: 'you' }, { speakerId: 'you' }])).toBe(false);
+    expect(isConversation([{ speakerId: 'you' }, { speakerId: 'them' }])).toBe(true);
+    expect(isConversation([{ speakerId: null }])).toBe(false);
+    // Only the other side spoke, or the bot told one voice apart: still a call.
+    expect(isConversation([{ speakerId: 'them' }])).toBe(true);
+    expect(isConversation([{ speakerId: 'speaker_0' }, { speakerId: 'speaker_0' }])).toBe(true);
+    expect(isConversation([{ speakerId: 'speaker_0' }, { speakerId: null }, { speakerId: 'speaker_2' }])).toBe(true);
   });
 
   test('renames win over defaults', () => {
@@ -173,5 +176,24 @@ describe('glossary read-back', () => {
     expect(isHallucination({ text: 'Eavesy, Kubernetes.', noSpeechProb: 0.05 }, { glossary })).toBe(false);
     expect(isHallucination({ text: 'Eavesy, Kubernetes.', noSpeechProb: 0.6 }, { glossary, lenient: true })).toBe(false);
     expect(isHallucination({ text: 'Priya Raman, Kubernetes.' }, { glossary })).toBe(false);
+  });
+});
+
+describe('keptCallLines', () => {
+  const speech = { text: 'So we ship the pricing page on Friday.', noSpeechProb: 0.1 };
+
+  test('keeps a real "thank you" or "bye" said among speech', () => {
+    const lines = [speech, { text: 'Thank you.', noSpeechProb: 0.4 }, { text: 'Bye!' }];
+    expect(keptCallLines(lines).map((l) => l.text)).toEqual([speech.text, 'Thank you.', 'Bye!']);
+  });
+
+  test('still drops replies Whisper doubted, sign-offs, and anything on quiet audio', () => {
+    expect(keptCallLines([speech, { text: 'Thank you.', noSpeechProb: 0.7 }])).toEqual([speech]);
+    expect(keptCallLines([speech, { text: 'Thanks for watching!', noSpeechProb: 0.4 }])).toEqual([speech]);
+    expect(keptCallLines([speech, { text: 'Bye.' }], { quiet: true })).toEqual([speech]);
+  });
+
+  test('a stretch of nothing but stock phrases is still treated as invented', () => {
+    expect(keptCallLines([{ text: 'Thank you.' }, { text: 'Bye.' }])).toEqual([]);
   });
 });

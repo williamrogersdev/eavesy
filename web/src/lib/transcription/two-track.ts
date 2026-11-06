@@ -132,6 +132,33 @@ export function isHallucination(
   return line.noSpeechProb === undefined || line.noSpeechProb > 0.3;
 }
 
+/**
+ * The lines of one call segment worth keeping. Each is judged by
+ * `isHallucination`, except that a short reply ("Thank you.", "Bye!") said
+ * among real speech in the same stretch of audio is likely heard, not
+ * invented: Whisper invents those on silence, and this audio was not silent.
+ * It is then judged as leniently as a voice note's: dropped only when Whisper
+ * itself doubted there was speech. Video sign-offs ("Thanks for watching")
+ * are never replies, and quiet audio gets no such benefit.
+ */
+export function keptCallLines<T extends WhisperLine>(
+  lines: readonly T[],
+  opts: { quiet?: boolean; glossary?: readonly string[] } = {},
+): T[] {
+  const strict = lines.map((line) => !isHallucination(line, opts));
+  const speech = lines.some((line, i) => strict[i] && !isStockLine(line.text.trim(), false));
+  if (opts.quiet || !speech) return lines.filter((_, i) => strict[i]);
+  return lines.filter((line, i) => strict[i] || (isReply(line.text) && !isHallucination(line, { ...opts, lenient: true })));
+}
+
+// Stock phrases people do say to each other on a call.
+const REPLY_PHRASES = new Set(['thank you', 'thank you very much', 'thank you so much', 'bye', 'bye bye']);
+
+function isReply(text: string): boolean {
+  const sentences = text.split(/[.!?…,;]+/).map(normalize).filter(Boolean);
+  return sentences.length > 0 && sentences.every((sentence) => REPLY_PHRASES.has(sentence));
+}
+
 const BUILT_IN_NAMES = BUILT_IN_TERMS.map(normalize);
 
 function isBareAppName(text: string): boolean {
@@ -208,24 +235,14 @@ export function findEchoLines(lines: AttributedLine[], windowMs = ECHO_WINDOW_MS
 }
 
 /**
- * Whether a transcript is a conversation worth labelling by speaker: the Mac's
- * two sides (`you` and `them`), or two or more diarized speakers (a notetaker
- * bot's participants, `speaker_N`).
+ * Whether a transcript is a conversation worth labelling by speaker: anything
+ * heard from the call (the Mac's `them` track, or a notetaker bot's
+ * `speaker_N`) means other people were there, even when only they spoke or the
+ * bot told only one voice apart. Only the user's own mic, or one unlabelled
+ * track, is a voice note.
  */
-export function hasBothSides(lines: { speakerId: string | null }[]): boolean {
-  let you = false;
-  let them = false;
-  let first: string | null = null;
-  for (const line of lines) {
-    if (line.speakerId === 'you') you = true;
-    else if (line.speakerId === 'them') them = true;
-    if (you && them) return true;
-    if (line.speakerId?.startsWith('speaker_')) {
-      if (first === null) first = line.speakerId;
-      else if (line.speakerId !== first) return true;
-    }
-  }
-  return false;
+export function isConversation(lines: { speakerId: string | null }[]): boolean {
+  return lines.some((line) => line.speakerId === 'them' || Boolean(line.speakerId?.startsWith('speaker_')));
 }
 
 export const DEFAULT_SPEAKER_NAMES: Record<string, string> = { you: 'You', them: 'Them' };

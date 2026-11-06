@@ -378,6 +378,8 @@ async function ensureMeeting(db: AppDb, bot: MeetingBot, startedAt: number): Pro
     startedAt,
     clientSessionId,
     transcriptKind: 'conversation',
+    // Linked like a Mac recording of the event: its title stays, and the notes get its guests and agenda.
+    calendarEventId: bot.calendarEventId,
     createdAt: now,
     updatedAt: now,
   }).onConflictDoNothing({ target: meetings.clientSessionId });
