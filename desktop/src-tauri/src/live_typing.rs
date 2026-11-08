@@ -96,6 +96,42 @@ struct Entry {
 /// Dictations being typed, oldest first.
 static TYPISTS: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
 
+/// The dictation Return was pressed to end, and whether it was ⌘Return: that
+/// key is pressed again once its finished words replace the typed ones.
+static SEND: Mutex<Option<(String, bool)>> = Mutex::new(None);
+
+fn send_slot() -> std::sync::MutexGuard<'static, Option<(String, bool)>> {
+    SEND.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The dictation still typing words into a field, if one is: Return there
+/// is the user sending them. Cheap enough for a key tap's callback.
+pub fn typing_into_field() -> Option<String> {
+    typists()
+        .iter()
+        .rev()
+        .find(|entry| entry.shared.typed.load(Ordering::SeqCst) && !entry.shared.stop.load(Ordering::SeqCst))
+        .map(|entry| entry.id.clone())
+}
+
+/// Return (⌘Return with `command`) was held back to end this dictation.
+pub fn hold_send(session_id: &str, command: bool) {
+    *send_slot() = Some((session_id.to_string(), command));
+}
+
+/// Whether Return was held back for this dictation, and which. Taken once.
+pub fn take_send(session_id: &str) -> Option<bool> {
+    let mut slot = send_slot();
+    match slot.as_ref() {
+        Some((id, command)) if id == session_id => {
+            let command = *command;
+            *slot = None;
+            Some(command)
+        }
+        _ => None,
+    }
+}
+
 fn typists() -> std::sync::MutexGuard<'static, Vec<Entry>> {
     TYPISTS.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -108,6 +144,9 @@ pub fn start(app: &AppHandle, session_id: &str) {
     let (tx, rx) = channel();
     let shared = Arc::new(Shared::default());
     register(Entry { id: session_id.to_string(), tx, shared: shared.clone() });
+    // Return there ends the dictation (`dictate::send_on_return`).
+    #[cfg(target_os = "macos")]
+    crate::fn_key::watch_for_send(app);
     let session_id = session_id.to_string();
     std::thread::spawn(move || typist(&session_id, rx, &shared));
 }
@@ -183,6 +222,7 @@ pub fn finish(session_id: &str) -> Typed {
 /// and take back what was typed while it is still exactly as typed. Words
 /// the user has since changed stay. The recording keeps every word.
 pub fn cancel(session_id: &str) {
+    take_send(session_id);
     if let Some(entry) = take(session_id) {
         entry.shared.stop.store(true, Ordering::SeqCst);
         // Never blocks. The typist takes the words back once it is free.

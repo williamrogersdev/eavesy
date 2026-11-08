@@ -203,6 +203,34 @@ fn released(app: &AppHandle) {
     }
 }
 
+/// Return (⌘Return with `command`) went down. While a hands-free dictation
+/// is typing its words into the app in front, that is the user sending them:
+/// the dictation stops, and the key is held back (true) to be pressed again
+/// once the finished words are in (`dictation::deliver_dictation`). Called
+/// from a key tap, so it only reads state and hands the stop to a thread.
+pub fn send_on_return(app: &AppHandle, command: bool) -> bool {
+    // Held push-to-talk: letting go of the key is how it ends.
+    if press().started_by.is_some() {
+        return false;
+    }
+    let Some(id) = crate::live_typing::typing_into_field() else { return false };
+    if active_session(app).0.as_deref() != Some(id.as_str()) {
+        return false;
+    }
+    let front = crate::app_menu::frontmost().map(|(pid, _)| pid);
+    if front.is_none() || front != crate::dictation::target_pid(&id) {
+        return false;
+    }
+    crate::live_typing::hold_send(&id, command);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        *press() = Press::default();
+        crate::hud::show_stopping(&app, &id);
+        stop(&app, id);
+    });
+    true
+}
+
 /// A press that toggles without a release (Fn tap, menu bar).
 pub fn toggle(app: &AppHandle) {
     pressed(app, false, false);

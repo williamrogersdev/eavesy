@@ -34,6 +34,12 @@ const KEY_UP: u32 = 11;
 const FLAGS_CHANGED: u32 = 12;
 /// `kCGKeyboardEventAutorepeat` and `kCGKeyboardEventKeycode`.
 const FIELD_AUTOREPEAT: u32 = 8;
+/// kVK_Return and kVK_ANSI_KeypadEnter.
+const RETURN_KEYS: [u16; 2] = [36, 76];
+const COMMAND: u64 = 1 << 20;
+/// Set once a dictation has typed into a field: the active tap then also
+/// hears Return, which may send what it typed.
+static WATCH_SEND: AtomicBool = AtomicBool::new(false);
 const FIELD_KEYCODE: u32 = 9;
 
 type TapCallback = extern "C" fn(*mut c_void, u32, *mut c_void, *mut c_void) -> *mut c_void;
@@ -184,6 +190,24 @@ fn release_held(app: &AppHandle) {
     }
 }
 
+/// A Return that sends a message: plain, or with ⌘ only (⇧, ⌥ or ⌃ with it
+/// usually means a new line instead). `Some(true)` for ⌘Return.
+fn sending_return(keycode: u16, flags: u64, repeat: bool) -> Option<bool> {
+    let other = flags & (FN | (MODIFIERS & !COMMAND));
+    (RETURN_KEYS.contains(&keycode) && !repeat && other == 0).then_some(flags & COMMAND != 0)
+}
+
+/// Lets Return end a hands-free dictation that is typing into a field. Needs
+/// the active tap (Accessibility, which typing into the field needs anyway).
+pub fn watch_for_send(app: &AppHandle) {
+    WATCH_SEND.store(true, Ordering::SeqCst);
+    if let Err(why) = ensure_chord_tap(app) {
+        tracing::info!("Return won't end dictations: {why}");
+    } else if let Some(tap) = CHORD_TAP.get() {
+        unsafe { CGEventTapEnable(*tap as *mut c_void, true) };
+    }
+}
+
 extern "C" fn receive_chord(_: *mut c_void, kind: u32, event: *mut c_void, info: *mut c_void) -> *mut c_void {
     let swallow = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
         if info.is_null() { return false; }
@@ -192,7 +216,7 @@ extern "C" fn receive_chord(_: *mut c_void, kind: u32, event: *mut c_void, info:
             // macOS paused the tap (slow callback or user input): a key-up may
             // have been missed, so nothing stays held.
             release_held(app);
-            if any_chord() {
+            if any_chord() || WATCH_SEND.load(Ordering::SeqCst) {
                 if let Some(tap) = CHORD_TAP.get() { CGEventTapEnable(*tap as *mut c_void, true); }
             }
             return false;
@@ -204,6 +228,13 @@ extern "C" fn receive_chord(_: *mut c_void, kind: u32, event: *mut c_void, info:
         let chords = [0, 1, 2].map(|slot| CHORDS[slot].load(Ordering::SeqCst));
         let held = [0, 1, 2].map(|slot| HELD[slot].load(Ordering::SeqCst));
         let repeat = CGEventGetIntegerValueField(event, FIELD_AUTOREPEAT) != 0;
+        if kind == KEY_DOWN && WATCH_SEND.load(Ordering::SeqCst) {
+            if let Some(command) = sending_return(keycode, CGEventGetFlags(event), repeat) {
+                if crate::dictate::send_on_return(app, command) {
+                    return true;
+                }
+            }
+        }
         match step(chords, held, kind, keycode, CGEventGetFlags(event), repeat) {
             Step::Pass => false,
             Step::Swallow => true,
@@ -366,12 +397,27 @@ pub fn unbind() {
         chord.store(0, Ordering::SeqCst);
         held.store(false, Ordering::SeqCst);
     }
+    // Still hearing Return for dictations typing into a field.
+    if WATCH_SEND.load(Ordering::SeqCst) { return; }
     if let Some(tap) = CHORD_TAP.get() { unsafe { CGEventTapEnable(*tap as *mut c_void, false); } }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn return_sends_only_on_its_own_or_with_command() {
+        assert_eq!(sending_return(36, 0, false), Some(false));
+        assert_eq!(sending_return(76, 0, false), Some(false));
+        assert_eq!(sending_return(36, COMMAND, false), Some(true));
+        // ⇧Return, ⌥Return and ⌃Return are new lines; fn+Return is a chord.
+        for flags in [1 << 17, 1 << 18, 1 << 19, FN, COMMAND | (1 << 17)] {
+            assert_eq!(sending_return(36, flags, false), None);
+        }
+        assert_eq!(sending_return(36, 0, true), None, "a held Return repeating isn't a send");
+        assert_eq!(sending_return(0, 0, false), None);
+    }
     #[test]
     fn globe_setting_maps_to_what_the_key_does() {
         assert_eq!(GlobeAction::from_usage_type(Some("0\n")), GlobeAction::DoNothing);
