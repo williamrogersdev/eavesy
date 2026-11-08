@@ -245,6 +245,9 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let target = take_pending(session_id);
     // Taken even with no words, so the claim ends with its dictation.
     let answering = crate::agents::take_answer(session_id);
+    // Return was pressed to end it: held until this delivery is over, and
+    // pressed again only once the finished words are in place.
+    let send = crate::live_typing::send_hold(session_id);
     let text = text.trim().to_string();
     if text.is_empty() {
         // Left marked for Eavesy, so words only the cloud transcript catches still go to it.
@@ -323,13 +326,27 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                     Typed::Field(mut live) => live
                         .select_typed()
                         .inspect_err(|why| tracing::info!(session_id = %session_id, "live-typed words not replaced: {why}"))
-                        .and_then(|()| crate::commands::paste_text(&app, &text)),
+                        .and_then(|()| crate::commands::paste_text(&app, &text))
+                        .map(|()| Some(live)),
                     Typed::Unknown => Err("live typing didn't finish".to_string()),
-                    Typed::Nothing => crate::commands::paste_text(&app, &text),
+                    Typed::Nothing => crate::commands::paste_text(&app, &text).map(|()| None),
                 };
                 if typed_live {
                     crate::telemetry::track("dictation_typed_live", serde_json::json!({ "replaced": delivered.is_ok() }));
                 }
+                // Only once the field reads the finished words in place of the
+                // typed ones: a send never goes out with the draft or a
+                // doubled paste. Otherwise the draft waits for the user's Return.
+                if let (Some(command), Ok(Some(live))) = (send.command(), &delivered) {
+                    if !live.shows(&text, SEND_CONFIRM) {
+                        tracing::info!(session_id = %session_id, "held Return not pressed: the finished words didn't show in the field");
+                    } else if let Err(why) = press_return(command) {
+                        tracing::warn!(session_id = %session_id, "could not press the held Return: {why}");
+                    } else {
+                        tracing::info!(session_id = %session_id, "dictation sent with the held Return");
+                    }
+                }
+                let delivered = delivered.map(|_| ());
                 if delivered.is_ok() {
                     *PASTED.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.clone(), text.clone(), project.clone()));
                 } else {
@@ -523,6 +540,24 @@ fn accessibility_trusted() -> bool {
 /// Needs the Accessibility permission, like any synthetic key press.
 #[cfg(target_os = "macos")]
 pub fn press_paste() -> Result<(), String> {
+    const KEY_V: u16 = 9;
+    press_key(KEY_V, true).map_err(|_| "could not create the paste key press".to_string())
+}
+
+/// How long the finished words get to show in the field before a held Return
+/// is pressed after them.
+const SEND_CONFIRM: Duration = Duration::from_millis(1500);
+
+/// Presses Return (⌘Return with `command`) in whatever app is frontmost: the
+/// Return a hands-free dictation held back while its words were finished.
+#[cfg(target_os = "macos")]
+pub fn press_return(command: bool) -> Result<(), String> {
+    const KEY_RETURN: u16 = 36;
+    press_key(KEY_RETURN, command)
+}
+
+#[cfg(target_os = "macos")]
+fn press_key(key: u16, command: bool) -> Result<(), String> {
     use crate::cf::CFTypeRef;
     #[link(name = "ApplicationServices", kind = "framework")]
     extern "C" {
@@ -532,7 +567,6 @@ pub fn press_paste() -> Result<(), String> {
         fn CGEventPost(tap: u32, event: CFTypeRef);
     }
     const HID_SYSTEM_STATE: i32 = 1;
-    const KEY_V: u16 = 9;
     const COMMAND: u64 = 1 << 20;
     const HID_EVENT_TAP: u32 = 0;
     if !accessibility_trusted() {
@@ -541,14 +575,14 @@ pub fn press_paste() -> Result<(), String> {
     unsafe {
         let source = crate::cf::Owned(CGEventSourceCreate(HID_SYSTEM_STATE));
         for down in [true, false] {
-            let event = CGEventCreateKeyboardEvent(source.0, KEY_V, down);
+            let event = CGEventCreateKeyboardEvent(source.0, key, down);
             if event.is_null() {
-                return Err("could not create the paste key press".to_string());
+                return Err("could not create the key press".to_string());
             }
             let event = crate::cf::Owned(event);
-            // Exactly ⌘: modifiers still held from the hotkey must not turn
-            // this into ⌘⇧V or similar.
-            CGEventSetFlags(event.0, COMMAND);
+            // Exactly ⌘ or nothing: modifiers still held from the hotkey must
+            // not turn this into ⌘⇧V or similar.
+            CGEventSetFlags(event.0, if command { COMMAND } else { 0 });
             CGEventPost(HID_EVENT_TAP, event.0);
         }
     }
@@ -558,6 +592,17 @@ pub fn press_paste() -> Result<(), String> {
 #[cfg(not(target_os = "macos"))]
 pub fn press_paste() -> Result<(), String> {
     Err("pasting is only supported on macOS".to_string())
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn press_return(_command: bool) -> Result<(), String> {
+    Err("sending is only supported on macOS".to_string())
+}
+
+/// The app this dictation will paste into, while it is still the one
+/// waiting: Return there may end it (`dictate::send_on_return`).
+pub fn target_pid(session_id: &str) -> Option<i32> {
+    PENDING.lock().unwrap_or_else(|e| e.into_inner()).as_ref().filter(|(id, armed, _)| id == session_id && armed.elapsed() < DELIVER_WINDOW).map(|(_, _, target)| target.pid)
 }
 
 /// The app the user is dictating into: the frontmost one, never Eavesy.

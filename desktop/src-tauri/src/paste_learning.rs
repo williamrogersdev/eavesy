@@ -484,6 +484,25 @@ mod mac {
             Ok(())
         }
 
+        /// Whether the field shows `text` where the typed words were (as a
+        /// paste over them leaves it), within `within`. Spacing is not
+        /// compared: rich text fields turn line breaks into paragraphs.
+        pub fn shows(&self, text: &str, within: Duration) -> bool {
+            let wanted = super::without_spacing(text);
+            let give_up = std::time::Instant::now() + within;
+            loop {
+                let found = unsafe { field_text(self.field.0 as Ref) }
+                    .and_then(|value| super::typed_passage(&value, &self.prefix, &self.suffix));
+                if found.is_some_and(|found| super::without_spacing(&found) == wanted) {
+                    return true;
+                }
+                if std::time::Instant::now() >= give_up {
+                    return false;
+                }
+                std::thread::sleep(Duration::from_millis(40));
+            }
+        }
+
         /// Deletes the typed words, while they are still exactly as typed.
         pub fn take_back(mut self) -> Result<(), String> {
             self.select_typed()?;
@@ -898,6 +917,11 @@ pub fn where_it_differs(value: &str, expected: &str) -> String {
 /// still landing. Anything else is the user (or the app) changing them.
 pub fn reads_as_typed(found: &str, typed: &str, posted: &str) -> bool {
     found == typed || (posted.starts_with(found) && found.len() >= shared_prefix(typed, posted))
+}
+
+/// `text` as fields hand it back (`normalize`), with no whitespace at all.
+pub fn without_spacing(text: &str) -> String {
+    normalize(text).chars().filter(|c| !c.is_whitespace()).collect()
 }
 
 /// Text as live typing puts it in a field: as fields hand it back

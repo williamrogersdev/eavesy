@@ -46,6 +46,9 @@ impl LiveField {
     pub fn take_back(self) -> Result<(), String> {
         Err("live typing is only supported on macOS".into())
     }
+    pub fn shows(&self, _text: &str, _within: Duration) -> bool {
+        false
+    }
 }
 
 enum Msg {
@@ -82,6 +85,9 @@ struct Shared {
     stop: AtomicBool,
     /// Some words went into the field (and may still be there).
     typed: AtomicBool,
+    /// Still typing into its field: not stopped because the user typed
+    /// there, moved on or the words go elsewhere.
+    typing: AtomicBool,
 }
 
 struct Entry {
@@ -96,6 +102,104 @@ struct Entry {
 /// Dictations being typed, oldest first.
 static TYPISTS: Mutex<Vec<Entry>> = Mutex::new(Vec::new());
 
+/// A Return held back to end a dictation (`dictate::send_on_return`), to be
+/// pressed again once its finished words replace the typed ones.
+struct HeldSend {
+    id: String,
+    /// ⌘Return rather than Return.
+    command: bool,
+    /// The app it was pressed in: further Returns there are held too, so
+    /// none sends the draft meanwhile.
+    pid: i32,
+    at: std::time::Instant,
+}
+
+/// Longer than any delivery takes (polishing included). Should one never
+/// come, Return works in that app again after this.
+const SEND_HOLD: Duration = Duration::from_secs(30);
+
+static SEND: Mutex<Option<HeldSend>> = Mutex::new(None);
+
+fn send_slot() -> std::sync::MutexGuard<'static, Option<HeldSend>> {
+    SEND.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+fn held(slot: &Option<HeldSend>, now: std::time::Instant) -> Option<&HeldSend> {
+    slot.as_ref().filter(|send| now.saturating_duration_since(send.at) < SEND_HOLD)
+}
+
+/// The dictation still typing words into a field, if one is: Return there
+/// is the user sending them. Cheap enough for a key tap's callback.
+pub fn typing_into_field() -> Option<String> {
+    typists()
+        .iter()
+        .rev()
+        .find(|entry| {
+            entry.shared.typed.load(Ordering::SeqCst) && entry.shared.typing.load(Ordering::SeqCst) && !entry.shared.stop.load(Ordering::SeqCst)
+        })
+        .map(|entry| entry.id.clone())
+}
+
+/// A Return is being held for a dictation typed in the app `pid`.
+pub fn holding_for(pid: i32) -> bool {
+    held(&send_slot(), std::time::Instant::now()).is_some_and(|send| send.pid == pid)
+}
+
+/// Holds Return (⌘Return with `command`), pressed in the app `pid`, to end
+/// this dictation. False when one is already held, which then stands.
+pub fn hold_send(session_id: &str, command: bool, pid: i32) -> bool {
+    let mut slot = send_slot();
+    let now = std::time::Instant::now();
+    if held(&slot, now).is_some() {
+        return false;
+    }
+    *slot = Some(HeldSend { id: session_id.to_string(), command, pid, at: now });
+    true
+}
+
+/// A dictation's delivery, holding on to the Return pressed to end it (if
+/// one was) until it is over: Return in that app does nothing meanwhile.
+/// Dropping it lets go, however delivery ended.
+pub struct SendHold(String);
+
+pub fn send_hold(session_id: &str) -> SendHold {
+    SendHold(session_id.to_string())
+}
+
+impl SendHold {
+    /// Whether Return (false) or ⌘Return (true) was held for this dictation.
+    pub fn command(&self) -> Option<bool> {
+        held(&send_slot(), std::time::Instant::now()).filter(|send| send.id == self.0).map(|send| send.command)
+    }
+}
+
+impl Drop for SendHold {
+    fn drop(&mut self) {
+        release_send(&self.0);
+    }
+}
+
+fn release_send(session_id: &str) {
+    {
+        let mut slot = send_slot();
+        if slot.as_ref().is_some_and(|send| send.id == session_id) {
+            *slot = None;
+        }
+    }
+    update_watch();
+}
+
+/// The key tap hears Return only while a dictation types into a field or a
+/// Return is held for one.
+fn update_watch() {
+    let needed = typists().iter().any(|entry| !entry.shared.stop.load(Ordering::SeqCst))
+        || held(&send_slot(), std::time::Instant::now()).is_some();
+    if !needed {
+        #[cfg(target_os = "macos")]
+        crate::fn_key::stop_watching_send();
+    }
+}
+
 fn typists() -> std::sync::MutexGuard<'static, Vec<Entry>> {
     TYPISTS.lock().unwrap_or_else(|e| e.into_inner())
 }
@@ -108,6 +212,9 @@ pub fn start(app: &AppHandle, session_id: &str) {
     let (tx, rx) = channel();
     let shared = Arc::new(Shared::default());
     register(Entry { id: session_id.to_string(), tx, shared: shared.clone() });
+    // Return there ends the dictation (`dictate::send_on_return`).
+    #[cfg(target_os = "macos")]
+    crate::fn_key::watch_for_send(app);
     let session_id = session_id.to_string();
     std::thread::spawn(move || typist(&session_id, rx, &shared));
 }
@@ -151,6 +258,12 @@ pub enum Typed {
 /// Stops typing this dictation and says what was typed for it, once
 /// whatever typing was under way has landed.
 pub fn finish(session_id: &str) -> Typed {
+    let typed = finish_typing(session_id);
+    update_watch();
+    typed
+}
+
+fn finish_typing(session_id: &str) -> Typed {
     let Some(entry) = take(session_id) else { return Typed::Nothing };
     // Before anything else: from here no key is posted, even by a sync
     // already under way, so whatever is decided below holds.
@@ -188,6 +301,7 @@ pub fn cancel(session_id: &str) {
         // Never blocks. The typist takes the words back once it is free.
         let _ = entry.tx.send(Msg::Cancel);
     }
+    release_send(session_id);
 }
 
 fn take(session_id: &str) -> Option<Entry> {
@@ -264,6 +378,7 @@ fn typist(session_id: &str, rx: Receiver<Msg>, shared: &Shared) {
         let typing = matches!(field, Field::Typing(_)) && !text.is_empty();
         let began = std::time::Instant::now();
         field = type_into(session_id, field, &text, shared);
+        shared.typing.store(matches!(field, Field::Typing(_)), Ordering::SeqCst);
         if typing && matches!(field, Field::Typing(_)) {
             pace.add(began.elapsed());
         }
@@ -612,6 +727,27 @@ mod tests {
         // Nobody answers: the typist is mid-sync. It must post no more keys.
         assert!(matches!(finish("stop-first"), Typed::Unknown));
         assert!(shared.stop.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_held_return_stands_until_its_delivery_lets_go_or_it_expires() {
+        let delivery = send_hold("held");
+        assert!(hold_send("held", true, 42));
+        assert!(holding_for(42), "more Returns in that app are held");
+        assert!(!holding_for(7), "another app's Return is its own");
+        assert!(!hold_send("other", false, 42), "the first held Return stands");
+        assert_eq!(delivery.command(), Some(true));
+        assert_eq!(send_hold("other").command(), None);
+        drop(delivery);
+        assert!(!holding_for(42), "delivery over: Return works again");
+        let old = std::time::Instant::now().checked_sub(SEND_HOLD + Duration::from_secs(1));
+        if let Some(at) = old {
+            *send_slot() = Some(HeldSend { id: "stale".into(), command: false, pid: 42, at });
+            assert!(!holding_for(42), "a hold whose delivery never came expires");
+            assert!(hold_send("next", false, 42));
+            cancel("next");
+            assert!(!holding_for(42), "a cancelled dictation lets go too");
+        }
     }
 
     #[test]
