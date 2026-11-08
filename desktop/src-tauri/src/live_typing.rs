@@ -40,7 +40,7 @@ impl LiveField {
     fn sync(&mut self, _text: &str, _stop: &AtomicBool) -> Result<bool, String> {
         Err("live typing is only supported on macOS".into())
     }
-    pub fn select_typed(&self) -> Result<(), String> {
+    pub fn select_typed(&mut self) -> Result<(), String> {
         Err("live typing is only supported on macOS".into())
     }
     pub fn take_back(self) -> Result<(), String> {

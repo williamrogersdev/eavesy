@@ -263,20 +263,27 @@ mod mac {
     }
 
     /// The words a dictation has typed into one field while it runs ("Type as
-    /// I talk"): the field, the text around them, and the words as they read
-    /// there. Typing only goes on while they are still exactly that, the field
-    /// has the keyboard and the caret sits right after them.
+    /// I talk"): the field, the text around them, the words as they read
+    /// there, and what they will read once every key posted has landed.
+    /// Typing only goes on while they are still that, the field has the
+    /// keyboard and the caret sits right after them.
     pub struct LiveField {
         field: Target,
         prefix: String,
         suffix: String,
         typed: String,
+        /// What the field reads once the keys posted last have all landed. A
+        /// busy app (Claude or Slack with a long page) can take seconds to
+        /// take them in: until it reads this, no more keys are posted.
+        posted: String,
         /// The field's text couldn't be read after keys went in: the typed
         /// words aren't known any more.
         lost: bool,
     }
     /// How long `LiveField::focused` waits for a field to become readable.
     const FIELD_APPEARS: Duration = Duration::from_millis(1500);
+    /// How long the end waits for keys still landing before replacing the words.
+    const LANDED_BY_END: Duration = Duration::from_millis(2500);
     impl LiveField {
         /// The focused field, when it is text Eavesy can read back: words go
         /// in where its caret is, over whatever is selected, as a paste would.
@@ -300,26 +307,36 @@ mod mac {
             let (_, suffix) = super::split_utf16(rest, length)?;
             // As `typed_passage` reads the field back.
             let (prefix, suffix) = (super::normalize(prefix), super::normalize(suffix));
-            Some(LiveField { field: target, prefix, suffix, typed: String::new(), lost: false })
+            Some(LiveField { field: target, prefix, suffix, typed: String::new(), posted: String::new(), lost: false })
         }
 
         /// Whether any words went in, counting ones that may have but
-        /// can't be read back.
+        /// can't be read back, or are still on their way.
         pub fn has_typed(&self) -> bool {
-            self.lost || !self.typed.is_empty()
+            self.lost || !self.typed.is_empty() || !self.posted.is_empty()
         }
 
-        /// Ok(false) while another element has the keyboard; an error once
-        /// the typed words were changed or the caret was moved off them.
-        fn check(&self) -> Result<bool, String> {
+        /// Reads the typed words back. Ok(false) while another element has
+        /// the keyboard or keys posted are still landing; an error once the
+        /// typed words were changed or the caret was moved off them.
+        fn check(&mut self) -> Result<bool, String> {
             if focus(&self.field) != Some(true) {
                 return Ok(false);
             }
             let field = self.field.0 as Ref;
             let value = unsafe { field_text(field) }.ok_or("the field can't be read")?;
-            if super::typed_passage(&value, &self.prefix, &self.suffix).as_deref() != Some(self.typed.as_str()) {
-                let expected = format!("{}{}{}", self.prefix, self.typed, self.suffix);
-                return Err(format!("the typed words were changed ({})", super::where_it_differs(&value, &expected)));
+            match super::typed_passage(&value, &self.prefix, &self.suffix).filter(|found| super::reads_as_typed(found, &self.typed, &self.posted)) {
+                Some(found) => {
+                    self.typed = found;
+                    self.lost = false;
+                }
+                None => {
+                    let expected = format!("{}{}{}", self.prefix, self.posted, self.suffix);
+                    return Err(format!("the typed words were changed ({})", super::where_it_differs(&value, &expected)));
+                }
+            }
+            if self.typed != self.posted {
+                return Ok(false);
             }
             let end = super::units(&self.prefix) + super::units(&self.typed);
             if unsafe { selection(field) } != Some((end, 0)) {
@@ -330,9 +347,9 @@ mod mac {
 
         /// Makes the typed words read `text`: types what's new after them, and
         /// retypes only from where a revised word differs. Ok(false) when the
-        /// field doesn't have the keyboard right now (try again later); an
-        /// error means stop typing into it. No key is posted once `stop` is
-        /// set.
+        /// field doesn't have the keyboard right now, or hasn't taken in the
+        /// last keys yet (try again later); an error means stop typing into
+        /// it. No key is posted once `stop` is set.
         ///
         /// Focus is checked right before the keys are posted, but macOS has
         /// no way to post a key press to one element only: should focus move
@@ -340,11 +357,14 @@ mod mac {
         /// finds the words changed and stops for good.
         pub fn sync(&mut self, text: &str, stop: &AtomicBool) -> Result<bool, String> {
             let text = super::typeable(text);
-            if text == self.typed {
+            if text == self.typed && text == self.posted {
                 return Ok(true);
             }
             if !self.check()? {
                 return Ok(false);
+            }
+            if text == self.typed {
+                return Ok(true);
             }
             let field = self.field.0 as Ref;
             let start = super::units(&self.prefix);
@@ -376,22 +396,23 @@ mod mac {
                 }
                 return Ok(false);
             }
+            // From here keys may land, all, some or none, now or seconds
+            // later: the typed words follow what is in the field, and no more
+            // go in until it reads `posted`.
+            self.posted = text.clone();
             let posted = match &text[keep..] {
                 // The selection is exactly the words to drop: one delete removes them all.
                 "" => press(KEY_DELETE, None),
                 insert => type_text(insert, stop, &self.field),
             };
-            // From here keys may have landed, all, some or none, whether the
-            // posting finished or stopped part way: whatever happens next,
-            // the typed words follow what is in the field, so the end can
-            // still replace them.
             let landing = std::time::Instant::now() + if posted.is_ok() { TYPED_LANDING } else { Duration::from_millis(150) };
             let mut found = None;
             loop {
                 std::thread::sleep(Duration::from_millis(30));
                 if let Some(now) = unsafe { field_text(field) }.and_then(|value| super::typed_passage(&value, &self.prefix, &self.suffix)) {
-                    if posted.is_ok() && now == text {
+                    if now == text {
                         self.typed = text;
+                        self.lost = false;
                         return Ok(true);
                     }
                     found = Some(now);
@@ -401,26 +422,51 @@ mod mac {
                 }
             }
             match found {
-                Some(found) => self.typed = found,
-                // Unreadable now: what's there isn't known, so the end must
-                // not replace anything (`finish` copies instead).
+                Some(found) if super::reads_as_typed(&found, &self.typed, &self.posted) => self.typed = found,
+                Some(found) => {
+                    self.typed = found;
+                    let expected = format!("{}{}{}", self.prefix, self.posted, self.suffix);
+                    let value = format!("{}{}{}", self.prefix, self.typed, self.suffix);
+                    // Whatever is there now is what the end replaces.
+                    self.posted = self.typed.clone();
+                    return Err(format!("the app changed the typed words ({})", super::where_it_differs(&value, &expected)));
+                }
+                // Unreadable now: what's there isn't known. The end reads the
+                // field again before replacing anything (`finish` copies
+                // should it still be unreadable).
                 None => self.lost = true,
             }
-            Err(posted.err().unwrap_or_else(|| "the app didn't take the typed words".into()))
+            // Slow to take the keys in: the next update waits for them.
+            posted.map(|()| false)
         }
 
-        /// Selects the typed words, so the next paste or delete replaces
+        /// Waits (at most `LANDED_BY_END`) for keys still on their way, then
+        /// selects the typed words, so the next paste or delete replaces
         /// exactly them. It only selects: when it fails, nothing in the field
         /// changed (whatever it did select is put back to a caret).
-        pub fn select_typed(&self) -> Result<(), String> {
-            if self.lost {
-                return Err("the typed words couldn't be read back".into());
+        pub fn select_typed(&mut self) -> Result<(), String> {
+            let give_up = std::time::Instant::now() + LANDED_BY_END;
+            loop {
+                match self.check() {
+                    Ok(true) => break,
+                    Err(why) => return Err(why),
+                    Ok(false) if std::time::Instant::now() >= give_up => {
+                        if focus(&self.field) != Some(true) {
+                            return Err("the field no longer has the keyboard".into());
+                        }
+                        // Keys that never arrived: replace what did.
+                        tracing::info!("live typing: some typed keys never landed; replacing what did");
+                        self.posted = self.typed.clone();
+                        if !self.check()? {
+                            return Err("the typed words couldn't be read back".into());
+                        }
+                        break;
+                    }
+                    Ok(false) => std::thread::sleep(Duration::from_millis(50)),
+                }
             }
             if self.typed.is_empty() {
                 return Err("nothing was typed".into());
-            }
-            if !self.check()? {
-                return Err("the field no longer has the keyboard".into());
             }
             let field = self.field.0 as Ref;
             let start = super::units(&self.prefix);
@@ -433,7 +479,7 @@ mod mac {
         }
 
         /// Deletes the typed words, while they are still exactly as typed.
-        pub fn take_back(self) -> Result<(), String> {
+        pub fn take_back(mut self) -> Result<(), String> {
             self.select_typed()?;
             press(KEY_DELETE, None)
         }
@@ -837,6 +883,13 @@ pub fn where_it_differs(value: &str, expected: &str) -> String {
     )
 }
 
+/// Whether `found`, read from a live-typed field, is still Eavesy's own
+/// words: as they were (`typed`), or on their way to `posted`, with keys
+/// still landing. Anything else is the user (or the app) changing them.
+pub fn reads_as_typed(found: &str, typed: &str, posted: &str) -> bool {
+    found == typed || (posted.starts_with(found) && found.len() >= shared_prefix(typed, posted))
+}
+
 /// Text as live typing puts it in a field: as fields hand it back
 /// (`normalize`), on one line. A typed newline is a Return key press, which
 /// sends a chat message.
@@ -908,6 +961,23 @@ mod tests {
         // Only a last newline is forgiven.
         assert_eq!(typed_passage("Hello", "", "\nmore"), None);
         assert_eq!(typed_passage("Hello\n\n", "", "").as_deref(), Some("Hello\n\n"));
+    }
+
+    #[test]
+    fn keys_still_landing_read_as_the_typed_words() {
+        // A slow app has taken in part of the words: still Eavesy's.
+        assert!(reads_as_typed("I believe we", "I believe", "I believe we're in"));
+        assert!(reads_as_typed("I believe we're in", "I believe", "I believe we're in"));
+        assert!(reads_as_typed("I believe", "I believe", "I believe we're in"));
+        // A retype under way: the old tail gone, the new one coming in.
+        assert!(reads_as_typed("Send Sam the de", "Send Sam the desk", "Send Sam the deck"));
+        assert!(reads_as_typed("Send Sam the dec", "Send Sam the desk", "Send Sam the deck"));
+        assert!(!reads_as_typed("Send Sam the", "Send Sam the desk", "Send Sam the deck"));
+        // Shorter than what was already there and agreed on is the user deleting.
+        assert!(!reads_as_typed("I", "I believe", "I believe we're"));
+        // Words that aren't on their way are the user's.
+        assert!(!reads_as_typed("I believe they", "I believe", "I believe we're"));
+        assert!(!reads_as_typed("I believe we're in!", "I believe we're in", "I believe we're in"));
     }
 
     #[test]
