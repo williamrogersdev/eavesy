@@ -265,6 +265,8 @@ function useViewportHeight(): number | null {
 
 /** Below this height the window is a one-row pill: no words fit under the controls. */
 const ROOM_FOR_WORDS = 60;
+/** The recording bar's row (`.ctl-top` at data-size="bar"); a shorter window gets the pill's 36px row. */
+const BAR_ROW = 40;
 
 /** How long an error on the idle pill stays before Talk comes back. */
 const IDLE_ERROR_MS = 6000;
@@ -708,7 +710,7 @@ function Hud() {
   // Live words with no room under the controls yet: the controls alone, as with live words off.
   // In a window still the resting pill's height, the pill's own row.
   const size: Size = rowOnly && (wanted === 'wide' || wanted === 'bar') && (state?.phase === 'recording' || state?.phase === 'transcribing')
-    ? viewportHeight !== null && viewportHeight >= 40 ? 'bar' : 'pill'
+    ? viewportHeight !== null && viewportHeight >= BAR_ROW ? 'bar' : 'pill'
     : wanted;
   // Otherwise, until its drawer is opened, a finished dictation is just a stamp on the pill.
   const receipt = state && !drawer ? finished : null;

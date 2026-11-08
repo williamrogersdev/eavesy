@@ -449,9 +449,6 @@ mod mac {
         pub fn select_typed(&mut self) -> Result<(), String> {
             let give_up = std::time::Instant::now() + LANDED_BY_END;
             loop {
-                if focus(&self.field) != Some(true) {
-                    return Err("the field no longer has the keyboard".into());
-                }
                 match self.check() {
                     Ok(true) => break,
                     Err(why) => return Err(why),
@@ -465,6 +462,10 @@ mod mac {
                             return Err("the typed words couldn't be read back".into());
                         }
                         break;
+                    }
+                    // Another element has the keyboard for sure: no point waiting.
+                    Ok(false) if focus(&self.field) == Some(false) => {
+                        return Err("the field no longer has the keyboard".into());
                     }
                     Ok(false) => std::thread::sleep(Duration::from_millis(50)),
                 }
