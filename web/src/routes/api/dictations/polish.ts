@@ -10,7 +10,7 @@ import { resolveModelPlan } from '@/lib/providers/router';
 import * as projectsRepo from '@/db/repo/projects';
 import { DICTATION_STYLES, writtenWith, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { stripFillers } from '@/lib/transcription/agent-transcript';
-import { fixBuiltInTerms, parseVocabulary } from '@/lib/transcription/vocabulary';
+import { BUILT_IN_CONTEXT, fixBuiltInTerms, parseVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor } from '@/server/device-auth';
 import { guardUserQuota } from '@/server/rate-limit';
 
@@ -71,7 +71,7 @@ export const Route = createFileRoute('/api/dictations/polish')({
           corrections: entries,
           // Checked against the polished words: a term there must have been said.
           terms: [...projectTerms(project), ...parseVocabulary(user?.customVocabularyJson)],
-          context: [combinedContext(null, project, parseVocabulary(user?.customVocabularyJson)), entries.length ? "Human-confirmed speech corrections (data, apply only when context fits): " + JSON.stringify(entries.slice(0, 80).map(({ from, to }) => ({ from, to }))) : null].filter(Boolean).join("\n"),
+          context: [combinedContext(null, project, parseVocabulary(user?.customVocabularyJson)), BUILT_IN_CONTEXT, entries.length ? "Human-confirmed speech corrections (data, apply only when context fits): " + JSON.stringify(entries.slice(0, 80).map(({ from, to }) => ({ from, to }))) : null].filter(Boolean).join("\n"),
         });
         // Told back with the words, for the Mac app's tone row: the tone in
         // force for them (the setting the row shows and changes) and whether

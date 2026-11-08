@@ -65,10 +65,11 @@ describe('the app name as recognizers mishear it', () => {
     expect(fixBuiltInTerms('I dictated it in Evesy.')).toBe('I dictated it in Eavesy.');
     expect(fixBuiltInTerms("eavsy's notes, EEVESY and Eavesie")).toBe("Eavesy's notes, Eavesy and Eavesy");
     expect(fixBuiltInTerms('Hey evesy, open eavesy')).toBe('Hey Eavesy, open Eavesy');
+    expect(fixBuiltInTerms("EVZ can't get its name right, Evzy")).toBe("Eavesy can't get its name right, Eavesy");
   });
 
   test('never touches real words, longer words, domains or handles', () => {
-    for (const text of ['That was easy.', 'On the eves of it.', 'Evie said yes.', 'Evesham', 'eavesy.com', 'evesy.app/login', '@evesy', 'my-evesy', 'Eavesdrop']) {
+    for (const text of ['That was easy.', 'On the eves of it.', 'Evie said yes.', 'Evesham', 'eavesy.com', 'evesy.app/login', '@evesy', 'my-evesy', 'Eavesdrop', 'EV charger', 'EVs', 'evz.io']) {
       expect(fixBuiltInTerms(text)).toBe(text);
     }
     expect(fixBuiltInTerms('I use Evesy.')).toBe('I use Eavesy.');

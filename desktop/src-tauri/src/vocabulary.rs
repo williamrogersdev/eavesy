@@ -190,7 +190,7 @@ pub fn sidecar_arg(words: &[String]) -> Option<String> {
 /// path or handle and stays as written.
 pub fn fix_built_in_terms(text: &str) -> String {
     static MISHEARD: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"(?i)\b(?:eavesy|evesy|eavsy|eevesy|eevsy|eavesey|eavsey|eavesie|evesie|eevesie)\b").unwrap()
+        regex::Regex::new(r"(?i)\b(?:eavesy|evesy|eavsy|eevesy|eevsy|eavesey|eavsey|eavesie|evesie|eevesie|evz|evzy|eavzy|eevzy|evzee|eavzee|eveesy|eavesee|evesee)\b").unwrap()
     });
     let joined = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || "@/_-".contains(c));
     let mut out = String::with_capacity(text.len());
@@ -209,6 +209,13 @@ pub fn fix_built_in_terms(text: &str) -> String {
     }
     out.push_str(&text[end..]);
     out
+}
+
+/// Words as heard, spelled the way the user writes them: their confirmed
+/// fixes, then the app's name. What the Mac types before the server's polish
+/// arrives, or when it never does.
+pub fn spell(text: &str, corrections: &[Correction]) -> String {
+    fix_built_in_terms(&apply_corrections(text, corrections))
 }
 
 /// Fetches the account's words in the background and caches them.
@@ -305,7 +312,8 @@ mod tests {
     fn misheard_app_names_are_spelled_right() {
         assert_eq!(fix_built_in_terms("I dictated it in Evesy."), "I dictated it in Eavesy.");
         assert_eq!(fix_built_in_terms("eavsy's notes, EEVESY and Eavesie"), "Eavesy's notes, Eavesy and Eavesy");
-        for text in ["That was easy.", "On the eves of it.", "Evie said yes.", "Evesham", "eavesy.com", "evesy.app/login", "@evesy", "my-evesy", "Eavesdrop"] {
+        assert_eq!(fix_built_in_terms("EVZ can't get its name right, Evzy"), "Eavesy can't get its name right, Eavesy");
+        for text in ["That was easy.", "On the eves of it.", "Evie said yes.", "Evesham", "eavesy.com", "evesy.app/login", "@evesy", "my-evesy", "Eavesdrop", "EV charger", "EVs", "evz.io"] {
             assert_eq!(fix_built_in_terms(text), text);
         }
     }
