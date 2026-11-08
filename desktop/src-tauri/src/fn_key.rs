@@ -37,9 +37,12 @@ const FIELD_AUTOREPEAT: u32 = 8;
 /// kVK_Return and kVK_ANSI_KeypadEnter.
 const RETURN_KEYS: [u16; 2] = [36, 76];
 const COMMAND: u64 = 1 << 20;
-/// Set once a dictation has typed into a field: the active tap then also
-/// hears Return, which may send what it typed.
+/// While a dictation types into a field (or a Return is held for one), the
+/// active tap also hears Return, which may send what it typed.
 static WATCH_SEND: AtomicBool = AtomicBool::new(false);
+/// The Return key held back to end a dictation, plus one (0 for none): its
+/// repeats and its release are held back with it.
+static SWALLOWED_RETURN: std::sync::atomic::AtomicU16 = std::sync::atomic::AtomicU16::new(0);
 const FIELD_KEYCODE: u32 = 9;
 
 type TapCallback = extern "C" fn(*mut c_void, u32, *mut c_void, *mut c_void) -> *mut c_void;
@@ -208,6 +211,14 @@ pub fn watch_for_send(app: &AppHandle) {
     }
 }
 
+/// No dictation needs Return heard: the active tap goes back to chords only.
+pub fn stop_watching_send() {
+    if !WATCH_SEND.swap(false, Ordering::SeqCst) || any_chord() || SWALLOWED_RETURN.load(Ordering::SeqCst) != 0 {
+        return;
+    }
+    if let Some(tap) = CHORD_TAP.get() { unsafe { CGEventTapEnable(*tap as *mut c_void, false); } }
+}
+
 extern "C" fn receive_chord(_: *mut c_void, kind: u32, event: *mut c_void, info: *mut c_void) -> *mut c_void {
     let swallow = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
         if info.is_null() { return false; }
@@ -228,9 +239,16 @@ extern "C" fn receive_chord(_: *mut c_void, kind: u32, event: *mut c_void, info:
         let chords = [0, 1, 2].map(|slot| CHORDS[slot].load(Ordering::SeqCst));
         let held = [0, 1, 2].map(|slot| HELD[slot].load(Ordering::SeqCst));
         let repeat = CGEventGetIntegerValueField(event, FIELD_AUTOREPEAT) != 0;
+        let swallowed = SWALLOWED_RETURN.load(Ordering::SeqCst);
+        if swallowed != 0 && swallowed == keycode + 1 {
+            // The held Return's repeats and release never reach the app.
+            if kind == KEY_UP { SWALLOWED_RETURN.store(0, Ordering::SeqCst); }
+            if kind == KEY_UP || repeat { return true; }
+        }
         if kind == KEY_DOWN && WATCH_SEND.load(Ordering::SeqCst) {
             if let Some(command) = sending_return(keycode, CGEventGetFlags(event), repeat) {
                 if crate::dictate::send_on_return(app, command) {
+                    SWALLOWED_RETURN.store(keycode + 1, Ordering::SeqCst);
                     return true;
                 }
             }

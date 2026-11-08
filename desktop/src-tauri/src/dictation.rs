@@ -245,8 +245,9 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let target = take_pending(session_id);
     // Taken even with no words, so the claim ends with its dictation.
     let answering = crate::agents::take_answer(session_id);
-    // Return was pressed to end it: pressed again once the words are in.
-    let send = crate::live_typing::take_send(session_id);
+    // Return was pressed to end it: held until this delivery is over, and
+    // pressed again only once the finished words are in place.
+    let send = crate::live_typing::send_hold(session_id);
     let text = text.trim().to_string();
     if text.is_empty() {
         // Left marked for Eavesy, so words only the cloud transcript catches still go to it.
@@ -325,23 +326,27 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                     Typed::Field(mut live) => live
                         .select_typed()
                         .inspect_err(|why| tracing::info!(session_id = %session_id, "live-typed words not replaced: {why}"))
-                        .and_then(|()| crate::commands::paste_text(&app, &text)),
+                        .and_then(|()| crate::commands::paste_text(&app, &text))
+                        .map(|()| Some(live)),
                     Typed::Unknown => Err("live typing didn't finish".to_string()),
-                    Typed::Nothing => crate::commands::paste_text(&app, &text),
+                    Typed::Nothing => crate::commands::paste_text(&app, &text).map(|()| None),
                 };
                 if typed_live {
                     crate::telemetry::track("dictation_typed_live", serde_json::json!({ "replaced": delivered.is_ok() }));
                 }
-                // Only once the finished words replaced the typed ones: a
-                // send must never go out with the draft or a doubled paste.
-                if let (Some(command), true) = (send, typed_live && delivered.is_ok()) {
-                    // Behind the ⌘V in the app's queue; the beat lets it read the clipboard first.
-                    std::thread::sleep(Duration::from_millis(120));
-                    match press_return(command) {
-                        Ok(()) => tracing::info!(session_id = %session_id, "dictation sent with the held Return"),
-                        Err(why) => tracing::warn!(session_id = %session_id, "could not press the held Return: {why}"),
+                // Only once the field reads the finished words in place of the
+                // typed ones: a send never goes out with the draft or a
+                // doubled paste. Otherwise the draft waits for the user's Return.
+                if let (Some(command), Ok(Some(live))) = (send.command(), &delivered) {
+                    if !live.shows(&text, SEND_CONFIRM) {
+                        tracing::info!(session_id = %session_id, "held Return not pressed: the finished words didn't show in the field");
+                    } else if let Err(why) = press_return(command) {
+                        tracing::warn!(session_id = %session_id, "could not press the held Return: {why}");
+                    } else {
+                        tracing::info!(session_id = %session_id, "dictation sent with the held Return");
                     }
                 }
+                let delivered = delivered.map(|_| ());
                 if delivered.is_ok() {
                     *PASTED.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.clone(), text.clone(), project.clone()));
                 } else {
@@ -538,6 +543,10 @@ pub fn press_paste() -> Result<(), String> {
     const KEY_V: u16 = 9;
     press_key(KEY_V, true).map_err(|_| "could not create the paste key press".to_string())
 }
+
+/// How long the finished words get to show in the field before a held Return
+/// is pressed after them.
+const SEND_CONFIRM: Duration = Duration::from_millis(1500);
 
 /// Presses Return (⌘Return with `command`) in whatever app is frontmost: the
 /// Return a hands-free dictation held back while its words were finished.
