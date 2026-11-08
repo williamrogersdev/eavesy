@@ -320,7 +320,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                 // the field (the typed words stay), so the copy below is the
                 // one delivery, as it is for a failed paste.
                 let delivered = match live {
-                    Typed::Field(live) => live
+                    Typed::Field(mut live) => live
                         .select_typed()
                         .inspect_err(|why| tracing::info!(session_id = %session_id, "live-typed words not replaced: {why}"))
                         .and_then(|()| crate::commands::paste_text(&app, &text)),
