@@ -249,19 +249,18 @@ const PREVIEW_WORDS = browserPreviewWords();
  * saving, a rewrite) and a resize can lag: drawing for a size the window
  * doesn't have yet cuts off its controls. Null in the browser preview.
  */
-function useViewport(): { width: number; height: number } | null {
-  const read = () => (tauri() ? { width: window.innerWidth, height: window.innerHeight } : null);
-  const [viewport, setViewport] = useState(read);
+function useViewportHeight(): number | null {
+  const read = () => (tauri() ? window.innerHeight : null);
+  const [height, setHeight] = useState(read);
   useEffect(() => {
     if (!tauri()) return;
-    const update = () => setViewport((was) => {
-      const now = read();
-      return now && was && now.width === was.width && now.height === was.height ? was : now;
-    });
+    const update = () => setHeight(read());
     window.addEventListener('resize', update);
+    // A resize between the first render and the listener isn't missed.
+    update();
     return () => window.removeEventListener('resize', update);
   }, []);
-  return viewport;
+  return height;
 }
 
 /** Below this height the window is a one-row pill: no words fit under the controls. */
@@ -411,7 +410,7 @@ function Hud() {
   // When the pointer came over the control, so moving it can't hold a result forever.
   const overSince = useRef(0);
   const learned = useLearned();
-  const viewport = useViewport();
+  const viewportHeight = useViewportHeight();
   const collapseRef = useRef<(() => void) | null>(null);
   const [draft, setDraft] = useState<{ sessionId: string | null; source: string | null; text: string } | null>(null);
   const [saveRevision, setSaveRevision] = useState(0);
@@ -703,11 +702,14 @@ function Hud() {
   const eavesy = state?.mode === EAVESY_MODE;
   const look: Look = eavesy && settingsLook.lines === 0 ? { ...settingsLook, lines: 1 } : settingsLook;
   // Drawn only once the window has room for it: until then the words stay a stamp on the pill.
-  const rowOnly = !!viewport && viewport.height < ROOM_FOR_WORDS;
+  const rowOnly = viewportHeight !== null && viewportHeight < ROOM_FOR_WORDS;
   const drawer = (peeking || keepDrawer || opensItself) && !rowOnly;
   const wanted = state ? sizeFor(state, look.lines, drawer) : 'pill';
   // Live words with no room under the controls yet: the controls alone, as with live words off.
-  const size: Size = rowOnly && wanted === 'wide' && (state?.phase === 'recording' || state?.phase === 'transcribing') ? 'bar' : wanted;
+  // In a window still the resting pill's height, the pill's own row.
+  const size: Size = rowOnly && (wanted === 'wide' || wanted === 'bar') && (state?.phase === 'recording' || state?.phase === 'transcribing')
+    ? viewportHeight !== null && viewportHeight >= 40 ? 'bar' : 'pill'
+    : wanted;
   // Otherwise, until its drawer is opened, a finished dictation is just a stamp on the pill.
   const receipt = state && !drawer ? finished : null;
 
