@@ -442,8 +442,10 @@ mod mac {
 
         /// Waits (at most `LANDED_BY_END`) for keys still on their way, then
         /// selects the typed words, so the next paste or delete replaces
-        /// exactly them. It only selects: when it fails, nothing in the field
-        /// changed (whatever it did select is put back to a caret).
+        /// exactly them. When none of them landed, the caret is left where
+        /// they would have gone, so a paste lands there as usual. It only
+        /// selects: when it fails, nothing in the field changed (whatever it
+        /// did select is put back to a caret).
         pub fn select_typed(&mut self) -> Result<(), String> {
             let give_up = std::time::Instant::now() + LANDED_BY_END;
             loop {
@@ -451,10 +453,9 @@ mod mac {
                     Ok(true) => break,
                     Err(why) => return Err(why),
                     Ok(false) if std::time::Instant::now() >= give_up => {
-                        if focus(&self.field) != Some(true) {
-                            return Err("the field no longer has the keyboard".into());
-                        }
-                        // Keys that never arrived: replace what did.
+                        // Keys that never arrived: replace what did. The
+                        // dictation was polished meanwhile, so these were
+                        // posted seconds ago.
                         tracing::info!("live typing: some typed keys never landed; replacing what did");
                         self.posted = self.typed.clone();
                         if !self.check()? {
@@ -462,11 +463,16 @@ mod mac {
                         }
                         break;
                     }
+                    // Another element has the keyboard for sure: no point waiting.
+                    Ok(false) if focus(&self.field) == Some(false) => {
+                        return Err("the field no longer has the keyboard".into());
+                    }
                     Ok(false) => std::thread::sleep(Duration::from_millis(50)),
                 }
             }
             if self.typed.is_empty() {
-                return Err("nothing was typed".into());
+                // `check` found the caret right where the words go.
+                return Ok(());
             }
             let field = self.field.0 as Ref;
             let start = super::units(&self.prefix);
@@ -500,6 +506,10 @@ mod mac {
         /// Deletes the typed words, while they are still exactly as typed.
         pub fn take_back(mut self) -> Result<(), String> {
             self.select_typed()?;
+            if self.typed.is_empty() {
+                // Nothing selected: a delete would take the user's own character.
+                return Ok(());
+            }
             press(KEY_DELETE, None)
         }
     }
@@ -997,6 +1007,9 @@ mod tests {
         assert!(reads_as_typed("Send Sam the de", "Send Sam the desk", "Send Sam the deck"));
         assert!(reads_as_typed("Send Sam the dec", "Send Sam the desk", "Send Sam the deck"));
         assert!(!reads_as_typed("Send Sam the", "Send Sam the desk", "Send Sam the deck"));
+        // Right after the delete in a retype, only the shared start is left.
+        assert!(reads_as_typed("I ", "I believe", "I think"));
+        assert!(!reads_as_typed("I", "I believe", "I think"));
         // Shorter than what was already there and agreed on is the user deleting.
         assert!(!reads_as_typed("I", "I believe", "I believe we're"));
         // Words that aren't on their way are the user's.
