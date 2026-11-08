@@ -24,7 +24,7 @@ export const BUILT_IN_TERMS: readonly string[] = ['Eavesy'];
  * throw out every fix.
  */
 export const BUILT_IN_CONTEXT =
-  'The app the speaker is using is called Eavesy (said "EEV-zee"). Speech recognition often writes it as "EV", "EVs", "EVZ", "Eves", "Evie" or "Eavsy": spell it Eavesy wherever the speaker means the app, and leave those words as they are where they mean something else, such as an electric vehicle.';
+  'The app the speaker is using is called Eavesy (said "EEV-zee"). Speech recognition often writes it as "EV", "EVs", "EVZ" or "Eavsy": spell it Eavesy only where the sentence is clearly about the app, and leave those words as they are where they mean something else, such as an electric vehicle or a ticker.';
 
 /**
  * How recognizers mishear the name. Only spellings that are no English word,
@@ -32,7 +32,7 @@ export const BUILT_IN_CONTEXT =
  * at-sign or dash means a domain, path or handle, which is left as written.
  */
 const MISHEARD_NAME =
-  /(?<![\p{L}\p{N}@/._-])(?:eavesy|evesy|eavsy|eevesy|eevsy|eavesey|eavsey|eavesie|evesie|eevesie|evz|evzy|eavzy|eevzy|evzee|eavzee|eveesy|eavesee|evesee)(?![\p{L}\p{N}@/_-]|\.[\p{L}\p{N}])/giu;
+  /(?<![\p{L}\p{N}@/._-])(?:eavesy|evesy|eavsy|eevesy|eevsy|eavesey|eavsey|eavesie|evesie|eevesie|evzy|eavzy|eevzy|evzee|eavzee|eveesy|eavesee|evesee)(?![\p{L}\p{N}@/_-]|\.[\p{L}\p{N}])/giu;
 
 /** The app's name spelled right wherever a recognizer clearly misheard it. */
 export function fixBuiltInTerms(text: string): string {

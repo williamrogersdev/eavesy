@@ -110,8 +110,9 @@ pub fn start(app: &AppHandle, session_id: &str) {
     register(Entry { id: session_id.to_string(), tx, shared: shared.clone() });
     let session_id = session_id.to_string();
     // Read once: the typed words follow the same spellings the whole dictation.
-    let corrections = crate::vocabulary::cached_corrections(app);
-    std::thread::spawn(move || typist(&session_id, rx, &shared, &corrections));
+    // A fix added on the web mid-dictation reaches the next one.
+    let speller = crate::vocabulary::Speller::new(&crate::vocabulary::cached_corrections(app));
+    std::thread::spawn(move || typist(&session_id, rx, &shared, &speller));
 }
 
 fn register(entry: Entry) {
@@ -216,7 +217,7 @@ enum Field {
     Stopped(Option<LiveField>),
 }
 
-fn typist(session_id: &str, rx: Receiver<Msg>, shared: &Shared, corrections: &[crate::vocabulary::Correction]) {
+fn typist(session_id: &str, rx: Receiver<Msg>, shared: &Shared, speller: &crate::vocabulary::Speller) {
     let mut heard = Heard::default();
     let mut field = Field::Unknown(None);
     let mut pace = Pace::default();
@@ -263,7 +264,7 @@ fn typist(session_id: &str, rx: Receiver<Msg>, shared: &Shared, corrections: &[c
         }
         // Spelled as the finished words will be, so words typed live that
         // never get replaced still read right.
-        let text = crate::vocabulary::spell(&heard.text(), corrections);
+        let text = speller.spell(&heard.text());
         // Only updates that type count: finding the field is timed apart.
         let typing = matches!(field, Field::Typing(_)) && !text.is_empty();
         let began = std::time::Instant::now();
