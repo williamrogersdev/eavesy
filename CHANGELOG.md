@@ -6,6 +6,19 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.10] - 2026-11-08 - desktop
+
+### Added
+
+- Mac app: Return ends a hands-free dictation and sends the finished words ([#347](https://github.com/williamrogersdev/eavesy/pull/347))
+- Mac app: Snapshots of shared screens and screenshots during meetings ([#338](https://github.com/williamrogersdev/eavesy/pull/338))
+
+### Fixed
+
+- Mac app: live typing pastes normally when no typed key landed ([#346](https://github.com/williamrogersdev/eavesy/pull/346))
+- Mac app: live typing waits for slow apps; capture control never clips ([#344](https://github.com/williamrogersdev/eavesy/pull/344))
+- Mac app: carry notes and note edits over to the user's other Macs ([#342](https://github.com/williamrogersdev/eavesy/pull/342))
+
 ## [0.9.9] - 2026-11-05 - desktop
 
 ### Added
