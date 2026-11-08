@@ -40,16 +40,17 @@ pub fn maybe_run() -> bool {
     let _ = std::io::stdin().take(protocol::MAX_LINE as u64).read_to_end(&mut input);
     let Some(socket) = super::socket_path() else { return true };
     let env = |key: &str| std::env::var(key).ok();
-    let attended = env("EAVESY_NO_HOLD").as_deref() != Some("1")
-        && protocol::attended(env("CLAUDE_CODE_SESSION_ATTENDED").as_deref(), env("CLAUDE_CODE_ENTRYPOINT").as_deref());
-    // A `claude -p` that a desktop session runs inherits that session's app and id.
-    let host_session_id = if attended { env("CLAUDE_CODE_HOST_SESSION_ID") } else { None };
-    let Some(mut message) = message(event, &input, attended, host_session_id) else {
+    let in_person = protocol::attended(env("CLAUDE_CODE_SESSION_ATTENDED").as_deref(), env("CLAUDE_CODE_ENTRYPOINT").as_deref());
+    let attended = in_person && env("EAVESY_NO_HOLD").as_deref() != Some("1");
+    let host = host(
+        in_person,
+        env("CLAUDE_CODE_HOST_SESSION_ID"),
+        env("__CFBundleIdentifier").as_deref(),
+        env("TERM_PROGRAM").as_deref(),
+    );
+    let Some(message) = message(event, &input, attended, host) else {
         return true;
     };
-    if attended {
-        message.host_app = super::host::from_env(env("__CFBundleIdentifier").as_deref(), env("TERM_PROGRAM").as_deref());
-    }
     let transcript = transcript_path(&input);
     if let Some(reply) = deliver(&socket, &message, transcript.as_deref()) {
         println!("{}", protocol::block_output(&reply));
@@ -57,8 +58,24 @@ pub fn maybe_run() -> bool {
     true
 }
 
+/// Where the session runs: the desktop app's id for it and the app's bundle id.
+#[derive(Debug, Default, PartialEq)]
+pub struct Host {
+    pub session_id: Option<String>,
+    pub app: Option<String>,
+}
+
+/// None for a session nobody is at: a `claude -p` that a desktop session runs
+/// inherits that session's environment, so it would claim to be it.
+pub fn host(in_person: bool, session_id: Option<String>, bundle: Option<&str>, term_program: Option<&str>) -> Option<Host> {
+    in_person.then(|| Host {
+        session_id: session_id.filter(|id| !id.is_empty()),
+        app: super::host::from_env(bundle, term_program),
+    })
+}
+
 /// The hook's stdin as the app wants it, or None when it isn't a hook payload.
-pub fn message(event: Event, input: &[u8], attended: bool, host_session_id: Option<String>) -> Option<HookMessage> {
+pub fn message(event: Event, input: &[u8], attended: bool, host: Option<Host>) -> Option<HookMessage> {
     let value: Value = match serde_json::from_slice(input) {
         Ok(value) => value,
         // A tool's output can be past the read cap; only the session id is needed.
@@ -73,6 +90,7 @@ pub fn message(event: Event, input: &[u8], attended: bool, host_session_id: Opti
         Event::Prompt => (None, text("prompt").map(|p| protocol::head(&p, protocol::MAX_PROMPT_CHARS))),
         Event::ToolDone => (None, None),
     };
+    let host = host.unwrap_or_default();
     Some(HookMessage {
         v: protocol::VERSION,
         event,
@@ -82,8 +100,8 @@ pub fn message(event: Event, input: &[u8], attended: bool, host_session_id: Opti
         prompt,
         notification_type: text("notification_type"),
         attended,
-        host_session_id: host_session_id.filter(|id| !id.is_empty()),
-        host_app: None,
+        host_session_id: host.session_id,
+        host_app: host.app,
     })
 }
 
@@ -114,7 +132,7 @@ pub fn deliver(socket: &Path, message: &HookMessage, transcript: Option<&Path>) 
 /// path give a loaded machine more room than the hook's real budget.
 fn deliver_within(socket: &Path, message: &HookMessage, budget: Duration, transcript: Option<&Path>) -> Option<String> {
     // Measured before connecting, so a message typed while the app answers still counts.
-    let watch = transcript.and_then(|path| Some((path.to_path_buf(), std::fs::metadata(path).ok()?.len())));
+    let watch = transcript.map(|path| (path.to_path_buf(), Mark::of(path)));
     let mut stream = UnixStream::connect(socket).ok()?;
     stream.set_write_timeout(Some(budget)).ok()?;
     stream.set_read_timeout(Some(budget)).ok()?;
@@ -129,8 +147,8 @@ fn deliver_within(socket: &Path, message: &HookMessage, budget: Duration, transc
     // after a reply it had ready at once; the reply is already buffered, so read it anyway.
     let _ = stream.set_read_timeout(Some(MAX_HOLD));
     let done = Arc::new(AtomicBool::new(false));
-    if let Some((path, from)) = watch {
-        let stream = stream.try_clone().ok()?;
+    // Detached: it notices `done` within one poll, and the hook process exits right after.
+    if let (Some((path, from)), Ok(stream)) = (watch, stream.try_clone()) {
         let done = done.clone();
         std::thread::spawn(move || {
             if wait_for_typed_message(&path, from, &done) {
@@ -148,41 +166,77 @@ fn deliver_within(socket: &Path, message: &HookMessage, budget: Duration, transc
 
 const TRANSCRIPT_POLL: Duration = Duration::from_millis(250);
 
+/// How far into which file the transcript had got. A transcript that isn't
+/// there yet starts at nothing, so all of it is new once it appears.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Mark {
+    inode: Option<u64>,
+    len: u64,
+}
+
+impl Mark {
+    fn of(path: &Path) -> Mark {
+        use std::os::unix::fs::MetadataExt;
+        std::fs::metadata(path).map(|meta| Mark { inode: Some(meta.ino()), len: meta.len() }).unwrap_or_default()
+    }
+}
+
 /// Claude Code queues a message you type during a held Stop and only reads it
 /// once the hook ends, but writes it to the transcript straight away. True once
 /// such a message appears after `from`; false once `done` is set.
-fn wait_for_typed_message(path: &Path, mut from: u64, done: &AtomicBool) -> bool {
+fn wait_for_typed_message(path: &Path, from: Mark, done: &AtomicBool) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let mut at = from;
     let mut partial = Vec::new();
     while !done.load(Ordering::Relaxed) {
         std::thread::sleep(TRANSCRIPT_POLL);
         let Ok(mut file) = std::fs::File::open(path) else { continue };
-        let Ok(len) = file.metadata().map(|meta| meta.len()) else { continue };
-        if len < from {
-            from = len;
+        let Ok(meta) = file.metadata() else { continue };
+        // A replaced or cut-down file is read again from its start.
+        if at.inode != Some(meta.ino()) || meta.len() < at.len {
+            at = Mark { inode: Some(meta.ino()), len: 0 };
             partial.clear();
         }
-        if len == from || file.seek(SeekFrom::Start(from)).is_err() {
+        if meta.len() == at.len || file.seek(SeekFrom::Start(at.len)).is_err() {
             continue;
         }
         let mut added = Vec::new();
-        if file.take(len - from).read_to_end(&mut added).is_err() {
+        if file.take(meta.len() - at.len).read_to_end(&mut added).is_err() {
             continue;
         }
-        from = len;
+        at.len = meta.len();
         partial.extend_from_slice(&added);
-        let complete = partial.iter().rposition(|&byte| byte == b'\n').map_or(0, |at| at + 1);
+        let complete = partial.iter().rposition(|&byte| byte == b'\n').map_or(0, |end| end + 1);
         let lines: Vec<u8> = partial.drain(..complete).collect();
         if lines.split(|&byte| byte == b'\n').any(is_typed_message) {
             return true;
+        }
+        // One line too long to be a message is dropped up to its end.
+        if partial.len() > protocol::MAX_LINE {
+            partial.clear();
         }
     }
     false
 }
 
+/// What Claude Code itself queues into a session, which isn't you typing.
+const GENERATED: [&str; 6] =
+    ["<task-notification", "<ci-monitor-event", "<system-reminder", "<cross-session-message", "<agent-message", "<side-sessions-event"];
+
 fn is_typed_message(line: &[u8]) -> bool {
     let Ok(value) = serde_json::from_slice::<Value>(line) else { return false };
-    value.get("type").and_then(Value::as_str) == Some("queue-operation")
-        && value.get("operation").and_then(Value::as_str) == Some("enqueue")
+    let queued = value.get("type").and_then(Value::as_str) == Some("queue-operation")
+        && value.get("operation").and_then(Value::as_str) == Some("enqueue");
+    let typed = match value.get("content") {
+        Some(Value::String(content)) => {
+            let content = content.trim_start();
+            !content.is_empty() && !GENERATED.iter().any(|tag| content.starts_with(tag))
+        }
+        // A message with an image in it.
+        Some(Value::Array(parts)) => !parts.is_empty(),
+        _ => false,
+    };
+    queued && typed
 }
 
 fn read_answer(reader: &mut impl BufRead) -> Option<Answer> {
@@ -220,9 +274,11 @@ mod tests {
         assert!(m.attended);
         assert!(message(Event::Stop, b"not json", true, None).is_none());
         assert!(message(Event::Stop, br#"{"session_id":""}"#, true, None).is_none());
-        let prompt = message(Event::Prompt, br#"{"session_id":"s1","prompt":"fix it"}"#, false, Some("local_1".into())).unwrap();
+        let host = Host { session_id: Some("local_1".into()), app: Some("com.anthropic.claudefordesktop".into()) };
+        let prompt = message(Event::Prompt, br#"{"session_id":"s1","prompt":"fix it"}"#, false, Some(host)).unwrap();
         assert_eq!(prompt.prompt.as_deref(), Some("fix it"));
         assert_eq!(prompt.host_session_id.as_deref(), Some("local_1"));
+        assert_eq!(prompt.host_app.as_deref(), Some("com.anthropic.claudefordesktop"));
         let cut = message(Event::ToolDone, br#"{"session_id":"s2","tool_response":"aaaa"#, false, None).unwrap();
         assert_eq!(cut.session_id, "s2");
         assert!(message(Event::Stop, br#"{"session_id":"s2","last_assistant_message":"aa"#, false, None).is_none());
@@ -298,6 +354,8 @@ mod tests {
             reader.read_line(&mut String::new()).unwrap();
             let mut writer = stream;
             writer.write_all(format!("{}\n", serde_json::to_string(&Answer::Ack { hold: true }).unwrap()).as_bytes()).unwrap();
+            // Ends the hold itself if the hook never lets go, so a regression fails fast.
+            writer.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
             let mut rest = Vec::new();
             let _ = reader.read_to_end(&mut rest);
         });
@@ -306,7 +364,7 @@ mod tests {
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(400));
                 let mut file = std::fs::OpenOptions::new().append(true).open(&transcript).unwrap();
-                file.write_all(b"{\"type\":\"assistant\"}\n{\"type\":\"queue-operation\",\"operation\":\"enq").unwrap();
+                file.write_all(b"{\"type\":\"assistant\"}\n{\"type\":\"queue-operation\",\"operation\":\"enqueue\",\"content\":\"<task-notification>done</task-notification>\"}\n{\"type\":\"queue-operation\",\"operation\":\"enq").unwrap();
                 std::thread::sleep(Duration::from_millis(400));
                 file.write_all(b"ueue\",\"content\":\"do this instead\"}\n").unwrap();
             })
@@ -322,8 +380,49 @@ mod tests {
     }
 
     #[test]
-    fn only_a_queued_message_counts_as_typing() {
+    fn a_transcript_that_appears_or_is_replaced_is_read_from_its_start() {
+        let dir = std::env::temp_dir().join(format!("ev-mark-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let transcript = dir.join("t.jsonl");
+        let typed = b"{\"type\":\"queue-operation\",\"operation\":\"enqueue\",\"content\":\"hi\"}\n";
+        let done = AtomicBool::new(false);
+        let missing = Mark::of(&transcript);
+        assert_eq!(missing, Mark::default());
+        std::fs::write(&transcript, typed).unwrap();
+        assert!(wait_for_typed_message(&transcript, missing, &done));
+
+        std::fs::write(&transcript, b"{\"type\":\"assistant\",\"pad\":\"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx\"}\n").unwrap();
+        let before = Mark::of(&transcript);
+        let replacement = dir.join("new.jsonl");
+        std::fs::write(&replacement, [typed.as_slice(), typed.as_slice()].concat()).unwrap();
+        std::fs::rename(&replacement, &transcript).unwrap();
+        assert!(Mark::of(&transcript).len > before.len);
+        assert!(wait_for_typed_message(&transcript, before, &done));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn host_is_only_kept_for_a_session_someone_is_at() {
+        let desktop = Some("com.anthropic.claudefordesktop");
+        assert_eq!(host(false, Some("local_1".into()), desktop, None), None);
+        let at = host(true, Some("local_1".into()), desktop, None).unwrap();
+        assert_eq!(at.session_id.as_deref(), Some("local_1"));
+        assert_eq!(at.app.as_deref(), desktop);
+        assert_eq!(host(true, Some(String::new()), None, None).unwrap(), Host::default());
+        let nested = message(Event::Stop, br#"{"session_id":"s1"}"#, false, host(false, Some("local_1".into()), desktop, None)).unwrap();
+        assert_eq!((nested.host_session_id, nested.host_app), (None, None));
+    }
+
+    #[test]
+    fn only_a_message_you_typed_counts_as_typing() {
         assert!(is_typed_message(br#"{"type":"queue-operation","operation":"enqueue","content":"hi"}"#));
+        assert!(is_typed_message(br#"{"type":"queue-operation","operation":"enqueue","content":"<pasted_content id=\"1\">x</pasted_content>"}"#));
+        assert!(is_typed_message(br#"{"type":"queue-operation","operation":"enqueue","content":[{"type":"image"}]}"#));
+        for generated in GENERATED {
+            let line = serde_json::json!({ "type": "queue-operation", "operation": "enqueue", "content": format!("{generated}>x") });
+            assert!(!is_typed_message(line.to_string().as_bytes()), "{generated}");
+        }
+        assert!(!is_typed_message(br#"{"type":"queue-operation","operation":"enqueue"}"#));
         assert!(!is_typed_message(br#"{"type":"queue-operation","operation":"dequeue"}"#));
         assert!(!is_typed_message(br#"{"type":"user","operation":"enqueue"}"#));
         assert!(!is_typed_message(b"{\"type\":\"queue-oper"));
