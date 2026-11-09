@@ -580,7 +580,8 @@ the pill can't jitter or flip while words arrive.
 control, `set_hud_look`): live words Off (the bar, the default), 1, 2 or 4
 lines, **Show the words when it's done**, on by default, and
 **See-through**, on by default, which turns the charcoal into a plain smoked
-glass (neutral grey at 52%, a hairline white edge, no coral ring) so the
+glass (neutral grey at 64%, enough for 4.5:1 text over white, a hairline
+white edge, no coral ring) so the
 control sits back over whatever is underneath and blends into a screen share. Still
 no native glass, for the corner reason above. A change applies at once, even
 mid-recording: Rust refits the window and the HUD hears `hud:look`.
@@ -597,8 +598,8 @@ the next recording.
 There is no mascot or logo on the control: it opens Eavesy from a click on
 its surface. The five voice bars follow the mic level. The coral dot, the
 coral ring (solid look only) and the coral Stop are the only red, and only
-while the mic is live. Live words, when on, are in a quieter ink (62%) on a lighter charcoal (66%
-when see-through) so they don't pull the eye while you talk; clicking in to
+while the mic is live. Live words, when on, are in a quieter ink (62%) on a lighter charcoal (neutral
+grey at 72% when see-through) so they don't pull the eye while you talk; clicking in to
 fix one brings it to full ink. The ticker is one line of 12.5/18 text, clipped from
 the start with a soft left fade so the newest words stay in view. Before the
 first word it shows the hint ("Go ahead, I'm listening", plus the paste shortcut).
