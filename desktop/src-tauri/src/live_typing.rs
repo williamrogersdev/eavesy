@@ -39,6 +39,9 @@ impl LiveField {
     pub fn has_typed(&self) -> bool {
         false
     }
+    pub fn pid(&self) -> i32 {
+        0
+    }
     fn sync(&mut self, _text: &str, _stop: &AtomicBool) -> Result<bool, String> {
         Err("live typing is only supported on macOS".into())
     }
@@ -90,9 +93,6 @@ struct Shared {
     stop: AtomicBool,
     /// Some words went into the field (and may still be there).
     typed: AtomicBool,
-    /// Still typing into its field: not stopped because the user typed
-    /// there, moved on or the words go elsewhere.
-    typing: AtomicBool,
 }
 
 struct Entry {
@@ -133,16 +133,31 @@ fn held(slot: &Option<HeldSend>, now: std::time::Instant) -> Option<&HeldSend> {
     slot.as_ref().filter(|send| now.saturating_duration_since(send.at) < SEND_HOLD)
 }
 
-/// The dictation still typing words into a field, if one is: Return there
-/// is the user sending them. Cheap enough for a key tap's callback.
-pub fn typing_into_field() -> Option<String> {
+/// The dictation whose words were typed into a field as they were heard, if
+/// one is still being heard: Return there is the user sending them. It
+/// counts whether or not typing has kept up (a field that stopped taking
+/// words still holds the draft, and Return would send that). Cheap enough
+/// for a key tap's callback.
+pub fn typed_into_field() -> Option<String> {
     typists()
         .iter()
         .rev()
-        .find(|entry| {
-            entry.shared.typed.load(Ordering::SeqCst) && entry.shared.typing.load(Ordering::SeqCst) && !entry.shared.stop.load(Ordering::SeqCst)
-        })
+        .find(|entry| entry.shared.typed.load(Ordering::SeqCst) && !entry.shared.stop.load(Ordering::SeqCst))
         .map(|entry| entry.id.clone())
+}
+
+/// Dictations that have stopped, with the words typed for them still in a
+/// field of the app `pid` until their finished words replace them.
+static FINISHING: Mutex<Vec<(String, i32)>> = Mutex::new(Vec::new());
+
+fn finishing() -> std::sync::MutexGuard<'static, Vec<(String, i32)>> {
+    FINISHING.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// The stopped dictation whose typed words are still in the app `pid`,
+/// waiting for the finished ones: Return there now would send the draft.
+pub fn finishing_in(pid: i32) -> Option<String> {
+    finishing().iter().rev().find(|(_, app)| *app == pid).map(|(id, _)| id.clone())
 }
 
 /// A Return is being held for a dictation typed in the app `pid`.
@@ -185,6 +200,7 @@ impl Drop for SendHold {
 }
 
 fn release_send(session_id: &str) {
+    finishing().retain(|(id, _)| id != session_id);
     {
         let mut slot = send_slot();
         if slot.as_ref().is_some_and(|send| send.id == session_id) {
@@ -198,6 +214,7 @@ fn release_send(session_id: &str) {
 /// Return is held for one.
 fn update_watch() {
     let needed = typists().iter().any(|entry| !entry.shared.stop.load(Ordering::SeqCst))
+        || !finishing().is_empty()
         || held(&send_slot(), std::time::Instant::now()).is_some();
     if !needed {
         #[cfg(target_os = "macos")]
@@ -267,8 +284,18 @@ pub enum Typed {
 /// whatever typing was under way has landed.
 pub fn finish(session_id: &str) -> Typed {
     let typed = finish_typing(session_id);
+    // Until the delivery is over (`SendHold`), Return in that app waits.
+    if let Typed::Field(field) = &typed {
+        note_finishing(session_id, field.pid());
+    }
     update_watch();
     typed
+}
+
+fn note_finishing(session_id: &str, pid: i32) {
+    let mut finishing = finishing();
+    finishing.retain(|(id, _)| id != session_id);
+    finishing.push((session_id.to_string(), pid));
 }
 
 fn finish_typing(session_id: &str) -> Typed {
@@ -388,7 +415,6 @@ fn typist(session_id: &str, rx: Receiver<Msg>, shared: &Shared, speller: &crate:
         let typing = matches!(field, Field::Typing(_)) && !text.is_empty();
         let began = std::time::Instant::now();
         field = type_into(session_id, field, &text, shared);
-        shared.typing.store(matches!(field, Field::Typing(_)), Ordering::SeqCst);
         if typing && matches!(field, Field::Typing(_)) {
             pace.add(began.elapsed());
         }
@@ -758,6 +784,24 @@ mod tests {
             cancel("next");
             assert!(!holding_for(42), "a cancelled dictation lets go too");
         }
+    }
+
+    #[test]
+    fn return_waits_for_a_typed_draft_until_its_finished_words_are_in() {
+        let (typed, _rx) = entry("draft-heard", true);
+        let shared = typed.shared.clone();
+        register(typed);
+        assert!(typed_into_field().is_some(), "a draft in the field, whether or not typing kept up");
+        shared.stop.store(true, Ordering::SeqCst);
+        assert_ne!(typed_into_field().as_deref(), Some("draft-heard"), "stopped: its delivery takes over");
+        cancel("draft-heard");
+
+        let delivery = send_hold("draft-finishing");
+        note_finishing("draft-finishing", 4242);
+        assert_eq!(finishing_in(4242).as_deref(), Some("draft-finishing"));
+        assert_eq!(finishing_in(4243), None, "another app's Return is its own");
+        drop(delivery);
+        assert_eq!(finishing_in(4242), None, "delivery over: Return works again");
     }
 
     #[test]

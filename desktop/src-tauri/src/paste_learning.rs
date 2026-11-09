@@ -359,6 +359,11 @@ mod mac {
             self.lost || self.edit.is_some() || self.typed != self.original || self.posted != self.original
         }
 
+        /// The app the field is in.
+        pub fn pid(&self) -> i32 {
+            self.pid
+        }
+
         /// What the words should read for everything heard so far.
         fn aim(&self, heard: &str) -> String {
             match &self.edit {
