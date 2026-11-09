@@ -1065,6 +1065,12 @@ fn stream_events(
 /// reading, the hint fails and the poller sends it again next time. It runs
 /// under the captures lock, so it never overlaps the "stop" line, which is
 /// only written once the session has left the map.
+#[cfg(not(unix))]
+pub fn hint_caption_language(_app: &AppHandle, _session_id: &str, _language: &str) -> bool {
+    false
+}
+
+#[cfg(unix)]
 pub fn hint_caption_language(app: &AppHandle, session_id: &str, language: &str) -> bool {
     use std::os::fd::AsRawFd;
     let Some(language) = crate::vocabulary::clean_language(language) else {
@@ -1083,6 +1089,7 @@ pub fn hint_caption_language(app: &AppHandle, session_id: &str, language: &str) 
 /// short are under PIPE_BUF, so the write is atomic. The flags belong to the
 /// engine's stdin, so they are put back before returning; callers keep every
 /// other write to it from running meanwhile.
+#[cfg(unix)]
 fn write_without_waiting(fd: std::os::fd::RawFd, bytes: &[u8]) -> bool {
     // SAFETY: `fd` is an open descriptor owned by the caller for this call.
     unsafe {

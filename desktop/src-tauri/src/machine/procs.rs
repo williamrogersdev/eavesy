@@ -226,8 +226,14 @@ mod sys {
     }
 }
 
+#[cfg(unix)]
 pub fn own_uid() -> u32 {
     unsafe { libc::getuid() }
+}
+
+#[cfg(not(unix))]
+pub fn own_uid() -> u32 {
+    0
 }
 
 /// Every process on the Mac, with paths and tags for your own.
@@ -265,6 +271,7 @@ pub fn terminate(pid: u32, started_us: u64) -> Result<(), String> {
     if proc.uid != own_uid() {
         return Err("it isn't yours".into());
     }
+    #[cfg(unix)]
     if unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) } != 0 {
         return Err(std::io::Error::last_os_error().to_string());
     }

@@ -5,7 +5,9 @@
 //! where the OAuth token lives; `claude mcp get` tells us when it's done.
 
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -101,7 +103,8 @@ fn ask_login_shell() -> Option<PathBuf> {
 
 /// Runs `program`, giving up after `timeout`. Ok holds stdout; Err holds what it said went wrong.
 fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, String> {
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(args)
         .env("NO_COLOR", "1")
         .env("PATH", child_path(program))
@@ -109,9 +112,11 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, Strin
         .current_dir(dirs::home_dir().unwrap_or_else(|| PathBuf::from("/")))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        // Its own process group, so a timeout stops any helper it started too.
-        .process_group(0)
+        .stderr(Stdio::piped());
+    // Its own process group, so a timeout stops any helper it started too.
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command
         .spawn()
         .map_err(|error| format!("Couldn't run {}: {error}", program.display()))?;
     // Read on threads so a full pipe can't stall the command while we wait for it.
@@ -139,6 +144,7 @@ fn run(program: &Path, args: &[&str], timeout: Duration) -> Result<String, Strin
                 // The readers aren't waited for here: once the group is gone they
                 // finish on their own, and this call returns either way.
                 // SAFETY: kill(2) on the group this child leads; no memory is touched.
+                #[cfg(unix)]
                 unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
                 let _ = child.kill();
                 let _ = child.wait();
@@ -409,9 +415,16 @@ fn write_script(script: &str) -> std::io::Result<PathBuf> {
         }
     }
     let dir = temp.join(format!("{SCRIPT_DIR_PREFIX}{}", uuid::Uuid::new_v4().simple()));
-    std::fs::DirBuilder::new().mode(0o700).create(&dir)?;
+    let mut folder = std::fs::DirBuilder::new();
+    #[cfg(unix)]
+    folder.mode(0o700);
+    folder.create(&dir)?;
     let file = dir.join("Sign in to Eavesy.command");
-    let mut out = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o700).open(&file)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o700);
+    let mut out = options.open(&file)?;
     out.write_all(script.as_bytes())?;
     Ok(file)
 }

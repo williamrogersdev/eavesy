@@ -7,7 +7,9 @@
 //! within `CONNECT_BUDGET`, it exits 0 with no output and Claude carries on.
 
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+#[cfg(unix)]
 use std::net::Shutdown;
+#[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -112,6 +114,12 @@ pub fn deliver(socket: &Path, message: &HookMessage, transcript: Option<&Path>) 
 
 /// `deliver`, with how long the app gets to acknowledge. Tests that exercise the reply
 /// path give a loaded machine more room than the hook's real budget.
+#[cfg(not(unix))]
+fn deliver_within(_socket: &Path, _message: &HookMessage, _budget: Duration, _transcript: Option<&Path>) -> Option<String> {
+    None
+}
+
+#[cfg(unix)]
 fn deliver_within(socket: &Path, message: &HookMessage, budget: Duration, transcript: Option<&Path>) -> Option<String> {
     // Measured before connecting, so a message typed while the app answers still counts.
     let watch = transcript.and_then(|path| Some((path.to_path_buf(), std::fs::metadata(path).ok()?.len())));
@@ -191,7 +199,7 @@ fn read_answer(reader: &mut impl BufRead) -> Option<Answer> {
     serde_json::from_str(line.trim()).ok()
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use std::os::unix::net::UnixListener;
