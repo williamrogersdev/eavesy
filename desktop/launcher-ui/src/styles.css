@@ -174,14 +174,18 @@ body {
 .eavesy-control[data-phase="recording"] {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ev-rec) 42%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.06);
 }
-/* See-through (Settings → General → Recording control): the screen behind shows through,
-   the edge and the words stay readable over it. */
+/* See-through (Settings → General → Recording control), on by default: a plain
+   smoked glass that sits back over whatever is underneath, so it reads as
+   part of the screen rather than an app on it, in a share or a recording too.
+   Neutral grey, a hairline edge, no coral ring; the words keep a soft shadow. */
 .eavesy-control[data-translucent] {
-  background: rgb(34 32 30 / 0.78);
-  text-shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+  --ctl-line: rgb(255 255 255 / 0.12);
+  background: rgb(28 28 30 / 0.52);
+  box-shadow: inset 0 0 0 0.5px var(--ctl-line);
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
 }
 .eavesy-control[data-translucent][data-phase="recording"] {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ev-rec) 26%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.05);
+  box-shadow: inset 0 0 0 0.5px var(--ctl-line);
 }
 
 /* The fill takes any spare room, so this only matters when there is none:
@@ -194,14 +198,13 @@ body {
   justify-content: flex-end;
   gap: 3px;
   height: 36px;
-  padding: 0 5px 0 4px;
+  padding: 0 5px 0 6px;
   white-space: nowrap;
 }
-.ctl-top > .ctl-mark { margin-right: auto; }
-.eavesy-control[data-size="bar"] .ctl-top { height: 40px; padding: 0 6px; gap: 4px; }
+.eavesy-control[data-size="bar"] .ctl-top { height: 40px; padding: 0 6px 0 12px; gap: 4px; }
 .eavesy-control[data-size="wide"] .ctl-top,
 .eavesy-control[data-size="result"] .ctl-top,
-.eavesy-control[data-size="shot"] .ctl-top { height: 38px; padding: 2px 6px 0 6px; gap: 4px; }
+.eavesy-control[data-size="shot"] .ctl-top { height: 38px; padding: 2px 6px 0 12px; gap: 4px; }
 .ctl-below {
   flex: 1 1 auto;
   min-height: 0;
@@ -377,21 +380,6 @@ body {
 /* "· 16 words" after Pasted: quieter than the stamp itself. */
 .ctl-stamp-sub { font-weight: 550; opacity: 0.78; }
 .ctl-fill { flex: 1 1 auto; min-width: 4px; }
-
-/* The snoop, in cream on the charcoal. */
-.ctl-mark {
-  --ev-mascot-body: #f2ebdf;
-  --ev-mascot-band: #9e9389;
-  --ev-mascot-eye: #161312;
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 28px;
-  height: 28px;
-  border-radius: 999px;
-  transition: background var(--ev-d-press) ease;
-}
-.ctl-mark:hover { background: var(--ctl-hover); }
 
 .ctl-btn {
   display: inline-flex;
