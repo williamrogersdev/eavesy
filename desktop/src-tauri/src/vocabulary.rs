@@ -121,43 +121,67 @@ fn store_corrections(app: &AppHandle, corrections: &[Correction]) {
 /// longest phrase wins where two start at once ("gay lord boxes" over "gay
 /// lord"), and the newest fix where two share a source.
 pub fn apply_corrections(text: &str, corrections: &[Correction]) -> String {
-    let key = |phrase: &str| phrase.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
-    let mut fixes: Vec<(String, &str)> = Vec::new();
-    for correction in corrections.iter().take(MAX_CORRECTIONS) {
-        let (from, to) = (key(&correction.from), correction.to.trim());
-        if from.chars().count() >= 3 && !to.is_empty() && !fixes.iter().any(|(kept, _)| *kept == from) {
-            fixes.push((from, to));
+    Speller::new(corrections).spell_fixes(text)
+}
+
+/// The account's confirmed fixes, matched once: live typing spells every
+/// update of a dictation with the same ones.
+pub struct Speller {
+    fixes: Vec<(String, String)>,
+    pattern: Option<regex::Regex>,
+}
+
+fn phrase_key(phrase: &str) -> String {
+    phrase.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
+impl Speller {
+    pub fn new(corrections: &[Correction]) -> Speller {
+        let mut fixes: Vec<(String, String)> = Vec::new();
+        for correction in corrections.iter().take(MAX_CORRECTIONS) {
+            let (from, to) = (phrase_key(&correction.from), correction.to.trim());
+            if from.chars().count() >= 3 && !to.is_empty() && !fixes.iter().any(|(kept, _)| *kept == from) {
+                fixes.push((from, to.to_string()));
+            }
         }
+        fixes.sort_by_key(|(from, _)| std::cmp::Reverse(from.chars().count()));
+        let alternatives: Vec<String> = fixes
+            .iter()
+            .map(|(from, _)| from.split(' ').map(regex::escape).collect::<Vec<_>>().join(r"\s+"))
+            .collect();
+        let pattern = (!fixes.is_empty())
+            .then(|| regex::Regex::new(&format!("(?i)(?:{})", alternatives.join("|"))).ok())
+            .flatten();
+        Speller { fixes, pattern }
     }
-    if fixes.is_empty() {
-        return text.to_string();
+
+    /// The confirmed fixes, then the app's name.
+    pub fn spell(&self, text: &str) -> String {
+        fix_built_in_terms(&self.spell_fixes(text))
     }
-    fixes.sort_by_key(|(from, _)| std::cmp::Reverse(from.chars().count()));
-    let alternatives: Vec<String> = fixes
-        .iter()
-        .map(|(from, _)| from.split(' ').map(regex::escape).collect::<Vec<_>>().join(r"\s+"))
-        .collect();
-    let Ok(pattern) = regex::Regex::new(&format!("(?i)(?:{})", alternatives.join("|"))) else {
-        return text.to_string();
-    };
-    let joined = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || "@/_-".contains(c));
-    let mut out = String::with_capacity(text.len());
-    let mut end = 0;
-    for found in pattern.find_iter(text) {
-        let before = text[..found.start()].chars().next_back();
-        let mut after = text[found.end()..].chars();
-        let next = after.next();
-        let domain = next == Some('.') && after.next().is_some_and(char::is_alphanumeric);
-        if joined(before) || before == Some('.') || joined(next) || domain {
-            continue;
+
+    fn spell_fixes(&self, text: &str) -> String {
+        let Some(pattern) = &self.pattern else { return text.to_string() };
+        let joined = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || "@/_-".contains(c));
+        let mut out = String::with_capacity(text.len());
+        let mut end = 0;
+        for found in pattern.find_iter(text) {
+            let before = text[..found.start()].chars().next_back();
+            let mut after = text[found.end()..].chars();
+            let next = after.next();
+            let domain = next == Some('.') && after.next().is_some_and(char::is_alphanumeric);
+            if joined(before) || before == Some('.') || joined(next) || domain {
+                continue;
+            }
+            let key = phrase_key(found.as_str());
+            let Some((_, to)) = self.fixes.iter().find(|(from, _)| *from == key) else { continue };
+            out.push_str(&text[end..found.start()]);
+            out.push_str(to);
+            end = found.end();
         }
-        let Some((_, to)) = fixes.iter().find(|(from, _)| *from == key(found.as_str())) else { continue };
-        out.push_str(&text[end..found.start()]);
-        out.push_str(to);
-        end = found.end();
+        out.push_str(&text[end..]);
+        out
     }
-    out.push_str(&text[end..]);
-    out
 }
 
 /// How many confirmed fixes the Mac applies: the newest, as the server sends them.
@@ -190,7 +214,7 @@ pub fn sidecar_arg(words: &[String]) -> Option<String> {
 /// path or handle and stays as written.
 pub fn fix_built_in_terms(text: &str) -> String {
     static MISHEARD: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
-        regex::Regex::new(r"(?i)\b(?:eavesy|evesy|eavsy|eevesy|eevsy|eavesey|eavsey|eavesie|evesie|eevesie)\b").unwrap()
+        regex::Regex::new(r"(?i)\b(?:eavesy|evesy|eavsy|eevesy|eevsy|eavesey|eavsey|eavesie|evesie|eevesie|evzy|eavzy|eevzy|evzee|eavzee|eveesy|eavesee|evesee)\b").unwrap()
     });
     let joined = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || "@/_-".contains(c));
     let mut out = String::with_capacity(text.len());
@@ -305,7 +329,11 @@ mod tests {
     fn misheard_app_names_are_spelled_right() {
         assert_eq!(fix_built_in_terms("I dictated it in Evesy."), "I dictated it in Eavesy.");
         assert_eq!(fix_built_in_terms("eavsy's notes, EEVESY and Eavesie"), "Eavesy's notes, Eavesy and Eavesy");
-        for text in ["That was easy.", "On the eves of it.", "Evie said yes.", "Evesham", "eavesy.com", "evesy.app/login", "@evesy", "my-evesy", "Eavesdrop"] {
+        assert_eq!(fix_built_in_terms("Evzy can't get its name right, eavzee"), "Eavesy can't get its name right, Eavesy");
+        for heard in ["evzy", "Eavzy", "EEVZY", "evzee", "Eavzee", "eveesy", "Eavesee", "evesee"] {
+            assert_eq!(fix_built_in_terms(&format!("open {heard} now")), "open Eavesy now", "{heard}");
+        }
+        for text in ["That was easy.", "On the eves of it.", "Evie said yes.", "Evesham", "eavesy.com", "evesy.app/login", "@evesy", "my-evesy", "Eavesdrop", "buy EVZ", "Evzy2", "my-evzy", "evzy.io"] {
             assert_eq!(fix_built_in_terms(text), text);
         }
     }

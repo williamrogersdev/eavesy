@@ -18,12 +18,21 @@ const MAX_GLOSSARY_CHARS = 500;
 export const BUILT_IN_TERMS: readonly string[] = ['Eavesy'];
 
 /**
+ * For a model tidying words, which can tell from the sentence what an
+ * ambiguous "EV" means. Kept out of the terms a rewrite is checked against:
+ * by the letters alone "EV" sounds nothing like "Eavesy", so that check would
+ * throw out every fix.
+ */
+export const BUILT_IN_CONTEXT =
+  'The app the speaker is using is called Eavesy (said "EEV-zee"). Speech recognition often writes it as "EV", "EVs", "EVZ" or "Eavsy": spell it Eavesy only where the sentence is clearly about the app, and leave those words as they are where they mean something else, such as an electric vehicle or a ticker.';
+
+/**
  * How recognizers mishear the name. Only spellings that are no English word,
  * so "easy", "eves" and "Evie" are never touched. A neighbouring dot, slash,
  * at-sign or dash means a domain, path or handle, which is left as written.
  */
 const MISHEARD_NAME =
-  /(?<![\p{L}\p{N}@/._-])(?:eavesy|evesy|eavsy|eevesy|eevsy|eavesey|eavsey|eavesie|evesie|eevesie)(?![\p{L}\p{N}@/_-]|\.[\p{L}\p{N}])/giu;
+  /(?<![\p{L}\p{N}@/._-])(?:eavesy|evesy|eavsy|eevesy|eevsy|eavesey|eavsey|eavesie|evesie|eevesie|evzy|eavzy|eevzy|evzee|eavzee|eveesy|eavesee|evesee)(?![\p{L}\p{N}@/_-]|\.[\p{L}\p{N}])/giu;
 
 /** The app's name spelled right wherever a recognizer clearly misheard it. */
 export function fixBuiltInTerms(text: string): string {
