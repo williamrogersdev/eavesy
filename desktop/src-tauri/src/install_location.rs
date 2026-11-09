@@ -206,6 +206,12 @@ fn volume_root(bundle: &Path) -> Option<PathBuf> {
     Some(Path::new("/Volumes").join(parts.next()?))
 }
 
+#[cfg(not(unix))]
+fn same_volume(_a: &Path, _b: &Path) -> Option<bool> {
+    None
+}
+
+#[cfg(unix)]
 fn same_volume(a: &Path, b: &Path) -> Option<bool> {
     use std::os::unix::fs::MetadataExt;
     Some(std::fs::metadata(a).ok()?.dev() == std::fs::metadata(b).ok()?.dev())
@@ -334,6 +340,12 @@ fn copy_to_applications(bundle: &Path) -> Result<Option<PathBuf>, String> {
 
 /// The copy runs as root, so it is handed back to this user (`uid:gid`, read
 /// from the per-user temp folder) and later updates don't need a password.
+#[cfg(not(unix))]
+fn current_owner() -> Option<String> {
+    None
+}
+
+#[cfg(unix)]
 fn current_owner() -> Option<String> {
     use std::os::unix::fs::MetadataExt;
     let meta = std::fs::metadata(std::env::temp_dir()).ok()?;

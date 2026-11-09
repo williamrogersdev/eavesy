@@ -13,7 +13,7 @@ grid, the Little Snoop at 78% with its coral lens). Regenerate the set with:
 ```bash
 uv run gen_icon.py
 bunx @tauri-apps/cli@2 icon icon-source.png -o /tmp/eavesy-icons
-cp /tmp/eavesy-icons/{32x32.png,128x128.png,128x128@2x.png,icon.png,icon.icns} .
+cp /tmp/eavesy-icons/{32x32.png,128x128.png,128x128@2x.png,icon.png,icon.icns,icon.ico} .
 ```
 
 ## Menu bar
