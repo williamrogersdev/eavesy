@@ -279,18 +279,27 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         // Deliberate live corrections already express the user's wording. Keep
         // the untouched remainder as heard too: polishing the whole sentence
         // could rewrite a correction or make its source offsets ambiguous.
-        let corrected = crate::live_edit::corrected(&session_id, &text);
+        // Words the user fixed in the field while they were typed stand as
+        // they left them: only the words heard after go in, tidied but not
+        // polished, so a tone rewrite can't undo their fix.
+        let kept = match &live {
+            crate::live_typing::Typed::Field(field) => {
+                field.keep_edits(&text, |tail| crate::vocabulary::fix_built_in_terms(&crate::transcribe::drop_fillers(tail)))
+            }
+            _ => None,
+        };
+        let corrected = if kept.is_some() { None } else { crate::live_edit::corrected(&session_id, &text) };
         let source_text = corrected.as_ref().map(|_| text.clone());
         // Fillers still go: nobody types "um", corrected or not.
-        let (text, written) = match corrected {
-            Some(corrected) => (crate::transcribe::drop_fillers(&corrected), None),
-            None => {
+        let (text, written) = match (kept, corrected) {
+            (Some(kept), _) => (kept, None),
+            (None, Some(corrected)) => (crate::vocabulary::fix_built_in_terms(&crate::transcribe::drop_fillers(&corrected)), None),
+            (None, None) => {
                 let polished = crate::transcribe::polish_dictation(&app, &text, project.as_deref());
-                (polished.text, polished.written)
+                // The server spells the app's name too, but not when it couldn't help.
+                (crate::vocabulary::fix_built_in_terms(&polished.text), polished.written)
             }
         };
-        // The server spells the app's name too, but not when it couldn't help.
-        let text = crate::vocabulary::fix_built_in_terms(&text);
         // Nothing but "um"s: nothing to paste, and Done with no words would
         // say otherwise.
         if text.trim().is_empty() {
@@ -318,16 +327,21 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             Delivery::Pasted => {
                 use crate::live_typing::Typed;
                 let typed_live = !matches!(live, Typed::Nothing);
-                // Typed words are selected, then pasted over exactly as any
-                // dictation pastes. A selection that fails changes nothing in
-                // the field (the typed words stay), so the copy below is the
-                // one delivery, as it is for a failed paste.
+                // Typed words become the finished ones in place: only the
+                // words that differ change, so they don't flash, and nothing
+                // is pasted beside them. Should that fail part way, the copy
+                // below is the one delivery, as it is for a failed paste.
                 let delivered = match live {
                     Typed::Field(mut live) => live
-                        .select_typed()
+                        .finish(&text, |part| crate::commands::paste_text(&app, part))
                         .inspect_err(|why| tracing::info!(session_id = %session_id, "live-typed words not replaced: {why}"))
-                        .and_then(|()| crate::commands::paste_text(&app, &text))
-                        .map(|()| Some(live)),
+                        .map(|()| {
+                            // Fixes to them are learned, and a tone change
+                            // replaces them, as for pasted words.
+                            #[cfg(target_os = "macos")]
+                            crate::paste_learning::observe(app.clone(), crate::paste_learning::capture(), text.clone());
+                            Some(live)
+                        }),
                     Typed::Unknown => Err("live typing didn't finish".to_string()),
                     Typed::Nothing => crate::commands::paste_text(&app, &text).map(|()| None),
                 };
