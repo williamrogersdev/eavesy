@@ -136,8 +136,8 @@ empty states (72px) and onboarding (96px) get the full figure plus bubbles. It
 never animates to ask for attention.
 
 **Where it appears**
-- **HUD:** 22px in cream, left side of the pill, live state. It wears the
-  coral lens while recording.
+- **HUD:** never. The floating control is unbranded so it can sit on a
+  shared screen or in a recorded meeting without advertising itself.
 - **Title bar:** 18px, low detail, idle/sleeping. It doesn't react to clicks.
 - **Empty states:** 72px with a speech bubble.
 - **Onboarding guide:** 96px. It walks you through each step and changes
@@ -579,8 +579,10 @@ the pill can't jitter or flip while words arrive.
 **How it looks while recording** is the user's call (Settings → General → Recording
 control, `set_hud_look`): live words Off (the bar, the default), 1, 2 or 4
 lines, **Show the words when it's done**, on by default, and
-**See-through**, on by default, which drops the charcoal to 78% and softens
-the coral ring so the control sits back over whatever is underneath. Still
+**See-through**, on by default, which turns the charcoal into a plain smoked
+glass (neutral grey at 64%, enough for 4.5:1 text over white, a hairline
+white edge, no coral ring) so the
+control sits back over whatever is underneath and blends into a screen share. Still
 no native glass, for the corner reason above. A change applies at once, even
 mid-recording: Rust refits the window and the HUD hears `hud:look`.
 **Faster live words**, on by default, shows words about a second sooner from
@@ -589,15 +591,15 @@ the next recording.
 
 ```
  ╭──────────────────────────────────────────────────╮
- │ [snoop] ● 1:18  ▁▃▅▂▁                   [■ Stop] │ 40, r20
- │         …Thursday and ask Sam for the deck before│ ticker, newest at the right
+ │ ● 1:18  ▁▃▅▂▁                           [■ Stop] │ 40, r20
+ │ …Thursday and ask Sam for the deck before        │ ticker, newest at the right
  ╰──────────────────────────────────────────────────╯
 ```
-The snoop is cream on the charcoal (`.ctl-mark`) and wears the coral lens
-only while recording; its hat and the five voice bars follow the mic level.
-The coral dot, the coral ring and the coral Stop are the only red, and only
-while the mic is live. Live words, when on, are in a quieter ink (62%) on a lighter charcoal (66%
-when see-through) so they don't pull the eye while you talk; clicking in to
+There is no mascot or logo on the control: it opens Eavesy from a click on
+its surface. The five voice bars follow the mic level. The coral dot, the
+coral ring (solid look only) and the coral Stop are the only red, and only
+while the mic is live. Live words, when on, are in a quieter ink (62%) on a lighter charcoal (neutral
+grey at 72% when see-through) so they don't pull the eye while you talk; clicking in to
 fix one brings it to full ink. The ticker is one line of 12.5/18 text, clipped from
 the start with a soft left fade so the newest words stay in view. Before the
 first word it shows the hint ("Go ahead, I'm listening", plus the paste shortcut).

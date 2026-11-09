@@ -1,7 +1,6 @@
 import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { AudioLines, Camera, Check, ChevronsUpDown, Clapperboard, Copy, History, Languages, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Volume2, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
-import { Mascot, type MascotState } from '@/components/launcher/ui/mascot';
 import { clock } from '@/components/launcher/history-model';
 import { DISCARD_ASKS_AFTER_SEC, DISCARD_CONFIRM_MS } from '@/components/launcher/discard';
 import { errMsg } from '@/lib/desktop/errors';
@@ -243,6 +242,31 @@ function browserPreviewWords(): string {
 }
 const PREVIEW_WORDS = browserPreviewWords();
 
+/**
+ * The window's own size. Rust sizes it for each phase before the renderer
+ * hears of the phase, but the drawer can be asked for here first (editing,
+ * saving, a rewrite) and a resize can lag: drawing for a size the window
+ * doesn't have yet cuts off its controls. Null in the browser preview.
+ */
+function useViewportHeight(): number | null {
+  const read = () => (tauri() ? window.innerHeight : null);
+  const [height, setHeight] = useState(read);
+  useEffect(() => {
+    if (!tauri()) return;
+    const update = () => setHeight(read());
+    window.addEventListener('resize', update);
+    // A resize between the first render and the listener isn't missed.
+    update();
+    return () => window.removeEventListener('resize', update);
+  }, []);
+  return height;
+}
+
+/** Below this height the window is a one-row pill: no words fit under the controls. */
+const ROOM_FOR_WORDS = 60;
+/** The recording bar's row (`.ctl-top` at data-size="bar"); a shorter window gets the pill's 36px row. */
+const BAR_ROW = 40;
+
 /** How long an error on the idle pill stays before Talk comes back. */
 const IDLE_ERROR_MS = 6000;
 
@@ -387,6 +411,7 @@ function Hud() {
   // When the pointer came over the control, so moving it can't hold a result forever.
   const overSince = useRef(0);
   const learned = useLearned();
+  const viewportHeight = useViewportHeight();
   const collapseRef = useRef<(() => void) | null>(null);
   const [draft, setDraft] = useState<{ sessionId: string | null; source: string | null; text: string } | null>(null);
   const [saveRevision, setSaveRevision] = useState(0);
@@ -677,9 +702,17 @@ function Hud() {
   // Talking to Eavesy always shows your words as you say them (`size_for` in hud.rs).
   const eavesy = state?.mode === EAVESY_MODE;
   const look: Look = eavesy && settingsLook.lines === 0 ? { ...settingsLook, lines: 1 } : settingsLook;
-  const size = state ? sizeFor(state, look.lines, peeking || keepDrawer || opensItself) : 'pill';
+  // Drawn only once the window has room for it: until then the words stay a stamp on the pill.
+  const rowOnly = viewportHeight !== null && viewportHeight < ROOM_FOR_WORDS;
+  const drawer = (peeking || keepDrawer || opensItself) && !rowOnly;
+  const wanted = state ? sizeFor(state, look.lines, drawer) : 'pill';
+  // Live words with no room under the controls yet: the controls alone, as with live words off.
+  // In a window still the resting pill's height, the pill's own row.
+  const size: Size = rowOnly && (wanted === 'wide' || wanted === 'bar') && (state?.phase === 'recording' || state?.phase === 'transcribing')
+    ? viewportHeight !== null && viewportHeight >= BAR_ROW ? 'bar' : 'pill'
+    : wanted;
   // Otherwise, until its drawer is opened, a finished dictation is just a stamp on the pill.
-  const receipt = state && !peeking && !keepDrawer && !opensItself ? finished : null;
+  const receipt = state && !drawer ? finished : null;
 
   useEffect(() => {
     if (!state || editing || finding || saving || saveError || rewriting || pendingEdit.current || !HELD_PHASES.includes(state.phase)) return;
@@ -827,11 +860,6 @@ function Hud() {
     window.addEventListener('mouseup', up);
   };
 
-  const mark = (
-    <button type="button" onClick={() => act('show_launcher')} aria-label="Open Eavesy" title="Open Eavesy" className="ctl-mark">
-      <Mascot size={20} detail="medium" state={opening ? 'idle' : mascotState(state.phase)} level={voice} recording={live} />
-    </button>
-  );
   const hide = () => {
     cancelRestyle();
     void flushEdit()
@@ -1231,7 +1259,6 @@ function Hud() {
     const cancelDisabled = opening || !state.sessionId || stopping === state.sessionId;
     top = (
       <>
-        {mark}
         {opening ? (!video && errorSay) || <span className="ctl-say ctl-quiet ctl-breathe">Starting…</span> : (
           <>
             <span className="ctl-rec" aria-hidden />
@@ -1259,13 +1286,12 @@ function Hud() {
     </div>;
     if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `${eavesy ? 'Eavesy’s listening' : 'Listening'}… ${doneHint}`);
   } else if (state.phase === 'transcribing') {
-    top = <>{mark}{errorSay ?? <span className="ctl-say">{video ? 'Saving' : eavesy ? 'Eavesy’s thinking' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>}<span className="ctl-fill" /></>;
+    top = <>{errorSay ?? <span className="ctl-say">{video ? 'Saving' : eavesy ? 'Eavesy’s thinking' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>}<span className="ctl-fill" /></>;
     if (!video && look.lines) below = transcriptEditor(eavesy ? 'Sending what you said…' : 'Turning your words into text…');
   } else if (state.phase === 'done' && eavesy) {
     // Eavesy's answer: in full here, a sentence or two out loud (assistant.md B4).
     top = (
       <>
-        {mark}
         {errorSay ?? <Stamp tone="manila">Eavesy</Stamp>}
         <span className="ctl-fill" />
         <button type="button" className="ctl-btn" onClick={() => act('hud_assistant', { action: 'repeat' })} title="Say it again"><Volume2 className="h-3.5 w-3.5" />Repeat</button>
@@ -1278,14 +1304,13 @@ function Hud() {
       {talkShortcut && <p className="ctl-reply-hint">Press {talkShortcut} to reply.</p>}
     </>;
   } else if (state.phase === 'done' && video) {
-    top = <>{mark}{errorSay ?? <span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copied ? 'Copied' : 'Saved'}</span>}
+    top = <>{errorSay ?? <span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copied ? 'Copied' : 'Saved'}</span>}
       <span className="ctl-fill" />
       <button type="button" className="ctl-btn" onClick={() => act('show_launcher')} aria-label="Open recording"><Maximize2 className="h-3.5 w-3.5" /></button>
       <button type="button" className="ctl-btn" onClick={() => copy('copy_capture_media', { id: state.sessionId })}><Copy className="h-3.5 w-3.5" />Copy</button>{minimize}{close}</>;
   } else if (state.phase === 'done' && state.mode === 'image') {
     top = (
       <>
-        {mark}
         {errorSay ?? <Stamp tone="manila">{copied ? 'Copied' : 'Snapped'}</Stamp>}
         <span className="ctl-fill" />
         <button type="button" className="ctl-btn" onClick={() => act('show_launcher')}><Maximize2 className="h-3.5 w-3.5" />Open</button>
@@ -1306,7 +1331,6 @@ function Hud() {
       : <Stamp tone="leaf">Pasted<span className="ctl-stamp-sub"> · {wordCount(words)}</span></Stamp>;
     top = (
       <>
-        {mark}
         {errorSay ?? learnedStamp ?? stamp}
         <span className="ctl-fill" />
         {receipt === 'blocked' && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
@@ -1320,7 +1344,6 @@ function Hud() {
       : errorSay ?? toneStamp ?? (saving ? <span className="ctl-say ctl-quiet">Saving…</span> : stamp);
     top = (
       <>
-        {mark}
         {status}
         {notice && !notPasted && !learnedStamp && !toneStamp && !errorSay && <span className="ctl-say ctl-quiet">⌘V to paste</span>}
         <span className="ctl-fill" />
@@ -1335,13 +1358,13 @@ function Hud() {
     if (size === 'result' && editable) foot = toneControls;
   } else if (state.phase === 'saved' && notice) {
     // Saved, but not typed where the cursor was: say so, and why, never a plain "Saved".
-    top = <>{mark}{errorSay ?? learnedStamp ?? <Stamp tone="warn" title={notice}>Not typed</Stamp>}<span className="ctl-fill" />{history}{minimize}{close}</>;
+    top = <>{errorSay ?? learnedStamp ?? <Stamp tone="warn" title={notice}>Not typed</Stamp>}<span className="ctl-fill" />{history}{minimize}{close}</>;
     below = <p className="ctl-line" title={notice}>{notice}</p>;
   } else if (learnedStamp && !errorSay && ['idle', 'saved', 'done'].includes(state.phase)) {
     // Briefly, the whole pill is the confirmation: a word fits where Close was.
-    top = <>{mark}{learnedStamp}<span className="ctl-fill" /></>;
+    top = <>{learnedStamp}<span className="ctl-fill" /></>;
   } else if (state.phase === 'done' || state.phase === 'saved') {
-    top = <>{mark}{errorSay ?? <Stamp tone="manila">Saved</Stamp>}<span className="ctl-fill" />{history}{minimize}{close}</>;
+    top = <>{errorSay ?? <Stamp tone="manila">Saved</Stamp>}<span className="ctl-fill" />{history}{minimize}{close}</>;
   } else if (state.phase === 'prompt') {
     // A call started (Rust's `meeting_watch`). With a deadline it records when
     // the countdown ends unless told not to; without one it only asks. Not red:
@@ -1350,7 +1373,6 @@ function Hud() {
     const answer = (record: boolean) => { if (state.sessionId) void act('answer_meeting_prompt', { sessionId: state.sessionId, record }); };
     top = (
       <>
-        {mark}
         <span className="ctl-say" role="status">{left === null ? 'Record this call?' : left === 0 ? 'Starting…' : `Recording in ${left}s`}</span>
         <span className="ctl-fill" />
         {/* At zero the app is already starting the recording: there is nothing left to answer. */}
@@ -1367,15 +1389,14 @@ function Hud() {
   } else if (state.phase === 'failed') {
     // A raw error isn't proof nothing was saved (the words may already be pasted): stay neutral.
     const why = state.message ? hudError(state.message, 'Something went wrong. Try again?') : 'Nothing was saved. Try again?';
-    top = <>{mark}<span className="ctl-say ctl-warn">Didn’t catch that</span><span className="ctl-fill" />{history}{minimize}{close}</>;
+    top = <><span className="ctl-say ctl-warn">Didn’t catch that</span><span className="ctl-fill" />{history}{minimize}{close}</>;
     below = errorSay ? <p role="alert" className="ctl-line ctl-warn" title={actionError ?? undefined}>{actionError}</p> : <p className="ctl-line ctl-quiet" title={why}>{why}</p>;
   } else if (errorSay) {
     // Idle has no status slot: the error stands in for the capture buttons until it clears.
-    top = <>{mark}{errorSay}<span className="ctl-fill" />{close}</>;
+    top = <>{errorSay}<span className="ctl-fill" />{close}</>;
   } else {
     top = (
       <>
-        {mark}
         <button type="button" disabled={busy} onClick={() => void startRecording()} aria-label={`Talk${kbd}`} title={`Talk, then paste where your cursor is${kbd}`} className="ctl-btn ctl-talk">
           <AudioLines className="h-3.5 w-3.5" />Talk{shortcut && <kbd className="ctl-kbd">{shortcut}</kbd>}
         </button>
@@ -1477,18 +1498,6 @@ function VoiceBars({ level }: { level: number }) {
       <i /><i /><i /><i /><i />
     </span>
   );
-}
-
-/** The snoop mirrors the capture: hat up only while the mic is really live. */
-function mascotState(phase: Phase): MascotState {
-  switch (phase) {
-    case 'recording': return 'listening';
-    case 'transcribing': return 'thinking';
-    case 'saved':
-    case 'done': return 'happy';
-    case 'failed': return 'confused';
-    default: return 'idle';
-  }
 }
 
 const root = document.getElementById('root');
