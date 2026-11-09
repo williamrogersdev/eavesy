@@ -203,23 +203,34 @@ fn released(app: &AppHandle) {
     }
 }
 
-/// Return (⌘Return with `command`) went down. While a hands-free dictation
-/// is typing its words into the app in front, that is the user sending them:
-/// the dictation stops, and the key is held back (true) to be pressed again
-/// once the finished words are in (`dictation::deliver_dictation`). Called
-/// from a key tap, so it only reads state and hands the stop to a thread.
+/// Return (⌘Return with `command`) went down. While the app in front holds
+/// a dictation's words as they were typed live, that is the user sending
+/// them, and the draft must not go out as heard: the key is held back
+/// (true) to be pressed again once the finished words are in
+/// (`dictation::deliver_dictation`). A hands-free dictation still being
+/// heard stops here; a held push-to-talk goes on until the key is let go; one
+/// already stopped just has its finished words waited for. Called from a key
+/// tap, so it only reads state and hands the stop to a thread.
 pub fn send_on_return(app: &AppHandle, command: bool) -> bool {
     let Some((front, _)) = crate::app_menu::frontmost() else { return false };
     // A Return already held there: this one must not send the draft either.
     if crate::live_typing::holding_for(front) {
         return true;
     }
-    let Some(id) = crate::live_typing::typing_into_field() else { return false };
-    // Held push-to-talk: letting go of the key is how it ends.
-    if press().started_by.is_some() || crate::dictation::target_pid(&id) != Some(front) {
+    // Stopped, its finished words not in yet: this Return waits for them.
+    if let Some(id) = crate::live_typing::finishing_in(front) {
+        crate::live_typing::hold_send(&id, command, front);
+        return true;
+    }
+    let Some(id) = crate::live_typing::typed_into_field() else { return false };
+    if crate::dictation::target_pid(&id) != Some(front) || crate::dictation::words_go_elsewhere(&id).is_some() {
         return false;
     }
     if !crate::live_typing::hold_send(&id, command, front) {
+        return true;
+    }
+    // Held push-to-talk: letting go of the key is how it ends.
+    if press().started_by.is_some() {
         return true;
     }
     let app = app.clone();
