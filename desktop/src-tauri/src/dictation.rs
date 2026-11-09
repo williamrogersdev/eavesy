@@ -279,14 +279,17 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         // Deliberate live corrections already express the user's wording. Keep
         // the untouched remainder as heard too: polishing the whole sentence
         // could rewrite a correction or make its source offsets ambiguous.
-        let corrected = crate::live_edit::corrected(&session_id, &text);
-        let source_text = corrected.as_ref().map(|_| text.clone());
         // Words the user fixed in the field while they were typed stand as
-        // they left them: only the words heard after go in, tidied.
+        // they left them: only the words heard after go in, tidied but not
+        // polished, so a tone rewrite can't undo their fix.
         let kept = match &live {
-            crate::live_typing::Typed::Field(field) => field.keep_edits(&text, crate::transcribe::drop_fillers),
+            crate::live_typing::Typed::Field(field) => {
+                field.keep_edits(&text, |tail| crate::vocabulary::fix_built_in_terms(&crate::transcribe::drop_fillers(tail)))
+            }
             _ => None,
         };
+        let corrected = if kept.is_some() { None } else { crate::live_edit::corrected(&session_id, &text) };
+        let source_text = corrected.as_ref().map(|_| text.clone());
         // Fillers still go: nobody types "um", corrected or not.
         let (text, written) = match (kept, corrected) {
             (Some(kept), _) => (kept, None),
