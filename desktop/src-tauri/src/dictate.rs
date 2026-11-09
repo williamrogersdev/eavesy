@@ -207,8 +207,8 @@ fn released(app: &AppHandle) {
 /// a dictation's words as they were typed live, that is the user sending
 /// them, and the draft must not go out as heard: the key is held back
 /// (true) to be pressed again once the finished words are in
-/// (`dictation::deliver_dictation`). A hands-free dictation still being
-/// heard stops here; a held push-to-talk goes on until the key is let go; one
+/// (`dictation::deliver_dictation`). A dictation still being heard stops
+/// here, hands-free or held (letting go of the key then does nothing); one
 /// already stopped just has its finished words waited for. Called from a key
 /// tap, so it only reads state and hands the stop to a thread.
 pub fn send_on_return(app: &AppHandle, command: bool) -> bool {
@@ -227,10 +227,6 @@ pub fn send_on_return(app: &AppHandle, command: bool) -> bool {
         return false;
     }
     if !crate::live_typing::hold_send(&id, command, front) {
-        return true;
-    }
-    // Held push-to-talk: letting go of the key is how it ends.
-    if press().started_by.is_some() {
         return true;
     }
     let app = app.clone();

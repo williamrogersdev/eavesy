@@ -93,6 +93,8 @@ struct Shared {
     stop: AtomicBool,
     /// Some words went into the field (and may still be there).
     typed: AtomicBool,
+    /// The app that field is in, once it is found (0 until then).
+    pid: std::sync::atomic::AtomicI32,
 }
 
 struct Entry {
@@ -146,18 +148,28 @@ pub fn typed_into_field() -> Option<String> {
         .map(|entry| entry.id.clone())
 }
 
-/// Dictations that have stopped, with the words typed for them still in a
-/// field of the app `pid` until their finished words replace them.
-static FINISHING: Mutex<Vec<(String, i32)>> = Mutex::new(Vec::new());
+/// A dictation that has stopped, with the words typed for it still in a
+/// field of the app `pid` until its finished words replace them.
+struct Finishing {
+    id: String,
+    pid: i32,
+    since: std::time::Instant,
+}
 
-fn finishing() -> std::sync::MutexGuard<'static, Vec<(String, i32)>> {
-    FINISHING.lock().unwrap_or_else(|e| e.into_inner())
+static FINISHING: Mutex<Vec<Finishing>> = Mutex::new(Vec::new());
+
+/// The ones whose delivery can still be under way: like a held Return, one
+/// whose delivery never ends stops counting after `SEND_HOLD`.
+fn finishing() -> std::sync::MutexGuard<'static, Vec<Finishing>> {
+    let mut finishing = FINISHING.lock().unwrap_or_else(|e| e.into_inner());
+    finishing.retain(|entry| entry.since.elapsed() < SEND_HOLD);
+    finishing
 }
 
 /// The stopped dictation whose typed words are still in the app `pid`,
 /// waiting for the finished ones: Return there now would send the draft.
 pub fn finishing_in(pid: i32) -> Option<String> {
-    finishing().iter().rev().find(|(_, app)| *app == pid).map(|(id, _)| id.clone())
+    finishing().iter().rev().find(|entry| entry.pid == pid).map(|entry| entry.id.clone())
 }
 
 /// A Return is being held for a dictation typed in the app `pid`.
@@ -200,7 +212,7 @@ impl Drop for SendHold {
 }
 
 fn release_send(session_id: &str) {
-    finishing().retain(|(id, _)| id != session_id);
+    forget_finishing(session_id);
     {
         let mut slot = send_slot();
         if slot.as_ref().is_some_and(|send| send.id == session_id) {
@@ -283,10 +295,20 @@ pub enum Typed {
 /// Stops typing this dictation and says what was typed for it, once
 /// whatever typing was under way has landed.
 pub fn finish(session_id: &str) -> Typed {
+    // Until the delivery is over (`SendHold`), Return in that app waits:
+    // noted before typing is stopped, so no Return slips through between.
+    let field_in = typists()
+        .iter()
+        .find(|entry| entry.id == session_id && entry.shared.typed.load(Ordering::SeqCst))
+        .map(|entry| entry.shared.pid.load(Ordering::SeqCst))
+        .filter(|pid| *pid != 0);
+    if let Some(pid) = field_in {
+        note_finishing(session_id, pid);
+    }
     let typed = finish_typing(session_id);
-    // Until the delivery is over (`SendHold`), Return in that app waits.
-    if let Typed::Field(field) = &typed {
-        note_finishing(session_id, field.pid());
+    // Words that can't be replaced are copied instead: nothing to wait for.
+    if !matches!(typed, Typed::Field(_)) {
+        forget_finishing(session_id);
     }
     update_watch();
     typed
@@ -294,8 +316,12 @@ pub fn finish(session_id: &str) -> Typed {
 
 fn note_finishing(session_id: &str, pid: i32) {
     let mut finishing = finishing();
-    finishing.retain(|(id, _)| id != session_id);
-    finishing.push((session_id.to_string(), pid));
+    finishing.retain(|entry| entry.id != session_id);
+    finishing.push(Finishing { id: session_id.to_string(), pid, since: std::time::Instant::now() });
+}
+
+fn forget_finishing(session_id: &str) {
+    finishing().retain(|entry| entry.id != session_id);
 }
 
 fn finish_typing(session_id: &str) -> Typed {
@@ -480,7 +506,10 @@ fn type_into(session_id: &str, field: Field, text: &str, shared: &Shared) -> Fie
                 Ok(true) => {}
             }
             match LiveField::focused() {
-                Some(live) => live,
+                Some(live) => {
+                    shared.pid.store(live.pid(), Ordering::SeqCst);
+                    live
+                }
                 // A field an app is still exposing, or focus passing through:
                 // look again at the next update, for a while.
                 None if missed.is_none_or(|search| search.first.elapsed() < FIELD_SEARCH) => {
@@ -802,6 +831,18 @@ mod tests {
         assert_eq!(finishing_in(4243), None, "another app's Return is its own");
         drop(delivery);
         assert_eq!(finishing_in(4242), None, "delivery over: Return works again");
+
+        // Words that can't be replaced (nobody answers) are copied: no wait.
+        let (typed, _rx) = entry("draft-unknown", true);
+        typed.shared.pid.store(4244, Ordering::SeqCst);
+        register(typed);
+        assert!(matches!(finish("draft-unknown"), Typed::Unknown));
+        assert_eq!(finishing_in(4244), None);
+
+        if let Some(since) = std::time::Instant::now().checked_sub(SEND_HOLD + Duration::from_secs(1)) {
+            FINISHING.lock().unwrap().push(Finishing { id: "draft-stale".into(), pid: 4245, since });
+            assert_eq!(finishing_in(4245), None, "a delivery that never ended stops holding Return");
+        }
     }
 
     #[test]
