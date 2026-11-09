@@ -5,12 +5,14 @@
 //! too, as soon as two of its updates in a row agree on a word. The text grows
 //! rather than flickers: a draft that drops words never takes typed ones back,
 //! and a revised or settled phrase is retyped from where it differs. When the
-//! dictation stops, its finished words (fillers dropped, tone applied) replace
-//! what was typed in one paste.
+//! dictation stops, the typed words become its finished ones (fillers
+//! dropped, tone applied) in place: only the words that differ are retyped.
 //!
-//! Typing stops for good the moment the typed words or the caret are not as
-//! Eavesy left them: the user is typing there themselves. It pauses while
-//! another element has the keyboard. A field Eavesy can't read back (a
+//! The user may fix the typed words while they talk: their version stands,
+//! and once their hands have been off the field for a moment, words heard
+//! after the fix go in after it, the caret put back at the end. The end keeps
+//! their fix too. Typing pauses while another element has the keyboard and
+//! picks up when the field has it again. A field Eavesy can't read back (a
 //! terminal, some Electron apps) gets no live typing; its dictation pastes
 //! at the end as before.
 
@@ -40,8 +42,11 @@ impl LiveField {
     fn sync(&mut self, _text: &str, _stop: &AtomicBool) -> Result<bool, String> {
         Err("live typing is only supported on macOS".into())
     }
-    pub fn select_typed(&mut self) -> Result<(), String> {
+    pub fn finish(&mut self, _text: &str, _paste: impl Fn(&str) -> Result<(), String>) -> Result<(), String> {
         Err("live typing is only supported on macOS".into())
+    }
+    pub fn keep_edits(&self, _heard: &str, _tidy: impl Fn(&str) -> String) -> Option<String> {
+        None
     }
     pub fn take_back(self) -> Result<(), String> {
         Err("live typing is only supported on macOS".into())
@@ -248,7 +253,7 @@ pub enum Typed {
     /// No words were typed: deliver as usual.
     Nothing,
     /// Words were typed into this field: replace them.
-    Field(LiveField),
+    Field(Box<LiveField>),
     /// Words went in but can't be replaced (the typist didn't answer in
     /// time, or gave up idling), so what is in the field isn't known:
     /// pasting could double the words. Copy them instead.
@@ -285,7 +290,7 @@ fn finish_typing(session_id: &str) -> Typed {
     // press checks `stop` first), but a press already posted may still
     // land: hence copy, never paste, in that case.
     match answer.recv_timeout(FINISH_WAIT) {
-        Ok(Some(field)) if field.has_typed() => Typed::Field(field),
+        Ok(Some(field)) if field.has_typed() => Typed::Field(Box::new(field)),
         Ok(_) => Typed::Nothing,
         Err(_) => unknown(),
     }
