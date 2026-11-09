@@ -187,3 +187,33 @@ jobs:
       - name: Audit dependencies
         working-directory: desktop/src-tauri
         run: cargo audit
+
+  desktop-windows:
+    name: Desktop (Windows build check)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.desktop == 'true') }}
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: desktop/src-tauri
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build launcher UI
+        working-directory: desktop/launcher-ui
+        run: |
+          bun install --frozen-lockfile
+          bun run build
+      # There is no Windows capture engine yet, and tauri-build needs a file
+      # where the bundled one goes.
+      - name: Placeholder capture engine
+        shell: bash
+        run: touch desktop/src-tauri/binaries/SwiftAudio-x86_64-pc-windows-msvc.exe
+      - name: Check
+        working-directory: desktop/src-tauri
+        env:
+          RUSTFLAGS: -D warnings
+        run: cargo check --locked

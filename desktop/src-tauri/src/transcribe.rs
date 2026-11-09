@@ -415,7 +415,6 @@ fn prepare(
     is_video: bool,
 ) -> Result<crate::audio_upload::PreparedAudio, String> {
     if !is_video {
-        #[cfg(target_os = "macos")]
         if let Some(wav) = transcode_to_wav(media_path) {
             if let Ok(pieces) = crate::audio_upload::PreparedAudio::converted_wav(wav, CHUNK_SECS) {
                 return Ok(pieces);
@@ -470,6 +469,11 @@ fn split_wav(bytes: &[u8], secs: usize) -> Option<Vec<Vec<u8>>> {
             })
             .collect(),
     )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn transcode_to_wav(_input: &Path) -> Option<PathBuf> {
+    None
 }
 
 #[cfg(target_os = "macos")]

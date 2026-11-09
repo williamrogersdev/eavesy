@@ -1,3 +1,6 @@
+// Windows builds compile the Mac-only helpers without calling them until each one is ported.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports, unused_mut, unused_variables))]
+
 mod agents;
 mod assistant;
 mod translation;
@@ -391,8 +394,11 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while running Eavesy")
         .run(|app, event| {
+            #[cfg(target_os = "macos")]
             if let tauri::RunEvent::Reopen { .. } = event {
                 hotkeys::show_launcher(app);
             }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app, event);
         });
 }

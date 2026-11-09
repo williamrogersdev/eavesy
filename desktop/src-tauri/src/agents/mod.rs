@@ -33,6 +33,7 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+#[cfg(unix)]
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::oneshot;
 
@@ -136,6 +137,7 @@ pub fn socket_path() -> Option<PathBuf> {
 /// normally is already; Eavesy's own Application Support folder is tightened
 /// here. Anything else that's open to other users, a symlink or someone
 /// else's folder refuses the socket, and agents can't connect.
+#[cfg(unix)]
 fn private_folder(dir: &std::path::Path) -> std::io::Result<()> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let meta = std::fs::symlink_metadata(dir)?;
@@ -170,6 +172,12 @@ pub fn start(app: &AppHandle) {
     });
 }
 
+#[cfg(not(unix))]
+async fn listen(_app: AppHandle) -> std::io::Result<()> {
+    Err(std::io::Error::new(std::io::ErrorKind::Unsupported, "agent voice needs a Unix socket"))
+}
+
+#[cfg(unix)]
 async fn listen(app: AppHandle) -> std::io::Result<()> {
     let path = socket_path().ok_or_else(|| std::io::Error::other("no Application Support folder"))?;
     if let Some(dir) = path.parent() {
@@ -200,12 +208,14 @@ async fn listen(app: AppHandle) -> std::io::Result<()> {
     }
 }
 
+#[cfg(unix)]
 async fn write(stream: &mut UnixStream, answer: &Answer) -> bool {
     let Ok(mut line) = serde_json::to_string(answer) else { return false };
     line.push('\n');
     stream.write_all(line.as_bytes()).await.is_ok()
 }
 
+#[cfg(unix)]
 async fn handle(app: AppHandle, stream: UnixStream) {
     let mut reader = BufReader::new(stream);
     let mut line = String::new();
@@ -317,6 +327,7 @@ fn origin(message: &HookMessage) -> queue::Origin {
 
 /// Keeps the hook waiting until you reply, the hold runs out, the item goes
 /// away, or the hook itself is gone (you pressed Esc in Claude, say).
+#[cfg(unix)]
 async fn wait_for_reply(app: &AppHandle, id: u64, rx: oneshot::Receiver<Answer>, mut stream: UnixStream, hold: Duration) {
     let (read_half, mut write_half) = stream.split();
     let mut closed = BufReader::new(read_half);
@@ -821,6 +832,7 @@ mod tests {
     use super::*;
     use queue::Queue;
 
+    #[cfg(unix)]
     #[test]
     fn the_socket_folder_must_be_private() {
         use std::os::unix::fs::PermissionsExt;

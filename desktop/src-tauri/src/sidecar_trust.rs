@@ -19,6 +19,7 @@
 //! There's still a moment between the check and the launch in which the file
 //! could be swapped; closing it needs `fexecve`, which macOS doesn't have.
 
+#[cfg(unix)]
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::Output;
@@ -43,7 +44,13 @@ struct Stamp {
 impl Stamp {
     fn of(path: &Path) -> Result<Self, String> {
         let meta = std::fs::metadata(path).map_err(|error| format!("capture engine unreadable: {error}"))?;
-        Ok(Self { path: path.to_path_buf(), ino: meta.ino(), size: meta.size(), ctime: meta.ctime(), ctime_ns: meta.ctime_nsec() })
+        #[cfg(unix)]
+        return Ok(Self { path: path.to_path_buf(), ino: meta.ino(), size: meta.size(), ctime: meta.ctime(), ctime_ns: meta.ctime_nsec() });
+        #[cfg(not(unix))]
+        {
+            let changed = meta.modified().ok().and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok()).unwrap_or_default();
+            Ok(Self { path: path.to_path_buf(), ino: 0, size: meta.len(), ctime: changed.as_secs() as i64, ctime_ns: i64::from(changed.subsec_nanos()) })
+        }
     }
 }
 
@@ -163,6 +170,10 @@ static VERDICTS: Verdicts = Verdicts(Mutex::new(None));
 
 /// Ok when `path` may be run.
 pub fn check(path: &Path) -> Result<(), String> {
+    // Only macOS has codesign; other builds are checked when they're signed for release.
+    if cfg!(not(target_os = "macos")) {
+        return Ok(());
+    }
     let team = match own_signer() {
         Signer::Team(team) => team,
         Signer::Nobody => return Ok(()),

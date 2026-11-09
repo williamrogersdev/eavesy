@@ -129,9 +129,11 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 pub fn install(app: &AppHandle) -> tauri::Result<()> {
     imp::hide_full_screen_item();
     let menu = build(app)?;
+    #[cfg(target_os = "macos")]
     if let Some(MenuItemKind::Submenu(window)) = menu.get(WINDOW_MENU) {
         window.set_as_windows_menu_for_nsapp()?;
     }
+    #[cfg(target_os = "macos")]
     if let Some(MenuItemKind::Submenu(help)) = menu.get(HELP_MENU) {
         help.set_as_help_menu_for_nsapp()?;
     }
