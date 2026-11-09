@@ -6,6 +6,17 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.11] - 2026-11-09 - desktop
+
+### Added
+
+- Mac app: unbranded, see-through recording control ([#350](https://github.com/williamrogersdev/eavesy/pull/350))
+
+### Fixed
+
+- Mac app: live typing keeps your fixes, picks back up, and ends without a flash ([#351](https://github.com/williamrogersdev/eavesy/pull/351))
+- Mac app: let go of a held session the moment you type into it ([#349](https://github.com/williamrogersdev/eavesy/pull/349))
+
 ## [0.9.10] - 2026-11-08 - desktop
 
 ### Added
