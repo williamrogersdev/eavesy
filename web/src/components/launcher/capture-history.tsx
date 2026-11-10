@@ -62,6 +62,7 @@ import {
   highlightParts,
   historyView,
   hitOnlyInTranscript,
+  matchesEveryWord,
   kindLabel,
   meetingBrief,
   meetingTitle,
@@ -291,10 +292,10 @@ function Body({ text, query, muted, onExpand }: { text: string; query: string; m
 
 /** What a meeting was about: the overview, then its decisions and action items behind one line. */
 function Brief({ brief, query }: { brief: MeetingBrief; query: string }) {
-  const q = query.trim().toLowerCase();
-  const hit = q !== '' && brief.sections.some((section) => section.items.some((item) => item.toLowerCase().includes(q)));
-  const [open, setOpen] = useState(false);
-  const shown = open || hit;
+  // A search hit in the details opens them, until the user says otherwise.
+  const hit = matchesEveryWord(query, brief.sections.flatMap((section) => section.items).join(' '));
+  const [chosen, setChosen] = useState<boolean | null>(null);
+  const shown = chosen ?? hit;
   return (
     <>
       {brief.overview && <Body text={brief.overview} query={query} />}
@@ -312,7 +313,7 @@ function Brief({ brief, query }: { brief: MeetingBrief; query: string }) {
               ))}
             </div>
           )}
-          <button type="button" className="ev-more" aria-expanded={shown} onClick={() => setOpen(!shown)}>
+          <button type="button" className="ev-more" aria-expanded={shown} onClick={() => setChosen(!shown)}>
             {shown ? 'Hide details' : briefCounts(brief)}
           </button>
         </>
@@ -459,7 +460,7 @@ const CaptureRow = memo(function CaptureRow({
   const meeting = filterOf(rec) === 'meetings' && !video;
   const title = meeting ? meetingTitle(current) : null;
   const brief = useMemo(() => (meeting ? meetingBrief(current.summary) : null), [meeting, current.summary]);
-  const [transcriptOpen, setTranscriptOpen] = useState(false);
+  const [transcriptChosen, setTranscriptChosen] = useState<boolean | null>(null);
   const open = () => runTask(() => openMeeting(rec.id), 'Couldn’t open that meeting');
   const canOpen = meeting && signedIn === true && rec.status !== 'recording';
   const rewritable = !!text && !image && !video;
@@ -472,7 +473,7 @@ const CaptureRow = memo(function CaptureRow({
   const trayOpen = rewritable && (rewriting || changed || rewrite.busy || translation.busy || languageOpen);
   // With a brief on show the transcript appears when asked for, when a version of it is being made, or when a search hit is only in it.
   const briefText = brief ? `${title ?? ''} ${brief.overview} ${brief.sections.flatMap((section) => section.items).join(' ')}` : '';
-  const showTranscript = !brief || transcriptOpen || trayOpen || hitOnlyInTranscript(query, briefText, text);
+  const showTranscript = !brief || trayOpen || (transcriptChosen ?? hitOnlyInTranscript(query, briefText, text));
   const pickVersion = (next: Version) => {
     if (translation.language) void translation.select(null);
     void rewrite.select(next);
@@ -516,7 +517,7 @@ const CaptureRow = memo(function CaptureRow({
   else if (text) body = <>
     {brief && <Brief brief={brief} query={query} />}
     {brief && (
-      <button type="button" className="ev-more ev-more-transcript" aria-expanded={showTranscript} disabled={trayOpen} onClick={() => setTranscriptOpen(!showTranscript)}>
+      <button type="button" className="ev-more ev-more-transcript" aria-expanded={showTranscript} disabled={trayOpen} onClick={() => setTranscriptChosen(!showTranscript)}>
         {showTranscript ? 'Hide transcript' : 'Transcript'}
       </button>
     )}
@@ -630,7 +631,7 @@ const CaptureRow = memo(function CaptureRow({
               : []),
             ...(brief && current.summary
               ? [{ label: 'Copy summary', icon: Copy, onSelect: () => runTask(async () => {
-                  await copyText(((await loadRecordingDetails(rec)).summary ?? current.summary ?? '').trim());
+                  await copyText((await loadRecordingDetails(rec)).summary?.trim() || current.summary?.trim() || '');
                   flash('Copied');
                 }, 'Couldn’t copy that') }]
               : []),

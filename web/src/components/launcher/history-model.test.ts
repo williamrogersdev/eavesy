@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Recording } from '@/lib/launcher/types';
-import { askLabel, briefCounts, hitOnlyInTranscript, meetingBrief, meetingTitle, clock, countByFilter, dayLabel, filterOf, groupByDay, highlightParts, historyView, kindLabel, plainTranscript, reuseRows, sameRecording, searchFocusOpens, timeOfDay, visibleRecordings } from './history-model';
+import { askLabel, briefCounts, hitOnlyInTranscript, matchesEveryWord, meetingBrief, meetingTitle, clock, countByFilter, dayLabel, filterOf, groupByDay, highlightParts, historyView, kindLabel, plainTranscript, reuseRows, sameRecording, searchFocusOpens, timeOfDay, visibleRecordings } from './history-model';
 
 const NOW = new Date(2026, 9, 17, 15, 0).getTime();
 const at = (daysAgo: number, hour = 10) => new Date(2026, 9, 17 - daysAgo, hour).getTime();
@@ -158,6 +158,7 @@ describe('meeting rows', () => {
 
   test('counts what the brief holds', () => {
     expect(briefCounts(meetingBrief(summary)!)).toBe('1 decision · 2 action items');
+    expect(briefCounts({ overview: '', sections: [{ heading: 'Risks', items: ['One'] }, { heading: 'Open questions', items: ['Why?'] }] })).toBe('1 risks · 1 open question');
   });
 
   test('a hit only in the transcript opens the transcript', () => {
@@ -165,5 +166,10 @@ describe('meeting rows', () => {
     expect(hitOnlyInTranscript('shipped', 'We shipped.', 'We shipped the invoice')).toBe(false);
     expect(hitOnlyInTranscript('', 'a', 'b')).toBe(false);
     expect(hitOnlyInTranscript('zebra', 'a', 'b')).toBe(false);
+    expect(hitOnlyInTranscript('drag mac', 'We shipped.', 'Sam checks drag and drop on a real Mac')).toBe(true);
+    expect(hitOnlyInTranscript('shipped mac', 'We shipped.', 'on a real Mac')).toBe(true);
+    expect(matchesEveryWord('Drag  mac', 'drag and drop on a Mac')).toBe(true);
+    expect(matchesEveryWord('drag zebra', 'drag and drop')).toBe(false);
+    expect(matchesEveryWord(' ', 'anything')).toBe(false);
   });
 });

@@ -339,6 +339,15 @@ fn read_mic_reports(app: &AppHandle) {
     }
 }
 
+/// Whether the last calendar fetch failed: a failure is logged once per streak, not every minute.
+static FETCH_FAILING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn fetch_failed(why: impl std::fmt::Display) {
+    if !FETCH_FAILING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        tracing::warn!("meeting watch: could not fetch calendar meetings, will keep trying: {why}");
+    }
+}
+
 async fn fetch_events(app: &AppHandle) -> Option<Vec<Event>> {
     #[derive(Deserialize)]
     struct Answer {
@@ -355,21 +364,20 @@ async fn fetch_events(app: &AppHandle) -> Option<Vec<Event>> {
         .timeout(ACCOUNT_TIMEOUT)
         .send()
         .await
-        .inspect_err(|error| tracing::warn!("meeting watch: could not fetch calendar meetings: {error}"))
+        .inspect_err(|error| fetch_failed(error))
         .ok()?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        tracing::warn!("meeting watch: the account no longer accepts this Mac; calendar meetings cleared");
+        fetch_failed("the account no longer accepts this Mac");
         return Some(Vec::new());
     }
     if !response.status().is_success() {
-        tracing::warn!("meeting watch: fetching calendar meetings answered {}", response.status());
+        fetch_failed(format_args!("the server answered {}", response.status()));
         return None;
     }
-    let answer = response
-        .json::<Answer>()
-        .await
-        .inspect_err(|error| tracing::warn!("meeting watch: could not read the calendar meetings: {error}"))
-        .ok()?;
+    let answer = response.json::<Answer>().await.inspect_err(|error| fetch_failed(error)).ok()?;
+    if FETCH_FAILING.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        tracing::info!("meeting watch: calendar meetings fetched again");
+    }
     Some(parse_upcoming(answer.upcoming))
 }
 

@@ -203,18 +203,27 @@ export function meetingBrief(summary: string | undefined): MeetingBrief | null {
   return { overview: overview.join(' '), sections: filled };
 }
 
+/** How a section's heading reads for one item. */
+const ONE: Record<string, string> = { decisions: 'decision', 'action items': 'action item', 'follow-ups': 'follow-up', 'open questions': 'open question' };
+
 /** "3 decisions · 2 action items": what a brief holds beyond its overview. */
 export function briefCounts(brief: MeetingBrief): string {
   return brief.sections
     .map(({ heading, items }) => {
       const name = heading.toLowerCase();
-      return `${items.length} ${items.length === 1 ? name.replace(/s$/, '') : name}`;
+      return `${items.length} ${items.length === 1 ? ONE[name] ?? name : name}`;
     })
     .join(' · ');
 }
 
+/** Whether the text holds every word of the search, as the history search matches them. */
+export function matchesEveryWord(query: string, text: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = text.toLowerCase();
+  return words.length > 0 && words.every((word) => hay.includes(word));
+}
+
 /** Whether a search matched only in the transcript, so the row must show it for the hit to be seen. */
 export function hitOnlyInTranscript(query: string, shown: string, transcript: string): boolean {
-  const q = query.trim().toLowerCase();
-  return q !== '' && !shown.toLowerCase().includes(q) && transcript.toLowerCase().includes(q);
+  return !matchesEveryWord(query, shown) && matchesEveryWord(query, `${shown} ${transcript}`);
 }
