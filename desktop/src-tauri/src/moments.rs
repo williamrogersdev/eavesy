@@ -180,6 +180,16 @@ pub fn load(folder: &Path) -> Option<Moments> {
     serde_json::from_slice(&std::fs::read(folder.join("moments.json")).ok()?).ok()
 }
 
+/// A window above the normal level that fills its display is an overlay to
+/// look through (the system's capture overlay, a screen dimmer), not what
+/// was clicked: anything it showed would hide every app.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn covers_display(layer: f64, window: Rect, display: Rect) -> bool {
+    layer > 0.0 && window.x <= display.x && window.y <= display.y
+        && window.x + window.width >= display.x + display.width
+        && window.y + window.height >= display.y + display.height
+}
+
 /// What the pointer was over.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct Target {
@@ -647,6 +657,8 @@ mod imp {
     extern "C" {
         fn AXIsProcessTrusted() -> bool;
         fn AXUIElementCreateApplication(pid: i32) -> CFTypeRef;
+        fn AXUIElementCreateSystemWide() -> CFTypeRef;
+        fn AXUIElementGetPid(element: CFTypeRef, pid: *mut i32) -> i32;
         fn AXUIElementCopyElementAtPosition(element: CFTypeRef, x: f32, y: f32, out: *mut CFTypeRef) -> i32;
         fn AXUIElementCopyAttributeValue(element: CFTypeRef, attribute: CFTypeRef, value: *mut CFTypeRef) -> i32;
         fn AXUIElementSetMessagingTimeout(element: CFTypeRef, seconds: f32) -> i32;
@@ -660,9 +672,11 @@ mod imp {
         fn CGRectMakeWithDictionaryRepresentation(dict: CFTypeRef, rect: *mut CGRect) -> bool;
         fn CGMainDisplayID() -> u32;
         fn CGDisplayBounds(display: u32) -> CGRect;
+        fn CGGetDisplaysWithPoint(point: CGPoint, max: u32, displays: *mut u32, count: *mut u32) -> i32;
         static kCGWindowOwnerPID: CFTypeRef;
         static kCGWindowBounds: CFTypeRef;
         static kCGWindowAlpha: CFTypeRef;
+        static kCGWindowLayer: CFTypeRef;
     }
 
     #[allow(clashing_extern_declarations)]
@@ -808,10 +822,20 @@ mod imp {
 
     pub struct Own;
 
+    fn display_at(x: f64, y: f64) -> Rect {
+        let mut display = 0u32;
+        let mut count = 0u32;
+        let found = unsafe { CGGetDisplaysWithPoint(CGPoint { x, y }, 1, &mut display, &mut count) } == 0 && count > 0;
+        let bounds = unsafe { CGDisplayBounds(if found { display } else { CGMainDisplayID() }) };
+        Rect { x: bounds.origin.x, y: bounds.origin.y, width: bounds.size.width, height: bounds.size.height }
+    }
+
     /// The frontmost window at a point, front to back. Eavesy's own windows
     /// are skipped, or end the search with `Own` when `skip_own` is false.
-    fn owner_at(x: f64, y: f64, skip_own: bool) -> Result<Option<i32>, Own> {
+    /// System overlays are looked through to the app underneath.
+    fn owner_at(x: f64, y: f64, skip_own: bool) -> Result<Option<(i32, Place)>, Own> {
         let own = std::process::id() as i32;
+        let display = display_at(x, y);
         unsafe {
             let list = Owned(CGWindowListCopyWindowInfo(ON_SCREEN_ONLY | EXCLUDE_DESKTOP, 0));
             if list.0.is_null() {
@@ -835,10 +859,41 @@ mod imp {
                     }
                     return Err(Own);
                 }
-                return Ok(Some(pid));
+                let layer = number(CFDictionaryGetValue(window, kCGWindowLayer)).unwrap_or(0.0);
+                if super::covers_display(layer, rect, display) {
+                    continue;
+                }
+                let place = running_app(pid);
+                if place.bundle_id.is_none() {
+                    continue;
+                }
+                return Ok(Some((pid, place)));
             }
         }
         Ok(None)
+    }
+
+    /// What accessibility says is at a point, for places no app window covers
+    /// (the menu bar is drawn by the system).
+    unsafe fn system_hit(x: f64, y: f64) -> Option<(Owned, Place)> {
+        if !AXIsProcessTrusted() {
+            return None;
+        }
+        let system = Owned(AXUIElementCreateSystemWide());
+        if system.0.is_null() {
+            return None;
+        }
+        AXUIElementSetMessagingTimeout(system.0, 0.25);
+        let mut hit: CFTypeRef = std::ptr::null();
+        if AXUIElementCopyElementAtPosition(system.0, x as f32, y as f32, &mut hit) != 0 || hit.is_null() {
+            return None;
+        }
+        let hit = Owned(hit);
+        let mut pid = 0i32;
+        if AXUIElementGetPid(hit.0, &mut pid) != 0 || pid == std::process::id() as i32 {
+            return None;
+        }
+        Some((hit, running_app(pid)))
     }
 
     unsafe fn number(value: CFTypeRef) -> Option<f64> {
@@ -849,8 +904,12 @@ mod imp {
 
     /// What is under a point, in global points. `Err(Own)`: an Eavesy window.
     pub fn target_at(x: f64, y: f64, skip_own: bool) -> Result<Option<Target>, Own> {
-        let Some(pid) = owner_at(x, y, skip_own)? else { return Ok(None) };
-        let mut place = running_app(pid);
+        let Some((pid, mut place)) = owner_at(x, y, skip_own)? else {
+            return Ok(unsafe { system_hit(x, y) }.map(|(hit, mut place)| unsafe {
+                let described = describe(control(hit).0, &mut place);
+                Target { rect: described.frame, element: Some(described), place }
+            }));
+        };
         unsafe {
             if !AXIsProcessTrusted() {
                 return Ok(Some(Target { place, ..Target::default() }));
@@ -1162,6 +1221,15 @@ mod tests {
         assert_eq!(crop, Rect { x: -1440.0, y: 100.0, width: 76.0, height: 52.0 });
         assert!(Rect { x: 5.0, y: 5.0, width: 10.0, height: 10.0 }.clipped(display).is_none());
         assert!(pointer_target(10.0, 20.0, display).is_none());
+    }
+
+    #[test]
+    fn full_display_overlays_are_looked_through_and_app_windows_are_not() {
+        let display = Rect { x: 0.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        assert!(covers_display(24.0, display, display));
+        assert!(!covers_display(0.0, display, display), "a full-screen app is a real target");
+        assert!(!covers_display(24.0, Rect { x: 0.0, y: 0.0, width: 1920.0, height: 30.0 }, display), "the menu bar");
+        assert!(!covers_display(25.0, Rect { x: 746.0, y: 47.0, width: 216.0, height: 36.0 }, display));
     }
 
     #[test]
