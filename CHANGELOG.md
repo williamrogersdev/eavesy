@@ -6,6 +6,19 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.12] - 2026-11-10 - desktop
+
+### Added
+
+- Mac app: build the Rust core for Windows ([#353](https://github.com/williamrogersdev/eavesy/pull/353))
+
+### Fixed
+
+- Mac app: copy waits for the finished recording, and narration is timed by sentence ([#358](https://github.com/williamrogersdev/eavesy/pull/358))
+- Mac app: say when a dictation's draft stayed as typed, and add a scorecard ([#356](https://github.com/williamrogersdev/eavesy/pull/356))
+- Mac app: Return never sends a live-typed draft before its finished words ([#354](https://github.com/williamrogersdev/eavesy/pull/354))
+- Mac app: spell Eavesy right when it's heard as "EV" or "EVZ" ([#345](https://github.com/williamrogersdev/eavesy/pull/345))
+
 ## [0.9.11] - 2026-11-09 - desktop
 
 ### Added
