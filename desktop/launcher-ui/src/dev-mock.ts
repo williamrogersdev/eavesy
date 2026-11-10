@@ -43,7 +43,7 @@ export function installDevMock(): void {
   let copiedText = '';
   const live = params.has('live');
   const settings = {
-    toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', assistant_hotkey: 'Alt+Space', device_id: 'dev', setup_completed: true,
+    toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', assistant_hotkey: 'Alt+Space', screen_hotkey: 'Alt+Shift+R', device_id: 'dev', setup_completed: true,
     recordings_root: '~/Eavesy/Recordings', launcher_position: 'top_center', live_captions: true, add_screenshots: true,
     hud_preview_lines: params.has('lines') ? Number(params.get('lines')) : undefined, hud_translucent: params.has('solid') ? false : undefined,
     fast_live_words: undefined as unknown, hud_result_preview: params.has('receipt') ? false : undefined as boolean | undefined,
@@ -241,10 +241,10 @@ function installSetupMock(results: Record<string, unknown>): void {
   });
 }
 
-type Bindings = { toggle_hotkey: string; dictation_hotkey: string; assistant_hotkey: string };
-type Action = 'toggle' | 'dictation' | 'assistant';
-const ACTIONS: Action[] = ['toggle', 'dictation', 'assistant'];
-const DEFAULTS: Record<Action, string> = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Space' };
+type Bindings = { toggle_hotkey: string; dictation_hotkey: string; assistant_hotkey: string; screen_hotkey: string };
+type Action = 'toggle' | 'dictation' | 'assistant' | 'screen';
+const ACTIONS: Action[] = ['toggle', 'dictation', 'assistant', 'screen'];
+const DEFAULTS: Record<Action, string> = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Space', screen: 'Alt+Shift+R' };
 const COMMON: Record<string, string> = { C: 'Copy', V: 'Paste', X: 'Cut', A: 'Select All', Z: 'Undo', S: 'Save', Q: 'Quit', W: 'Close' };
 
 /** A rough stand-in for hotkeys.rs + shortcut_conflicts.rs, enough to see every Settings state. */
@@ -284,6 +284,7 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
       settings.toggle_hotkey = DEFAULTS.toggle;
       settings.dictation_hotkey = DEFAULTS.dictation;
       settings.assistant_hotkey = DEFAULTS.assistant;
+      settings.screen_hotkey = DEFAULTS.screen;
       return Promise.resolve(null);
     },
     get_hotkey_defaults: () => Promise.resolve(DEFAULTS),

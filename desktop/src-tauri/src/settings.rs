@@ -9,6 +9,8 @@ pub const DEFAULT_DICTATION_HOTKEY: &str = "Cmd+Shift+D";
 /// to; not ⌃Space or ⌃⌥Space, which macOS uses to switch input sources (and
 /// ⌃⌥ is VoiceOver's key); not ⌘⌥Space, Finder search.
 pub const DEFAULT_ASSISTANT_HOTKEY: &str = "Alt+Shift+Space";
+/// Starts a screen recording, and stops the one running.
+pub const DEFAULT_SCREEN_HOTKEY: &str = "Alt+Shift+R";
 /// What Talk to Eavesy defaulted to before; `hotkeys::migrate_assistant_default`
 /// moves it when another app also uses it.
 pub const OLD_ASSISTANT_HOTKEY: &str = "Alt+Space";
@@ -51,6 +53,8 @@ pub struct Settings {
     pub dictation_hotkey: String,
     #[serde(default = "default_assistant_hotkey")]
     pub assistant_hotkey: String,
+    #[serde(default = "default_screen_hotkey")]
+    pub screen_hotkey: String,
     #[serde(default = "new_device_id")]
     pub device_id: String,
     #[serde(default)]
@@ -242,6 +246,10 @@ fn default_assistant_hotkey() -> String {
     DEFAULT_ASSISTANT_HOTKEY.to_string()
 }
 
+fn default_screen_hotkey() -> String {
+    DEFAULT_SCREEN_HOTKEY.to_string()
+}
+
 fn new_device_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -252,6 +260,7 @@ impl Default for Settings {
             toggle_hotkey: DEFAULT_TOGGLE_HOTKEY.to_string(),
             dictation_hotkey: DEFAULT_DICTATION_HOTKEY.to_string(),
             assistant_hotkey: DEFAULT_ASSISTANT_HOTKEY.to_string(),
+            screen_hotkey: DEFAULT_SCREEN_HOTKEY.to_string(),
             device_id: new_device_id(),
             setup_completed: false,
             recordings_root: None,
@@ -833,6 +842,7 @@ mod tests {
         // Saved before Talk to Eavesy existed: the current default.
         let before: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b"}"#).unwrap();
         assert_eq!(before.assistant_hotkey, DEFAULT_ASSISTANT_HOTKEY);
+        assert_eq!(before.screen_hotkey, DEFAULT_SCREEN_HOTKEY, "settings saved before the shortcut existed get it");
         assert_eq!(before.assistant_hotkey_settled, None);
         // A saved ⌥Space is read as it is; moving it is the migration's call.
         let old: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","assistant_hotkey":"Alt+Space"}"#).unwrap();
