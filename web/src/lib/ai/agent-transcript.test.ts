@@ -19,6 +19,12 @@ function fakeClient(reply: string | Error) {
 const said = 'Um, so, like, can you, uh, can you move the the standup to Thursday and tell Priya';
 
 describe('polishDictation', () => {
+  test('exactly as said keeps every word and never asks the model', async () => {
+    const { client, calls } = fakeClient('Can you move the standup to Thursday and tell Priya?');
+    const result = await polishDictation(client, { text: ` ${said} `, context: null, style: 'verbatim', forAgents: true, asked: true });
+    expect(result).toEqual({ text: said, polished: true });
+    expect(calls).toHaveLength(0);
+  });
   test('uses the model cleanup and spells words from the context', async () => {
     const { client, calls } = fakeClient('Can you move the standup to Thursday and tell Priya?');
     const result = await polishDictation(client, { text: said, context: 'Words: Priya, Eavesy' });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { dictationStyle, effectiveDictation, requestedDictation, sameWriting, withoutSwearing, writingFrom, writtenWith } from './dictation-style';
+import { dictationStyle, effectiveDictation, requestedDictation, sameWriting, toneChoices, withoutSwearing, writingChoice, writingFor, writingFrom, writtenWith } from './dictation-style';
 
 describe('withoutSwearing', () => {
   test('drops swear words and tidies the gaps', () => {
@@ -76,4 +76,21 @@ test('sameWriting compares both halves', () => {
   expect(sameWriting({ style: 'natural', forAgents: false }, { style: 'natural', forAgents: false })).toBe(true);
   expect(sameWriting({ style: 'natural', forAgents: true }, { style: 'natural', forAgents: false })).toBe(false);
   expect(sameWriting({ style: 'concise', forAgents: false }, { style: 'natural', forAgents: false })).toBe(false);
+});
+
+describe('one picker for tone and AI prompt', () => {
+  test('a prompt shows as AI prompt, a tone as itself', () => {
+    expect(writingChoice({ style: 'concise', forAgents: false })).toBe('concise');
+    expect(writingChoice({ style: 'concise', forAgents: true })).toBe('ai');
+    expect(writingChoice({ style: 'verbatim', forAgents: true })).toBe('verbatim');
+  });
+  test('picking a tone is never a prompt; AI prompt keeps the tone it had', () => {
+    expect(writingFor('verbatim', { style: 'concise', forAgents: true })).toEqual({ style: 'verbatim', forAgents: false });
+    expect(writingFor('friendly', { style: 'concise', forAgents: true })).toEqual({ style: 'friendly', forAgents: false });
+    expect(writingFor('ai', { style: 'concise', forAgents: false })).toEqual({ style: 'concise', forAgents: true });
+    expect(writingFor('ai', { style: 'verbatim', forAgents: false })).toEqual({ style: 'natural', forAgents: true });
+  });
+  test('a saved capture is never rewritten to exactly as said', () => {
+    expect(toneChoices('saved').map((tone) => tone.id)).toEqual(['original', 'professional', 'friendly', 'concise']);
+  });
 });

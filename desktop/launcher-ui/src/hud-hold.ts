@@ -1,6 +1,6 @@
-/** How long a finished result stays open once nobody is editing it: long
- * enough to read the words, then fix, translate or copy them. */
-export const DONE_HOLD_MS = 30_000;
+/** How long a finished result stays open by itself: long enough to read the
+ * words and reach for them. Pointing at it holds it longer. */
+export const DONE_HOLD_MS = 12_000;
 /** How long a plain saved pill stays. */
 export const SAVED_HOLD_MS = 3500;
 /** How long a failure, or a save that says why the words weren't typed,
