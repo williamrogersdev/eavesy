@@ -110,7 +110,7 @@ $1 !~ /^20[0-9][0-9]-/ || (since != "" && $1 < since) { next }
 /live-typed words not replaced: / { not_replaced[after("not replaced: ")]++; not_replaced_total++ }
 /dictation sent with the held Return/ { sent++ }
 /held Return not pressed|could not press the held Return/ { unsent++ }
-/the finished words aren.t in yet/ { retried++ }
+/the finished words aren/ { retried++ }
 /live typing stopped: / { stopped[after("live typing stopped: ")]++ }
 /live typing off for this dictation: / { off[after("for this dictation: ")]++ }
 END {

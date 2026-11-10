@@ -428,9 +428,10 @@ mod mac {
                 None => {
                     // The words aren't where the caret was read to be (apps
                     // report it late), or the text around them was edited:
-                    // they are still the dictation's wherever they read whole.
-                    let caret = selected.map(|(start, length)| start + length);
-                    let Some((prefix, suffix)) = super::relocated(&value, &self.posted, caret) else {
+                    // they are still the dictation's where they read whole,
+                    // once. A second copy could be the user's own text, and
+                    // a caret read late can't be trusted to tell them apart.
+                    let Some((prefix, suffix)) = super::relocated(&value, &self.posted) else {
                         let expected = format!("{}{}{}", self.prefix, self.posted, self.suffix);
                         return Err(format!("the text around the typed words was changed ({})", super::where_it_differs(&value, &expected)));
                     };
@@ -1182,13 +1183,14 @@ pub fn typed_passage(value: &str, prefix: &str, suffix: &str) -> Option<String> 
 
 /// Where live-typed `words` read whole in `value` when they aren't between
 /// the text they were typed between: the text before and after their only
-/// occurrence, or the one the caret (a UTF-16 offset) is in or right after.
-/// None when they aren't there whole, or can't be told from a copy.
-pub fn relocated(value: &str, words: &str, caret: Option<usize>) -> Option<(String, String)> {
+/// occurrence. None when they aren't there whole, or are there more than
+/// once. `normalize` swaps characters one for one, so offsets into what it
+/// returns are offsets into the field.
+pub fn relocated(value: &str, words: &str) -> Option<(String, String)> {
     if words.trim().is_empty() {
         return None;
     }
-    anchors(&normalize(value), words, |start, end| caret.is_some_and(|caret| (start..=end).contains(&caret)))
+    anchors(&normalize(value), words, |_, _| false)
 }
 
 /// Where a field's text first parts from what was expected, for the log:
@@ -1411,18 +1413,16 @@ mod tests {
         // went in at the real one.
         let value = "Earlier text, done.\u{a0}Send Sam the deck";
         assert_eq!(typed_passage(value, "Earlier text, ", "done. "), None);
-        assert_eq!(relocated(value, "Send Sam the deck", Some(units(value))), Some(("Earlier text, done. ".into(), String::new())));
+        assert_eq!(relocated(value, "Send Sam the deck"), Some(("Earlier text, done. ".into(), String::new())));
+        assert_eq!(units(&normalize(value)), units(value), "offsets into the normalized text are the field's");
         // Text typed before them moved them.
-        assert_eq!(relocated("Hi! Send it now", "Send it", None), Some(("Hi! ".into(), " now".into())));
-        // Two copies: only the one the caret is after.
-        let twice = "Send it. Send it";
-        assert_eq!(relocated(twice, "Send it", None), None);
-        assert_eq!(relocated(twice, "Send it", Some(16)), Some(("Send it. ".into(), String::new())));
-        assert_eq!(relocated(twice, "Send it", Some(8)), None, "the caret is between them");
+        assert_eq!(relocated("Hi! Send it now", "Send it"), Some(("Hi! ".into(), " now".into())));
+        // Two copies: one may be the user's own, so neither is touched.
+        assert_eq!(relocated("Send it. Send it", "Send it"), None);
         // Sent, cleared, or keys still landing: not there whole.
-        assert_eq!(relocated("\n", "Send it", Some(0)), None);
-        assert_eq!(relocated("Hi! Send", "Send it", Some(8)), None);
-        assert_eq!(relocated("anything", " ", Some(3)), None);
+        assert_eq!(relocated("\n", "Send it"), None);
+        assert_eq!(relocated("Hi! Send", "Send it"), None);
+        assert_eq!(relocated("anything", " "), None);
     }
 
     #[test]

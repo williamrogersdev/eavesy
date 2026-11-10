@@ -388,7 +388,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                         }
                     }
                     (Some(_), Ok(None)) => tracing::info!(session_id = %session_id, "held Return not pressed: no typed words to check the finished ones against"),
-                    (Some(_), Err(_)) => tracing::info!(session_id = %session_id, "held Return not pressed: the typed words weren't replaced"),
+                    (Some(_), Err(why)) => tracing::info!(session_id = %session_id, "held Return not pressed: the finished words didn't go in ({why})"),
                     (None, _) => {}
                 }
                 let delivered = delivered.map(|_| ());
