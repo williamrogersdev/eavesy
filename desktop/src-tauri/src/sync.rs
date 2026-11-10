@@ -326,12 +326,15 @@ const HEALTHY_RUN: Duration = Duration::from_secs(10 * 60);
 /// The longest one screenshot and image sync may run in the background.
 const CAPTURE_SYNC_LIMIT: Duration = Duration::from_secs(30 * 60);
 /// The shortest gap between a capture pass and one asked for by
-/// `capture_sync::nudge`: however often the launcher opens or captures are
-/// saved, nudges add at most one pass per gap. So at most six passes a minute,
-/// and only while the user is saving captures or opening the launcher. Each is
-/// one small list request each way when nothing is new; uploads still keep the
-/// server's 429 pause, and after a failed pass nudges wait for the usual retry.
+/// `capture_sync::nudge`: however often the launcher opens, nudges add at most
+/// one pass per gap. Each is one small list request each way when nothing is
+/// new; and after a failed pass nudges wait for the usual retry.
 const CAPTURE_NUDGE_GAP: Duration = Duration::from_secs(10);
+/// The same for `capture_sync::nudge_now`: a capture saved here, or one the
+/// server says was saved on another device, is not kept waiting. Short, but
+/// not zero, so a burst of saves shares a pass. Uploads still keep the
+/// server's 429 pause.
+const CAPTURE_URGENT_GAP: Duration = Duration::from_millis(500);
 
 /// Runs the sync loop for the life of the app. A loop that fails or panics
 /// is started again after a pause, so uploads never stop until a relaunch.
@@ -374,9 +377,15 @@ fn panic_message(payload: Box<dyn std::any::Any + Send>) -> String {
 /// holds up meetings or dictation.
 /// Whether a nudged capture pass may start now, ahead of the usual schedule:
 /// never right after a failed pass (that waits out its retry pause), and never
-/// within `CAPTURE_NUDGE_GAP` of the last pass.
-fn nudge_due(nudged: bool, failed: bool, finished: Option<Instant>, now: Instant) -> bool {
-    nudged && !failed && finished.is_none_or(|at| now.saturating_duration_since(at) >= CAPTURE_NUDGE_GAP)
+/// within `CAPTURE_NUDGE_GAP` of the last pass, or `CAPTURE_URGENT_GAP` when
+/// the pass was asked for with `nudge_now`.
+fn nudge_due(nudged: bool, urgent: bool, failed: bool, finished: Option<Instant>, now: Instant) -> bool {
+    let gap = if urgent { CAPTURE_URGENT_GAP } else { CAPTURE_NUDGE_GAP };
+    nudged && !failed && finished.is_none_or(|at| now.saturating_duration_since(at) >= gap)
+}
+
+fn urgent_gap_running(urgent: bool, running: bool, failed: bool, finished: Option<Instant>, now: Instant) -> bool {
+    urgent && !running && !failed && finished.is_some_and(|at| now.saturating_duration_since(at) < CAPTURE_URGENT_GAP)
 }
 
 #[derive(Default)]
@@ -426,7 +435,16 @@ impl CaptureTask {
     /// Whether a pass was asked for and may start before `next`: not while
     /// the server asked this Mac to slow down.
     fn nudge_due(&self, app: &AppHandle) -> bool {
-        nudge_due(crate::capture_sync::nudged(), self.failed, self.finished, Instant::now()) && !crate::capture_sync::paused(app)
+        nudge_due(crate::capture_sync::nudged(), crate::capture_sync::urgent(), self.failed, self.finished, Instant::now()) && !crate::capture_sync::paused(app)
+    }
+
+    /// Whether a pass asked for with `nudge_now` is held back only by
+    /// `CAPTURE_URGENT_GAP`, so the loop should look again when it ends. Not
+    /// while a pass runs, after a failed one, or once the gap is over (then
+    /// something else holds it back, such as the server's 429 pause): those
+    /// wait at the loop's usual pace.
+    fn urgent_gap_running(&self) -> bool {
+        urgent_gap_running(crate::capture_sync::urgent(), self.running.is_some(), self.failed, self.finished, Instant::now())
     }
 
     fn start_if_due(&mut self, app: &AppHandle, api: &Api, token: &str) {
@@ -548,7 +566,10 @@ async fn run_loop(app: AppHandle) -> Result<std::convert::Infallible> {
                     if rejected.is_none() {
                         capture.start_if_due(&app, &api, &token);
                     }
-                    idle(idle_pause()).await;
+                    // A pass asked for with `nudge_now` that is waiting out its gap
+                    // starts as soon as the gap is over.
+                    let pause = if capture.urgent_gap_running() { CAPTURE_URGENT_GAP.min(idle_pause()) } else { idle_pause() };
+                    idle(pause).await;
                 } else {
                     // A note or image just saved, or the launcher just opened,
                     // should not wait for a long meeting upload to finish.
@@ -1406,13 +1427,37 @@ mod tests {
         let now = Instant::now();
         let recent = now.checked_sub(Duration::from_secs(1)).unwrap();
         let old = now.checked_sub(super::CAPTURE_NUDGE_GAP + Duration::from_secs(1)).unwrap();
-        assert!(super::nudge_due(true, false, None, now));
-        assert!(super::nudge_due(true, false, Some(old), now));
-        assert!(super::nudge_due(true, false, Some(now.checked_sub(super::CAPTURE_NUDGE_GAP).unwrap()), now));
-        assert!(!super::nudge_due(true, false, Some(recent), now));
-        assert!(!super::nudge_due(false, false, Some(old), now));
-        assert!(!super::nudge_due(true, true, Some(old), now));
-        assert!(!super::nudge_due(true, true, None, now));
+        assert!(super::nudge_due(true, false, false, None, now));
+        assert!(super::nudge_due(true, false, false, Some(old), now));
+        assert!(super::nudge_due(true, false, false, Some(now.checked_sub(super::CAPTURE_NUDGE_GAP).unwrap()), now));
+        assert!(!super::nudge_due(true, false, false, Some(recent), now));
+        assert!(!super::nudge_due(false, false, false, Some(old), now));
+        assert!(!super::nudge_due(true, false, true, Some(old), now));
+        assert!(!super::nudge_due(true, false, true, None, now));
+    }
+
+    #[test]
+    fn an_urgent_nudge_waits_only_the_short_gap() {
+        let now = Instant::now();
+        let recent = now.checked_sub(Duration::from_secs(1)).unwrap();
+        assert!(super::nudge_due(true, true, false, Some(recent), now));
+        assert!(super::nudge_due(true, true, false, None, now));
+        assert!(!super::nudge_due(true, true, false, Some(now), now));
+        assert!(!super::nudge_due(true, true, true, Some(recent), now));
+        assert!(!super::nudge_due(false, true, false, Some(recent), now));
+    }
+
+    #[test]
+    fn the_loop_hurries_only_while_an_urgent_pass_waits_out_its_gap() {
+        let now = Instant::now();
+        let long_ago = now.checked_sub(Duration::from_secs(60)).unwrap();
+        assert!(super::urgent_gap_running(true, false, false, Some(now), now));
+        // Held back by something else (the server's 429 pause): no hurry.
+        assert!(!super::urgent_gap_running(true, false, false, Some(long_ago), now));
+        assert!(!super::urgent_gap_running(true, false, false, None, now));
+        assert!(!super::urgent_gap_running(true, true, false, Some(now), now));
+        assert!(!super::urgent_gap_running(true, false, true, Some(now), now));
+        assert!(!super::urgent_gap_running(false, false, false, Some(now), now));
     }
 
     #[tokio::test]

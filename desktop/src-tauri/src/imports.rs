@@ -104,7 +104,7 @@ pub fn import_path(app: &AppHandle, path: &Path, screenshot: bool) -> Result<Str
         std::fs::write(folder.join("capture.json"), json).map_err(|error| error.to_string())?;
         let id = recording.id.clone();
         store::append(app, recording)?;
-        crate::capture_sync::nudge();
+        crate::capture_sync::nudge_now();
         Ok(id)
     })();
     if result.is_err() {
@@ -194,7 +194,7 @@ pub async fn save_note(app: AppHandle, text: String) -> Result<String, String> {
             std::fs::write(folder.join("capture.json"), json).map_err(|error| error.to_string())?;
             let id = recording.id.clone();
             store::append(&app, recording)?;
-            crate::capture_sync::nudge();
+            crate::capture_sync::nudge_now();
             Ok::<_, String>(id)
         })();
         if result.is_err() {

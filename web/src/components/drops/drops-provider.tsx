@@ -215,6 +215,8 @@ export function DropsProvider({ children }: { children: ReactNode }) {
 
   const onEvent = useCallback(
     (event: HubEvent) => {
+      // Meant for Mac apps, with no drop to show.
+      if (event.type === 'sync') return;
       if (event.origin === clientId()) return; // Our own write; the POST response already placed it.
       if (event.type === 'delete') {
         setItems((prev) => prev.filter((d) => d.id !== event.id));

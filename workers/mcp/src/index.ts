@@ -10,6 +10,7 @@ import { clock } from '../../../web/src/lib/ai/chapters';
 import { sha256Hex } from '../../../web/src/lib/sha256';
 import { embedTexts } from '../../../web/src/lib/ai/embed';
 import { createTextDrop, DropTooLargeError } from '../../../web/src/server/create-drop';
+import { publishSync } from '../../../web/src/server/drops-hub';
 import * as capturesRepo from '../../../web/src/db/repo/captures';
 import { pid } from '../../../web/src/db/ids';
 import { captureKey } from '../../../web/src/server/r2';
@@ -1106,6 +1107,8 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
           await env.AUDIO_BUCKET.delete(r2Key).catch(() => undefined);
           throw error;
         }
+        // The user's Macs fetch it now.
+        await publishSync(userId, null);
         await emitWebhookEvent(env, userId, 'capture.created', webhookItem({ id, kind: 'note', title, createdAt }), createdAt);
         return { id, kind: 'note', title, project: project?.name ?? null, created_at: iso(createdAt) };
       });
