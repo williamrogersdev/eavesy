@@ -82,7 +82,23 @@ pub async fn run(app: AppHandle) {
             None => Duration::ZERO,
         };
         failures = failures.saturating_add(1);
-        sleep(wait).await;
+        wait_unless_repaired(&app, &credential, wait).await;
+    }
+}
+
+/// Waits before the next try, but not past this Mac being paired again or
+/// pointed at another server: the new credential is tried at once.
+async fn wait_unless_repaired(app: &AppHandle, credential: &Credential, wait: Duration) {
+    let until = Instant::now() + wait;
+    loop {
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        sleep(left.min(NOT_PAIRED_RETRY)).await;
+        if settings::device_credential(app).is_some_and(|now| now.token != credential.token || now.base != credential.base) {
+            return;
+        }
     }
 }
 
@@ -142,8 +158,9 @@ async fn connected(app: &AppHandle, credential: &Credential) -> Result<()> {
         // The error can quote the address, which holds the ticket: keep its kind only.
         .map_err(|error| anyhow!("live sync: could not connect ({})", error_kind(&error)))?;
     tracing::info!("live sync: connected");
-    // Whatever was saved elsewhere while this Mac was not listening.
-    crate::capture_sync::nudge_now();
+    // Whatever was saved elsewhere while this Mac was not listening. Not
+    // `nudge_now`: a connection that keeps dropping must not add a pass each time.
+    crate::capture_sync::nudge();
 
     let mut next_ping = Instant::now() + PING_EVERY;
     let mut pong_due: Option<Instant> = None;

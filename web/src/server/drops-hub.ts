@@ -143,8 +143,8 @@ export async function issueDeviceLiveTicket(userId: string, deviceId: string | u
 export type SyncEvent = { type: 'sync'; what: 'captures' };
 
 /**
- * Tells the user's Mac apps to fetch now: a note or image was saved, edited or
- * deleted. `fromDevice` is the Mac that made the change, which already has it.
+ * Tells the user's Mac apps to fetch now: a note or image was saved, or a
+ * note edited. `fromDevice` is the Mac that made the change, which already has it.
  * Best effort: a Mac that misses it still finds the change at its next check.
  */
 export async function publishSync(userId: string, fromDevice: string | null | undefined): Promise<void> {

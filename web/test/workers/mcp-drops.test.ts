@@ -3,7 +3,7 @@ import { applyD1Migrations } from 'cloudflare:test';
 import type { D1Database, R2Bucket } from '@cloudflare/workers-types';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { worker as mcpWorker } from '../../../workers/mcp/src/index';
-import { publish } from '../../src/server/drops-hub';
+import { publish, publishSync } from '../../src/server/drops-hub';
 import { INLINE_TEXT_MAX_BYTES, MAX_TEXT_BYTES, PREVIEW_CHARS } from '../../src/server/drops';
 import { sha256Hex } from '../../src/lib/sha256';
 
@@ -65,9 +65,11 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.mocked(publish).mockClear();
+  vi.mocked(publishSync).mockClear();
   const now = Date.now();
   await testEnv.DB.batch([
     testEnv.DB.prepare('DELETE FROM drops'),
+    testEnv.DB.prepare('DELETE FROM captures'),
     testEnv.DB.prepare('DELETE FROM mcp_tokens'),
     testEnv.DB.prepare('DELETE FROM users'),
     testEnv.DB.prepare(
@@ -83,6 +85,21 @@ beforeEach(async () => {
        VALUES ('mcp_r', 'owner', ?, 'Reader', '["read"]', ?)`,
     ).bind(await sha256Hex(READ_TOKEN), now),
   ]);
+});
+
+describe('MCP save_note', () => {
+  it('tells every one of the owner’s Macs to fetch the note', async () => {
+    const body = await (await rpc('tools/call', { name: 'save_note', arguments: { text: 'Remember the milk' } })).json<{
+      result?: { isError?: boolean };
+    }>();
+    expect(body.result?.isError).toBeFalsy();
+    expect(publishSync).toHaveBeenCalledExactlyOnceWith('owner', null);
+  });
+
+  it('tells no one when the note is refused', async () => {
+    await rpc('tools/call', { name: 'save_note', arguments: { text: 'hi' } }, READ_TOKEN);
+    expect(publishSync).not.toHaveBeenCalled();
+  });
 });
 
 describe('MCP send_to_my_devices', () => {
