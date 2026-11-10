@@ -37,7 +37,10 @@ enum WalkthroughProcessor {
         let warnings: [String]
     }
 
-    static func run(video: URL, folder: URL, audioChunkSeconds: Double = 120) async throws {
+    /// `audioReady` is told the audio chunks as soon as they are cut, before the
+    /// slower screenshot pass, so their transcription can start early.
+    static func run(video: URL, folder: URL, audioChunkSeconds: Double = 120,
+                    audioReady: (([AudioChunk]) -> Void)? = nil) async throws {
         guard audioChunkSeconds.isFinite, audioChunkSeconds >= 1, audioChunkSeconds <= 120
         else { throw error("Invalid audio chunk duration") }
         let asset = AVURLAsset(url: video)
@@ -72,6 +75,7 @@ enum WalkthroughProcessor {
                 chunks.append(AudioChunk(path: relative, startMs: Int64(start * 1000), durationMs: Int64(length * 1000)))
             }
         } else { warnings.append("No audio track was recorded; narration is unavailable.") }
+        audioReady?(chunks)
 
         let generator = AVAssetImageGenerator(asset: asset)
         generator.appliesPreferredTrackTransform = true
