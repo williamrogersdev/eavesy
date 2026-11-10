@@ -1050,7 +1050,8 @@ function Hud() {
   const pickWhileRecording = async (next: Writing) => {
     if (sameWriting(next, prefs ?? PLAIN)) return;
     setActionError(null);
-    const save = keep(next);
+    // One after another: the choice made last is the one saved last.
+    const save = writeSave.current.then(() => keep(next));
     writeSave.current = save;
     const { ok, error } = await save;
     if (!ok) setActionError(hudError(error, 'Couldn’t change how it’s written. Try again?'));
@@ -1296,7 +1297,7 @@ function Hud() {
     // written and whether it is typed live are always in reach.
     const dictating = !video && !eavesy && state.mode === 'audio';
     const toggleTypeLive = async () => {
-      if (typeLiveBusy.current) return;
+      if (typeLiveBusy.current || stoppingRef.current === state.sessionId) return;
       const next = !typeLive;
       setTypeLive(next);
       if (!tauri()) return;
