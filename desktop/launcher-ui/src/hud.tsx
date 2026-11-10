@@ -569,11 +569,15 @@ function Hud() {
   // keeps it greyed until the HUD moves on; one that failed can be tried again.
   const stoppingRef = useRef<string | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
+  /** The save of a Write choice made while recording, and whether Type live is being switched. */
+  const writeSave = useRef<Promise<unknown>>(Promise.resolve());
+  const typeLiveBusy = useRef(false);
   const stopRecording = (sessionId: string | null | undefined) => {
     if (!sessionId || stoppingRef.current === sessionId) return;
     stoppingRef.current = sessionId;
     setStopping(sessionId);
-    void within(liveUpdate.current, LIVE_EDIT_WAIT_MS)
+    // A Write choice still being saved is how this dictation should be written.
+    void within(Promise.all([liveUpdate.current, writeSave.current]), LIVE_EDIT_WAIT_MS)
       .then((settled) => {
         if (!settled) console.warn('Stopping before the last live correction reached the app');
         return act('stop_capture', { sessionId });
@@ -1046,7 +1050,9 @@ function Hud() {
   const pickWhileRecording = async (next: Writing) => {
     if (sameWriting(next, prefs ?? PLAIN)) return;
     setActionError(null);
-    const { ok, error } = await keep(next);
+    const save = keep(next);
+    writeSave.current = save;
+    const { ok, error } = await save;
     if (!ok) setActionError(hudError(error, 'Couldn’t change how it’s written. Try again?'));
   };
   const change = async (next: Writing) => {
@@ -1057,7 +1063,9 @@ function Hud() {
     // Tidied words can't be turned back into every word as it was said:
     // kept for the dictations to come, with these as they are.
     if (next.style === 'verbatim' && todo === 'rewrite') {
-      const { ok, error } = await keep(next);
+      const token = ++toneSeq.current;
+      toneRequest.current = token;
+      const { ok, error } = await keep(next).finally(() => { if (toneRequest.current === token) toneRequest.current = null; });
       if (currentSession.current !== sessionId) return;
       if (ok) setTone({ sessionId, base: ownTone?.base ?? words, from: row.from, pick: next.style, forAgents: false, busy: false, landed: null });
       setActionError(ok ? 'Kept for next time. These words stay as they are' : hudError(error, 'Couldn’t change how it’s written. Try again?'));
@@ -1288,14 +1296,18 @@ function Hud() {
     // written and whether it is typed live are always in reach.
     const dictating = !video && !eavesy && state.mode === 'audio';
     const toggleTypeLive = async () => {
+      if (typeLiveBusy.current) return;
       const next = !typeLive;
       setTypeLive(next);
       if (!tauri()) return;
+      typeLiveBusy.current = true;
       try {
         await invoke('set_type_as_you_talk', { enabled: next, sessionId: state.sessionId });
       } catch (error) {
         setTypeLive(!next);
         setActionError(hudError(error, 'Couldn’t change that. Try again?'));
+      } finally {
+        typeLiveBusy.current = false;
       }
     };
     const elapsedSec = Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000));
@@ -1314,8 +1326,8 @@ function Hud() {
         <span className="ctl-fill" />
         {dictating && !opening && (
           <span className="ctl-live-opts" onMouseDown={(event) => event.stopPropagation()}>
-            {writePicker(prefs ?? PLAIN, false, (next) => void pickWhileRecording(next))}
-            <button type="button" role="switch" aria-checked={typeLive} aria-label="Type as I talk" className="ctl-switch-row"
+            {writePicker(prefs ?? PLAIN, cancelDisabled, (next) => void pickWhileRecording(next))}
+            <button type="button" role="switch" aria-checked={typeLive} aria-label="Type as I talk" disabled={cancelDisabled} className="ctl-switch-row"
               title={typeLive ? 'Your words are typed where your cursor is while you talk. Turn off to paste them when you stop.' : 'Your words are pasted when you stop. Turn on to type them where your cursor is while you talk.'}
               onClick={() => void toggleTypeLive()}>
               Type live<span className="ctl-switch" aria-hidden />
