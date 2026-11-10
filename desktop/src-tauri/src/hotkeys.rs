@@ -279,9 +279,6 @@ impl Bindings {
 /// trade places.
 pub fn plan(current: &Bindings, action: Action, accelerator: &str, swap: bool) -> Result<Bindings, HotkeyError> {
     validate(accelerator)?;
-    if action == Action::Screen && matches!(keys(accelerator), Ok(Some(Keys::Fn | Keys::FnChord { .. }))) {
-        return Err(HotkeyError::invalid(SCREEN_RULE));
-    }
     let mut next = current.clone();
     let holder = Action::ALL.into_iter().find(|other| *other != action && same_keys(current.get(*other), accelerator));
     if let Some(other) = holder {
@@ -289,6 +286,10 @@ pub fn plan(current: &Bindings, action: Action, accelerator: &str, swap: bool) -
         next.set(other, current.get(action).to_string());
     }
     next.set(action, accelerator.to_string());
+    // Checked on the result, so a swap can't hand Record screen an fn shortcut either.
+    if next.screen != current.screen && matches!(keys(&next.screen), Ok(Some(Keys::Fn | Keys::FnChord { .. }))) {
+        return Err(HotkeyError::invalid(SCREEN_RULE));
+    }
     Ok(next)
 }
 
@@ -635,6 +636,8 @@ mod tests {
             assert_eq!(plan(&now, Action::Screen, fn_key, false), Err(HotkeyError::invalid(SCREEN_RULE)));
         }
         assert_eq!(Action::parse("screen").unwrap().label(), "Record screen");
+        let talk_on_fn = Bindings { dictation: "Fn".into(), ..now.clone() };
+        assert_eq!(plan(&talk_on_fn, Action::Dictation, DEFAULT_SCREEN_HOTKEY, true), Err(HotkeyError::invalid(SCREEN_RULE)), "a swap would give it fn");
         assert_eq!(validate(DEFAULT_ASSISTANT_HOTKEY), Ok(()));
     }
 
