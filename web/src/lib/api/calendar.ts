@@ -9,6 +9,8 @@ export interface CalendarConnection {
   lastSyncAt: number | null;
   upcoming: number;
   needsReconnect: boolean;
+  /** The last sync didn't work, so the meetings listed may be out of date. */
+  syncFailing: boolean;
   /** The account's calendars and which are synced; null when the grant can't list them. */
   calendars: CalendarChoice[] | null;
   /** Connecting again would let Eavesy sync this account's other calendars too. */
@@ -44,6 +46,7 @@ function parseConnection(item: unknown): CalendarConnection[] {
     lastSyncAt: typeof item.lastSyncAt === 'number' ? item.lastSyncAt : null,
     upcoming: typeof item.upcoming === 'number' ? item.upcoming : 0,
     needsReconnect: item.needsReconnect === true,
+    syncFailing: item.syncFailing === true,
     calendars: parseCalendars(item.calendars),
     canAddCalendars: item.canAddCalendars === true,
   }];
@@ -241,4 +244,12 @@ export async function saveMeetingCapture(change: { meetingCaptureDefault?: Meeti
 export async function connectGoogle(): Promise<void> {
   if (isDesktop()) await openWebApp('/connect-google#mac');
   else window.location.assign('/api/connections/google');
+}
+
+/** What Settings says when the last calendar sync failed: since when the meetings may be out of date. */
+export function syncFailingLine(lastSyncAt: number | null, now: number): string {
+  if (lastSyncAt === null) return 'Couldn’t sync this calendar yet. Eavesy keeps trying.';
+  const minutes = Math.max(1, Math.round((now - lastSyncAt) / 60_000));
+  const ago = minutes < 60 ? `${minutes} min` : minutes < 2880 ? `${Math.round(minutes / 60)} h` : `${Math.round(minutes / 1440)} days`;
+  return `Couldn’t sync for ${ago}, so new meetings may be missing. Eavesy keeps trying.`;
 }

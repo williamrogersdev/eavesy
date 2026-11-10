@@ -1011,6 +1011,11 @@ export async function openWebApp(path?: string): Promise<void> {
   await invoke('open_web_app', path ? { path } : undefined);
 }
 
+/** Opens a meeting's page on eavesy.com (notes, summary, transcript, chat). Rejects when it hasn't synced. */
+export async function openMeeting(id: string): Promise<void> {
+  await invoke('open_meeting', { id });
+}
+
 export async function getSettings(): Promise<Settings | null> {
   if (!isDesktop()) return null;
   return invoke<Settings>('get_settings').catch(() => null);

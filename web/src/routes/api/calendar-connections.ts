@@ -41,6 +41,8 @@ export const Route = createFileRoute('/api/calendar-connections')({
             lastSyncAt: row.lastSyncAt,
             upcoming: await calendarRepo.countUpcoming(db, row.id, now, now + SYNC_AHEAD_MS),
             needsReconnect: row.lastSyncStatus === 'reconnect',
+            // The last sync didn't work (Google or the network); it is tried again by itself.
+            syncFailing: row.lastSyncStatus === 'failed',
             // Which of the account's calendars are synced; null until Eavesy may list them.
             calendars: canListCalendars(row) ? calendarRepo.storedCalendars(row) : null,
             // A grant from before the calendar list was asked for: reconnecting adds it.

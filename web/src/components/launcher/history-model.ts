@@ -162,3 +162,68 @@ export function reuseRows(previous: readonly Recording[], next: Recording[]): Re
   });
   return changed ? rows : (previous as Recording[]);
 }
+
+/** The titles a capture gets before anything names it. */
+const PLACEHOLDER_TITLES = new Set(['meeting recording', 'untitled recording', 'meeting', 'voice memo', 'screen recording']);
+
+/** A meeting's own name, or null while it still has the one every recording starts with. */
+export function meetingTitle(rec: Pick<Recording, 'title'>): string | null {
+  const title = rec.title.trim();
+  return title && !PLACEHOLDER_TITLES.has(title.toLowerCase()) ? title : null;
+}
+
+export interface BriefSection { heading: string; items: string[] }
+/** What a meeting was about: a few sentences, then its decisions, action items and so on. */
+export interface MeetingBrief { overview: string; sections: BriefSection[] }
+
+const inline = (text: string) => text.replace(/\*\*(.+?)\*\*/g, '$1').replace(/`([^`]+)`/g, '$1').trim();
+
+/** Reads a stored summary (markdown: a paragraph, then "## Decisions" style lists). Null when it says nothing. */
+export function meetingBrief(summary: string | undefined): MeetingBrief | null {
+  if (!summary?.trim()) return null;
+  const overview: string[] = [];
+  const sections: BriefSection[] = [];
+  let section: BriefSection | null = null;
+  for (const raw of summary.split('\n')) {
+    const line = raw.trim();
+    if (!line || /^# /.test(line)) continue;
+    const heading = /^#{2,6} +(.*)$/.exec(line);
+    if (heading) {
+      section = { heading: inline(heading[1]), items: [] };
+      sections.push(section);
+      continue;
+    }
+    const text = inline(line.replace(/^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, ''));
+    if (!text) continue;
+    if (section) section.items.push(text);
+    else overview.push(text);
+  }
+  const filled = sections.filter((entry) => entry.items.length > 0);
+  if (overview.length === 0 && filled.length === 0) return null;
+  return { overview: overview.join(' '), sections: filled };
+}
+
+/** How a section's heading reads for one item. */
+const ONE: Record<string, string> = { decisions: 'decision', 'action items': 'action item', 'follow-ups': 'follow-up', 'open questions': 'open question' };
+
+/** "3 decisions · 2 action items": what a brief holds beyond its overview. */
+export function briefCounts(brief: MeetingBrief): string {
+  return brief.sections
+    .map(({ heading, items }) => {
+      const name = heading.toLowerCase();
+      return `${items.length} ${items.length === 1 ? ONE[name] ?? name : name}`;
+    })
+    .join(' · ');
+}
+
+/** Whether the text holds every word of the search, as the history search matches them. */
+export function matchesEveryWord(query: string, text: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const hay = text.toLowerCase();
+  return words.length > 0 && words.every((word) => hay.includes(word));
+}
+
+/** Whether a search matched only in the transcript, so the row must show it for the hit to be seen. */
+export function hitOnlyInTranscript(query: string, shown: string, transcript: string): boolean {
+  return !matchesEveryWord(query, shown) && matchesEveryWord(query, `${shown} ${transcript}`);
+}

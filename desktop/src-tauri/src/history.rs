@@ -40,6 +40,9 @@ pub struct RecordingPreview {
     pub has_video: bool,
     pub transcript: Option<String>,
     pub transcript_truncated: bool,
+    /// A meeting's summary, so its row can say what the meeting was about.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
     pub revision: i64,
     /// The other device it was recorded on, for meetings brought in from the cloud.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -462,7 +465,8 @@ impl History {
         } else {
             " JOIN history_content c USING(id)"
         };
-        let sql=format!("SELECT h.id,h.title,h.started_at_ms,h.duration_sec,h.source,h.status,h.has_audio,h.has_video,h.preview,h.truncated,h.revision
+        let sql=format!("SELECT h.id,h.title,h.started_at_ms,h.duration_sec,h.source,h.status,h.has_audio,h.has_video,h.preview,h.truncated,h.revision,
+            CASE WHEN h.category='meetings' THEN (SELECT substr(s.summary,1,8000) FROM history_content s WHERE s.id=h.id) END
             FROM history_recordings h INDEXED BY history_order{join} WHERE {predicate} ORDER BY h.started_at_ms DESC,h.id LIMIT ? OFFSET ?");
         values.push(((limit + 1) as i64).into());
         values.push(i64::try_from(offset).map_err(error)?.into());
@@ -481,6 +485,7 @@ impl History {
                     transcript: r.get(8)?,
                     transcript_truncated: r.get(9)?,
                     revision: r.get(10)?,
+                    summary: r.get::<_, Option<String>>(11)?.filter(|summary| !summary.trim().is_empty()),
                     device: None,
                 })
             })
@@ -784,6 +789,29 @@ mod tests {
         );
         drop(history);
         assert_eq!(fixture.open().unwrap().get("a").unwrap(), Some(changed));
+    }
+    #[test]
+    fn only_a_meeting_row_carries_its_summary() {
+        let fixture = Fixture::new();
+        let mut history = fixture.open().unwrap();
+        let mut meeting = row("meeting");
+        meeting.source = "mixed".into();
+        meeting.summary = Some("# Summary\n\nWe agreed to ship.".into());
+        history.put(&meeting).unwrap();
+        let mut memo = row("memo");
+        memo.source = "mic".into();
+        memo.summary = Some("A voice memo's summary".into());
+        history.put(&memo).unwrap();
+        let mut bare = row("bare");
+        bare.source = "mixed".into();
+        bare.summary = Some("  ".into());
+        history.put(&bare).unwrap();
+        let page = history.page(0, 50, "", "all").unwrap();
+        let summary = |id: &str| page.items.iter().find(|item| item.id == id).unwrap().summary.clone();
+        assert_eq!(summary("meeting").as_deref(), Some("# Summary\n\nWe agreed to ship."));
+        assert_eq!(summary("memo"), None);
+        assert_eq!(summary("bare"), None);
+        assert_eq!(history.page(0, 50, "agreed", "meetings").unwrap().items[0].summary, summary("meeting"));
     }
     #[test]
     fn preview_truncation_uses_plain_text_and_unicode_boundaries() {

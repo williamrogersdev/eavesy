@@ -4,6 +4,7 @@ import { useInlineTranslation } from '@/lib/translation/use-inline-translation';
 import { CorrectionEditor } from '@/components/dictionary/correction-editor';
 
 import {
+  ArrowUpRight,
   AudioLines,
   Camera,
   Clapperboard,
@@ -36,6 +37,7 @@ import {
   deleteCapture,
   errMsg,
   fetchAgentTranscript,
+  openMeeting,
   recordingMoments,
   revealInFinder,
   type RecordingMoment,
@@ -52,16 +54,23 @@ import type { Recording } from '@/lib/launcher/types';
 import type { AskCapture } from './eavesy-model';
 import {
   askLabel,
+  briefCounts,
   clock,
   FILTERS,
+  filterOf,
   groupByDay,
   highlightParts,
   historyView,
+  hitOnlyInTranscript,
+  matchesEveryWord,
   kindLabel,
+  meetingBrief,
+  meetingTitle,
   plainTranscript,
   searchFocusOpens,
   timeOfDay,
   type HistoryFilter,
+  type MeetingBrief,
 } from './history-model';
 import { FN } from './shortcut-keys';
 import type { Flash, RunTask } from './types';
@@ -281,6 +290,38 @@ function Body({ text, query, muted, onExpand }: { text: string; query: string; m
   );
 }
 
+/** What a meeting was about: the overview, then its decisions and action items behind one line. */
+function Brief({ brief, query }: { brief: MeetingBrief; query: string }) {
+  // A search hit in the details opens them, until the user says otherwise.
+  const hit = matchesEveryWord(query, brief.sections.flatMap((section) => section.items).join(' '));
+  const [chosen, setChosen] = useState<boolean | null>(null);
+  const shown = chosen ?? hit;
+  return (
+    <>
+      {brief.overview && <Body text={brief.overview} query={query} />}
+      {brief.sections.length > 0 && (
+        <>
+          {shown && (
+            <div className="ev-brief">
+              {brief.sections.map((section) => (
+                <section key={section.heading}>
+                  <h4>{section.heading}</h4>
+                  <ul>
+                    {section.items.map((item, index) => <li key={index} dir="auto"><Highlighted text={item} query={query} /></li>)}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          )}
+          <button type="button" className="ev-more" aria-expanded={shown} onClick={() => setChosen(!shown)}>
+            {shown ? 'Hide details' : briefCounts(brief)}
+          </button>
+        </>
+      )}
+    </>
+  );
+}
+
 type Version = { tone: Tone; forAgents: boolean };
 
 const TONES = toneChoices('The words as they were saved.');
@@ -415,6 +456,13 @@ const CaptureRow = memo(function CaptureRow({
   const timed = rec.durationSec > 0 && !image && rec.source !== 'note';
   const player = usePlayer(rec.id);
   const spoken = rec.source !== 'note' && !image && rec.source !== 'upload';
+  // A meeting leads with its name and what it was about; the transcript waits behind a click.
+  const meeting = filterOf(rec) === 'meetings' && !video;
+  const title = meeting ? meetingTitle(current) : null;
+  const brief = useMemo(() => (meeting ? meetingBrief(current.summary) : null), [meeting, current.summary]);
+  const [transcriptChosen, setTranscriptChosen] = useState<boolean | null>(null);
+  const open = () => runTask(() => openMeeting(rec.id), 'Couldn’t open that meeting');
+  const canOpen = meeting && signedIn === true && rec.status !== 'recording';
   const rewritable = !!text && !image && !video;
   const tones = rewritable && signedIn === true && rec.status !== 'processing';
   // Past the limit only For AI works here (from the cloud's agent transcript). A preview's
@@ -423,6 +471,9 @@ const CaptureRow = memo(function CaptureRow({
   const changed = rewrite.text !== null || !!translation.language;
   const shownText = rewrite.text ?? translation.text;
   const trayOpen = rewritable && (rewriting || changed || rewrite.busy || translation.busy || languageOpen);
+  // With a brief on show the transcript appears when asked for, when a version of it is being made, or when a search hit is only in it.
+  const briefText = brief ? `${title ?? ''} ${brief.overview} ${brief.sections.flatMap((section) => section.items).join(' ')}` : '';
+  const showTranscript = !brief || trayOpen || (transcriptChosen ?? hitOnlyInTranscript(query, briefText, text));
   const pickVersion = (next: Version) => {
     if (translation.language) void translation.select(null);
     void rewrite.select(next);
@@ -464,13 +515,19 @@ const CaptureRow = memo(function CaptureRow({
     {text && <div style={{ marginTop: 6 }}><Body key={translation.language ?? ''} text={translation.text} query={query} onExpand={!translation.language && current.transcriptTruncated ? expand : undefined} /></div>}
   </>;
   else if (text) body = <>
-    <Body
+    {brief && <Brief brief={brief} query={query} />}
+    {brief && (
+      <button type="button" className="ev-more ev-more-transcript" aria-expanded={showTranscript} disabled={trayOpen} onClick={() => setTranscriptChosen(!showTranscript)}>
+        {showTranscript ? 'Hide transcript' : 'Transcript'}
+      </button>
+    )}
+    {showTranscript && <Body
       key={`${translation.language ?? ''}-${rewrite.text === null ? '' : `${rewrite.version.tone}:${rewrite.version.forAgents}`}`}
       text={shownText}
       query={query}
       muted={rewrite.busy || translation.busy}
       onExpand={!changed && current.transcriptTruncated ? expand : undefined}
-    />
+    />}
     {signedIn === true && rec.status === 'processing' && <div className="ev-sub">First pass. Refining in the cloud…</div>}
   </>;
   else if (signedIn === false && spoken && rec.status !== 'complete') body = (
@@ -494,6 +551,13 @@ const CaptureRow = memo(function CaptureRow({
         {rec.device && <span className="ev-rh-device" title={`Recorded on ${rec.device}`}>· {rec.device}</span>}
         <span className="ev-rh-time">{timeOfDay(rec.startedAt)}</span>
       </header>
+      {title && (
+        <h3 className="ev-row-title" dir="auto">
+          {canOpen
+            ? <button type="button" title="Open this meeting" onClick={open}><Highlighted text={title} query={query} /></button>
+            : <Highlighted text={title} query={query} />}
+        </h3>
+      )}
       {body}
       {onResolveFlags && <ItemFlags items={flags} onDismiss={(ids) => onResolveFlags(ids, 'dismissed')} onFixed={(ids) => onResolveFlags(ids, 'fixed')} />}
       {trayOpen && (
@@ -545,6 +609,7 @@ const CaptureRow = memo(function CaptureRow({
             onClick={() => onAskAbout(rec.id, async () => ({ id: rec.id, label: askLabel(rec, Date.now()), text: await fullText() }))}
           />
         )}
+        {canOpen && <IconButton label="Open meeting" icon={ArrowUpRight} onClick={open} />}
         <IconButton label={copyLabel} icon={Copy} filled disabled={translation.busy || rewrite.busy || (!image && !video && !text)} onClick={copy} />
         {rewritable && <Button size="sm" variant="ghost" aria-pressed={trayOpen} title="Change the tone, shape it for an AI, or translate" onClick={toggleTray}>Rewrite</Button>}
         <Menu
@@ -563,6 +628,12 @@ const CaptureRow = memo(function CaptureRow({
                   disabled: player.failed,
                   onSelect: () => void player.toggle(),
                 }]
+              : []),
+            ...(brief && current.summary
+              ? [{ label: 'Copy summary', icon: Copy, onSelect: () => runTask(async () => {
+                  await copyText((await loadRecordingDetails(rec)).summary?.trim() || current.summary?.trim() || '');
+                  flash('Copied');
+                }, 'Couldn’t copy that') }]
               : []),
             { label: 'Show in Finder', icon: FolderOpen, onSelect: () => runTask(() => revealInFinder(rec.id)) },
             'separator',

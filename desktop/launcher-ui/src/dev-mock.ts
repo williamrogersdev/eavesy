@@ -16,7 +16,7 @@ function sampleRecordings(now: number) {
   return [
     { id: 'r1', title: 'Dictation', started_at_ms: now - 0.2 * HOUR, duration_sec: 14, source: 'dictation', status: 'complete', has_audio: true, transcript: 'Remind me to send Priya the revised onboarding deck before Thursday, and ask whether the pricing page copy is final.' },
     { id: 'r2', title: 'Screenshot', started_at_ms: now - 0.9 * HOUR, duration_sec: 0, source: 'screenshot', status: 'complete', has_audio: false },
-    { id: 'r3', title: 'Weekly design sync', started_at_ms: now - 2.5 * HOUR, duration_sec: 1840, source: 'both', status: 'complete', has_audio: true, transcript: 'We agreed the capture panel ships first and the HUD restyle follows. Sam will check the drag and drop on a real Mac. The empty state keeps the mascot but loses the second paragraph. Open question: whether imported audio should be transcribed automatically or only on request. We also talked through the tray icon, which now swaps to the recording glyph while the mic is live, and the screenshot folder watcher, which is now on by default.' },
+    { id: 'r3', title: 'Weekly design sync', started_at_ms: now - 2.5 * HOUR, duration_sec: 1840, source: 'both', status: 'complete', has_audio: true, summary: '# Summary\n\nThe capture panel ships first and the HUD restyle follows. The empty state keeps the mascot but loses its second paragraph.\n\n## Decisions\n\n- The capture panel ships before the HUD restyle\n- The screenshot folder watcher is on by default\n\n## Action items\n\n- Sam checks drag and drop on a real Mac\n\n## Open questions\n\n- Should imported audio be transcribed automatically or only on request?\n', transcript: 'We agreed the capture panel ships first and the HUD restyle follows. Sam will check the drag and drop on a real Mac. The empty state keeps the mascot but loses the second paragraph. Open question: whether imported audio should be transcribed automatically or only on request. We also talked through the tray icon, which now swaps to the recording glyph while the mic is live, and the screenshot folder watcher, which is now on by default.' },
     { id: 'r4', title: 'Note', started_at_ms: now - day - 3 * HOUR, duration_sec: 0, source: 'note', status: 'complete', has_audio: false, transcript: 'Ideas for the onboarding email:\n- lead with the mascot\n- one screenshot, not three' },
     { id: 'r5', title: 'Talk', started_at_ms: now - day - 5 * HOUR, duration_sec: 42, source: 'mic', status: 'processing', has_audio: true },
   ];
@@ -60,7 +60,7 @@ export function installDevMock(): void {
   ];
   let calendars = params.has('noconnections') ? [] : [
     {
-      id: 'cal-1', provider: 'google', accountEmail: 'robin@example.com', lastSyncAt: Date.now() - 60_000, upcoming: 7, needsReconnect: false, canAddCalendars: false,
+      id: 'cal-1', provider: 'google', accountEmail: 'robin@example.com', lastSyncAt: Date.now() - 60_000, upcoming: 7, needsReconnect: false, syncFailing: new URLSearchParams(window.location.search).has('syncfailing'), canAddCalendars: false,
       calendars: [
         { id: 'robin@example.com', name: 'Robin', primary: true, selected: true },
         { id: 'team@group.calendar.google.com', name: 'Team', primary: false, selected: true },
@@ -102,6 +102,7 @@ export function installDevMock(): void {
       return { items: visible.slice(start, start + count).map((row) => ({ ...row, transcript: row.transcript?.slice(0, 2048), transcript_truncated: (row.transcript?.length ?? 0) > 2048, revision: 1 })), next_offset: start + count < visible.length ? start + count : null,
         counts: { all: recordings.length, voice: recordings.filter((row) => category(row) === 'voice').length, meetings: recordings.filter((row) => category(row) === 'meetings').length, screens: recordings.filter((row) => category(row) === 'screens').length, notes: recordings.filter((row) => category(row) === 'notes').length } };
     },
+    open_meeting: ({ id }: Record<string, unknown>) => { console.info('open meeting', id); },
     get_recording: ({ id }: Record<string, unknown>) => { const row = recordings.find((row) => row.id === id); return row ? { ...row, revision: 2 } : null; },
     set_hud_look: ({ lines, translucent, fastLiveWords, resultPreview }: Record<string, unknown>) => {
       Object.assign(settings, { hud_preview_lines: lines, hud_translucent: translucent });

@@ -207,6 +207,19 @@
 }
 .ev-more:hover { text-decoration: underline; }
 .ev-more:focus-visible { outline: none; box-shadow: var(--ev-focus); border-radius: 4px; }
+.ev-more + .ev-more-transcript { margin-left: 12px; }
+.ev-more-transcript { color: var(--ev-ink-2); }
+.ev-more-transcript:disabled { opacity: 0.5; }
+/* A meeting's name: the one line in a row set as a heading. */
+.ev-row-title { margin: 1px 0 1px; color: var(--ev-ink); font: var(--ev-t-head); overflow-wrap: anywhere; }
+.ev-row-title > button { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: start; }
+.ev-row-title > button:hover { text-decoration: underline; text-decoration-color: var(--ev-line-strong); text-underline-offset: 3px; }
+.ev-row-title > button:focus-visible { outline: none; box-shadow: var(--ev-focus); border-radius: 4px; }
+/* What the meeting decided and left to do, under its overview. */
+.ev-brief { display: grid; gap: 8px; margin: 8px 0 2px; padding-left: 10px; border-left: 2px solid var(--ev-line-strong); }
+.ev-brief h4 { margin: 0 0 2px; color: var(--ev-ink-2); font: var(--ev-t-group); }
+.ev-brief ul { display: grid; gap: 3px; margin: 0; padding: 0 0 0 14px; list-style: disc; color: var(--ev-ink); font: var(--ev-t-body); }
+.ev-brief li::marker { color: var(--ev-ink-3); }
 .ev-link { padding: 0; border: 0; background: none; color: var(--ev-coat); font: inherit; font-weight: 600; }
 .ev-link:hover { text-decoration: underline; }
 .ev-hl { border-radius: 3px; padding: 0 1px; background: var(--ev-manila-soft); color: var(--ev-manila-ink); }
