@@ -3,24 +3,28 @@ set -euo pipefail
 
 usage() {
   cat <<'TEXT'
-Usage: dictation-scorecard.sh [--days N] [--dir PATH] [LOG...]
+Usage: dictation-scorecard.sh [--days N] [--since TIME] [--dir PATH] [LOG...]
 
 Prints how dictation went, from the Mac app's own logs: where the words
 ended up, how long they took after Stop, and how soon the first live words
 showed. Reads counts and timings only, never what was said.
 
   --days N    the newest N daily logs (default 7)
+  --since T   only lines at or after T, a UTC time as the logs write it
+              (2026-11-09T21:48), to measure one build on its own
   --dir PATH  the log folder (default ~/Library/Logs/com.eavesy.desktop)
   LOG...      specific log files, instead of --days
 TEXT
 }
 
 days=7
+since=""
 dir="$HOME/Library/Logs/com.eavesy.desktop"
 files=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --days) days="$2"; shift 2 ;;
+    --since) since="$2"; shift 2 ;;
     --dir) dir="$2"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) files+=("$1"); shift ;;
@@ -37,9 +41,9 @@ fi
 
 first="$(basename "${files[0]}")"
 last="$(basename "${files[${#files[@]}-1]}")"
-echo "Dictation scorecard: $first to $last (${#files[@]} files)"
+echo "Dictation scorecard: $first to $last (${#files[@]} files)${since:+, since $since}"
 
-LC_ALL=C awk '
+cat "${files[@]}" | LC_ALL=C sort -s -k1,1 | LC_ALL=C awk -v since="$since" '
 function field(name,    rest, at, end) {
   at = index($0, " " name "=")
   if (!at) return ""
@@ -85,6 +89,8 @@ function timings(title, values, count, limits,    parts, n, i) {
   n = split(limits, parts, ",")
   for (i = 1; i <= n; i++) printf "  over %s s: %d (%s)\n", parts[i] / 1000, over(values, count, parts[i]), share(over(values, count, parts[i]), count)
 }
+$1 !~ /^20[0-9][0-9]-/ || (since != "" && $1 < since) { next }
+/eavesy started/ { running = field("version") " " field("build") }
 / WARN / { warnings++ }
 / ERROR / { errors++ }
 /dictation delivered/ {
@@ -92,7 +98,10 @@ function timings(title, values, count, limits,    parts, n, i) {
   outcome = field("delivery"); outcomes[outcome]++
   role = field("focused_role")
   if ((outcome == "no_text_box" || outcome == "draft_kept") && role ~ /^AXText/) copied_in_text_field++
-  if (outcome == "pasted" || outcome == "pasted_unverified" || outcome == "in_eavesy") placed++
+  build = running == "" ? "(not logged)" : running
+  if (!(build in build_total)) builds[++build_count] = build
+  build_total[build]++
+  if (outcome == "pasted" || outcome == "pasted_unverified" || outcome == "in_eavesy") { placed++; build_placed[build]++ }
   why = field("reason"); if (why != "") reasons[why]++
   delivered[++delivered_count] = field("delivery_ms") + 0
 }
@@ -105,6 +114,10 @@ END {
   printf "\nWhere the words ended up (%d dictations)\n", total
   for (outcome in outcomes) printf "  %-20s %5d  %s\n", outcome, outcomes[outcome], share(outcomes[outcome], total)
   printf "  placed in the app: %s    copied while a text field had focus: %d\n", share(placed, total), copied_in_text_field
+  if (build_count > 1 || running != "") {
+    printf "\nPlaced in the app, by app version\n"
+    for (i = 1; i <= build_count; i++) printf "  %-20s %5d of %-5d %s\n", builds[i], build_placed[builds[i]], build_total[builds[i]], share(build_placed[builds[i]], build_total[builds[i]])
+  }
   timings("Stop to delivered", delivered, delivered_count, "2000,4000")
   timings("Polish request", polished, polished_count, "2000,4000")
   timings("First live caption", caption, caption_count, "1500,2000")
@@ -117,4 +130,4 @@ END {
   for (why in off) printf "  %5d  %s\n", off[why], why
   printf "\nLog noise: %d warnings, %d errors\n", warnings, errors
 }
-' "${files[@]}"
+'
