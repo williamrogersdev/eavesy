@@ -22,7 +22,7 @@ export const PASTED_HOLD_MS = 1600;
 export const COPIED_HOLD_MS = 6000;
 
 /** What a finished dictation's pill says happened to the words, before its drawer is opened. */
-export type Receipt = 'pasted' | 'copied' | 'blocked';
+export type Receipt = 'pasted' | 'copied' | 'kept' | 'blocked';
 
 /** The phases that go back to the pill by themselves. */
 export const HELD_PHASES: readonly string[] = ['saved', 'done', 'failed'];

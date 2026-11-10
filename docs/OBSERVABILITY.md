@@ -52,7 +52,7 @@ after their description (`CONTENT_BEARING_MESSAGES` in `scrub.ts`).
 | `dictation_created`, `meeting_started`, `onboarding_completed` | Web Worker (activity log); `meeting_started` also fires for every session started through `/api/sessions`, with `source: desktop` for the Mac and `web` otherwise | `source` where known; `kind` (`meeting`, `recording`) for sessions |
 | `$pageview`, `$pageleave` | Browser | path, referrer origin and path |
 | `dictation_started` | Mac app | none |
-| `dictation_pasted`, `dictation_copied` | Mac app | `delivery` (`pasted`, `pasted_unverified` — pasted into a focus that did not report taking text, `in_eavesy`, `no_accessibility`, `no_text_box`), `delivery_ms` |
+| `dictation_pasted`, `dictation_copied` | Mac app | `delivery` (`pasted`, `pasted_unverified` — pasted into a focus that did not report taking text, `in_eavesy`, `no_accessibility`, `no_text_box`, `draft_kept` — the words typed as heard stayed in the field and the finished ones were copied), `delivery_ms`, `reason` (why typed words were not replaced: `focus_moved`, `unreadable`, `text_changed`, `caret_moved`, `not_taken`, `selection_refused`, `not_shown`, `typing_unfinished`, `other`; otherwise null) |
 | `recording_saved` | Mac app | `kind` (`audio`, `screen`, `dictation`), `duration_sec` |
 | `recording_started` | Mac app, when the capture engine is launched (an attempt; a later engine failure is reported as an error) | `kind` (`audio`, `screen`, `dictation`) |
 | `app_launched` | Mac app | `install_location` (`applications`, `user_applications`, `translocated`, `other_volume`, `build_folder`, `other`, `unbundled`, `unknown`), `previous_version` (what this install location ran last), `setup_completed`, `paired` |
