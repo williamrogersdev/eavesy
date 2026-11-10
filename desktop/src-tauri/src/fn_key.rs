@@ -161,7 +161,12 @@ fn step(chords: [u64; 3], held: [bool; 3], kind: u32, keycode: u16, flags: u64, 
 }
 
 fn slot(action: Action) -> usize {
-    match action { Action::Toggle => 0, Action::Dictation => 1, Action::Assistant => 2 }
+    match action {
+        Action::Toggle => 0,
+        Action::Dictation => 1,
+        Action::Assistant => 2,
+        Action::Screen => unreachable!("Record screen is never bound to fn"),
+    }
 }
 
 /// The same handlers a registered shortcut uses: open Eavesy on press, and

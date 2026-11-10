@@ -467,6 +467,24 @@ pub fn start_screen_capture(
     result
 }
 
+/// The Record screen shortcut: starts a screen recording with the mic, or
+/// stops the one running. Another capture in progress is left alone.
+pub fn toggle_screen_recording(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let now = crate::hud::current();
+        let recording = now.phase == crate::hud::Phase::Recording;
+        let result = match (recording, now.mode.as_deref(), now.session_id) {
+            (true, Some("video"), Some(session_id)) => stop_capture(app.clone(), app.state::<Captures>(), session_id).map(|_| ()),
+            (true, _, _) => return,
+            (false, _, _) => start_screen_capture(app.clone(), app.state::<Captures>(), Some(true)).map(|_| ()),
+        };
+        if let Err(error) = result {
+            crate::commands::show_notice(app, if recording { "Eavesy couldn't stop the recording" } else { "Eavesy couldn't start recording" }.into(), error);
+        }
+    });
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_capture(
     app: &AppHandle,
