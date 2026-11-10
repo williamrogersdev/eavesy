@@ -258,6 +258,7 @@ pub fn run() {
             front_window::front_window,
             commands::disconnect_account,
             commands::open_web_app,
+            commands::open_meeting,
             commands::show_setup,
             commands::cancel_pairing,
             commands::open_privacy_settings,
