@@ -137,6 +137,12 @@ mod mac {
         }
         Ok(false)
     }
+    /// `select_exactly`, asked a second time when the first didn't take:
+    /// Electron apps with a long page now and then drop a selection they
+    /// accepted. Only the selection changes, so asking again is safe.
+    unsafe fn select_surely(field: Ref, start: usize, length: usize, expected: &str) -> Result<bool, String> {
+        Ok(select_exactly(field, start, length, expected)? || select_exactly(field, start, length, expected)?)
+    }
     /// Puts the caret at `at`, waiting for the app to apply it, so a selection
     /// that landed late can't stay for the user's next key to type over.
     unsafe fn put_caret(field: Ref, at: usize) {
@@ -303,6 +309,10 @@ mod mac {
     const FIELD_APPEARS: Duration = Duration::from_millis(1500);
     /// How long the end waits for keys still landing before replacing the words.
     const LANDED_BY_END: Duration = Duration::from_millis(2500);
+    /// How many times the end tries to make the words the finished ones, and
+    /// how long after the first try another may still start.
+    const FINISH_TRIES: usize = 3;
+    const FINISH_BUDGET: Duration = Duration::from_millis(2500);
     /// How long the user's hands are off the field before live typing moves
     /// the caret back after the words and goes on.
     const QUIET: Duration = Duration::from_millis(900);
@@ -412,11 +422,24 @@ mod mac {
             }
             let field = self.field.0 as Ref;
             let value = unsafe { field_text(field) }.ok_or("the field can't be read")?;
-            let Some(found) = super::typed_passage(&value, &self.prefix, &self.suffix) else {
-                let expected = format!("{}{}{}", self.prefix, self.posted, self.suffix);
-                return Err(format!("the text around the typed words was changed ({})", super::where_it_differs(&value, &expected)));
-            };
             let selected = unsafe { selection(field) };
+            let found = match super::typed_passage(&value, &self.prefix, &self.suffix) {
+                Some(found) => found,
+                None => {
+                    // The words aren't where the caret was read to be (apps
+                    // report it late), or the text around them was edited:
+                    // they are still the dictation's wherever they read whole.
+                    let caret = selected.map(|(start, length)| start + length);
+                    let Some((prefix, suffix)) = super::relocated(&value, &self.posted, caret) else {
+                        let expected = format!("{}{}{}", self.prefix, self.posted, self.suffix);
+                        return Err(format!("the text around the typed words was changed ({})", super::where_it_differs(&value, &expected)));
+                    };
+                    tracing::info!("live typing: found the typed words elsewhere in the field");
+                    self.prefix = prefix;
+                    self.suffix = suffix;
+                    self.posted.clone()
+                }
+            };
             let now = std::time::Instant::now();
             let changed = self.seen.as_ref() != Some(&(found.clone(), selected));
             self.seen = Some((found.clone(), selected));
@@ -495,7 +518,7 @@ mod mac {
                 let length = super::units(&self.typed[keep..]);
                 // Both the range and its text: the key press below replaces
                 // exactly what is selected, and nothing else may go with it.
-                if !unsafe { select_exactly(field, from, length, &self.typed[keep..])? } {
+                if !unsafe { select_surely(field, from, length, &self.typed[keep..])? } {
                     // Never leave words selected: the user's next key would replace them.
                     unsafe { put_caret(field, start + super::units(&self.typed)) };
                     return Err("the app didn't select the words to retype".into());
@@ -599,7 +622,7 @@ mod mac {
             let field = self.field.0 as Ref;
             let start = super::units(&self.prefix);
             let length = super::units(&self.typed);
-            if !unsafe { select_exactly(field, start, length, &self.typed)? } {
+            if !unsafe { select_surely(field, start, length, &self.typed)? } {
                 unsafe { put_caret(field, start + length) };
                 return Err("the app didn't select the typed words".into());
             }
@@ -611,9 +634,44 @@ mod mac {
         /// with a line break is pasted with `paste`, as a typed one would
         /// be a Return). Nothing is selected wholesale and nothing that
         /// already reads right is touched, so the words don't flash. Ends
-        /// with the caret after them. An error leaves the words as far as
-        /// they got, the caret after them.
+        /// with the caret after them. A change that didn't take (a dropped
+        /// selection, keys slow to land, focus away for a moment) is tried
+        /// again from what the field reads then, within `FINISH_BUDGET`. An
+        /// error leaves the words as far as they got, the caret after them.
         pub fn finish(&mut self, text: &str, paste: impl Fn(&str) -> Result<(), String>) -> Result<(), String> {
+            let started = std::time::Instant::now();
+            let mut tries = 1;
+            loop {
+                let why = match self.finish_once(text, &paste) {
+                    Ok(()) => return Ok(()),
+                    Err(why) => why,
+                };
+                if tries >= FINISH_TRIES || started.elapsed() >= FINISH_BUDGET {
+                    return Err(why);
+                }
+                tracing::info!("live typing: the finished words aren't in yet ({why}); trying again");
+                tries += 1;
+                self.wait_until_still();
+            }
+        }
+
+        /// Waits (briefly) until the field reads the same twice in a row:
+        /// keys posted for a change that didn't show may still be landing.
+        fn wait_until_still(&self) {
+            let field = self.field.0 as Ref;
+            let give_up = std::time::Instant::now() + TYPED_LANDING;
+            let mut last = unsafe { field_text(field) };
+            loop {
+                std::thread::sleep(Duration::from_millis(120));
+                let now = unsafe { field_text(field) };
+                if now == last || std::time::Instant::now() >= give_up {
+                    return;
+                }
+                last = now;
+            }
+        }
+
+        fn finish_once(&mut self, text: &str, paste: &impl Fn(&str) -> Result<(), String>) -> Result<(), String> {
             self.settle()?;
             let text = super::normalize(text);
             let field = self.field.0 as Ref;
@@ -628,7 +686,7 @@ mod mac {
             for (from, to, with) in hunks.into_iter().rev() {
                 let at = start + super::units(&old[..from]);
                 let replaced = &old[from..to];
-                if !unsafe { select_exactly(field, at, super::units(replaced), replaced)? } {
+                if !unsafe { select_surely(field, at, super::units(replaced), replaced)? } {
                     unsafe { put_caret(field, start + super::units(&self.typed)) };
                     return Err("the app didn't select the words to change".into());
                 }
@@ -648,12 +706,18 @@ mod mac {
                 loop {
                     std::thread::sleep(Duration::from_millis(30));
                     let found = unsafe { field_text(field) }.and_then(|value| super::typed_passage(&value, &self.prefix, &self.suffix));
-                    if let Some(found) = found.filter(|found| super::without_spacing(found) == super::without_spacing(&expected)) {
-                        self.typed = found;
+                    if let Some(found) = found.as_ref().filter(|found| super::without_spacing(found) == super::without_spacing(&expected)) {
+                        self.typed = found.clone();
                         self.posted = self.typed.clone();
                         break;
                     }
                     if std::time::Instant::now() >= landing {
+                        // Whatever the keys made of the words so far is what
+                        // another try starts from.
+                        if let Some(found) = found {
+                            self.typed = found;
+                            self.posted = self.typed.clone();
+                        }
                         return Err("the changed words didn't show in the field".into());
                     }
                 }
@@ -1116,6 +1180,17 @@ pub fn typed_passage(value: &str, prefix: &str, suffix: &str) -> Option<String> 
     Some(middle.into())
 }
 
+/// Where live-typed `words` read whole in `value` when they aren't between
+/// the text they were typed between: the text before and after their only
+/// occurrence, or the one the caret (a UTF-16 offset) is in or right after.
+/// None when they aren't there whole, or can't be told from a copy.
+pub fn relocated(value: &str, words: &str, caret: Option<usize>) -> Option<(String, String)> {
+    if words.trim().is_empty() {
+        return None;
+    }
+    anchors(&normalize(value), words, |start, end| caret.is_some_and(|caret| (start..=end).contains(&caret)))
+}
+
 /// Where a field's text first parts from what was expected, for the log:
 /// UTF-16 offsets and the kind of character on each side there, never the
 /// text itself.
@@ -1328,6 +1403,26 @@ mod tests {
         // Only a last newline is forgiven.
         assert_eq!(typed_passage("Hello", "", "\nmore"), None);
         assert_eq!(typed_passage("Hello\n\n", "", "").as_deref(), Some("Hello\n\n"));
+    }
+
+    #[test]
+    fn typed_words_that_landed_elsewhere_are_found_again() {
+        // The caret was read a few characters short of the end: the words
+        // went in at the real one.
+        let value = "Earlier text, done.\u{a0}Send Sam the deck";
+        assert_eq!(typed_passage(value, "Earlier text, ", "done. "), None);
+        assert_eq!(relocated(value, "Send Sam the deck", Some(units(value))), Some(("Earlier text, done. ".into(), String::new())));
+        // Text typed before them moved them.
+        assert_eq!(relocated("Hi! Send it now", "Send it", None), Some(("Hi! ".into(), " now".into())));
+        // Two copies: only the one the caret is after.
+        let twice = "Send it. Send it";
+        assert_eq!(relocated(twice, "Send it", None), None);
+        assert_eq!(relocated(twice, "Send it", Some(16)), Some(("Send it. ".into(), String::new())));
+        assert_eq!(relocated(twice, "Send it", Some(8)), None, "the caret is between them");
+        // Sent, cleared, or keys still landing: not there whole.
+        assert_eq!(relocated("\n", "Send it", Some(0)), None);
+        assert_eq!(relocated("Hi! Send", "Send it", Some(8)), None);
+        assert_eq!(relocated("anything", " ", Some(3)), None);
     }
 
     #[test]
