@@ -291,9 +291,12 @@ fn process_video(app: &AppHandle, dir: &Path) -> Result<(), String> {
             text
         });
         let mut said = String::new();
+        let mut transcribing = false;
         for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
             match audio_chunks_event(&line) {
+                Some(_) if transcribing => {}
                 Some(chunks) => {
+                    transcribing = true;
                     scope.spawn(move || prefetch_transcripts(dir, &chunks, |path| crate::transcribe::run_walkthrough(app, path)));
                 }
                 None => {
@@ -321,8 +324,7 @@ fn audio_chunks_event(line: &str) -> Option<Vec<AudioChunk>> {
 fn transcript_cache(dir: &Path, index: usize) -> PathBuf {
     dir.join(format!("audio/{index:04}.transcript.json"))
 }
-/// A saved transcription worth reusing: timed, inside its chunk, and not one
-/// long block from before narration was timed by sentence.
+/// A saved transcription worth reusing: timed and inside its chunk.
 fn cached_transcript(dir: &Path, index: usize, chunk: &AudioChunk) -> Option<crate::transcribe::WalkthroughTranscription> {
     std::fs::read(transcript_cache(dir, index))
         .ok()
@@ -330,11 +332,30 @@ fn cached_transcript(dir: &Path, index: usize, chunk: &AudioChunk) -> Option<cra
         .filter(|r| {
             r.timestamp_source.as_deref().is_some_and(|s| s != "unavailable")
                 && !r.segments.is_empty()
-                && r.segments.iter().all(|s| valid_segment(s, chunk.duration_ms) && s.end_ms.saturating_sub(s.start_ms) <= LONGEST_LINE_MS)
+                && r.segments.iter().all(|s| valid_segment(s, chunk.duration_ms))
         })
 }
-/// Longer than a spoken sentence: a block to transcribe again.
+/// Longer than a spoken sentence: a block from before narration was timed
+/// by sentence.
 const LONGEST_LINE_MS: u64 = 20_000;
+/// Asking for the context again drops saved transcriptions that are one long
+/// block, so they are fetched once more with sentence timing. Only a retry
+/// does this: a block the service still returns whole is kept after that.
+fn forget_long_blocks(dir: &Path) {
+    let Ok(entries) = std::fs::read_dir(dir.join("audio")) else { return };
+    for path in entries.filter_map(|entry| entry.ok().map(|entry| entry.path())) {
+        if !path.to_string_lossy().ends_with(".transcript.json") {
+            continue;
+        }
+        let long = std::fs::read(&path)
+            .ok()
+            .and_then(|b| serde_json::from_slice::<crate::transcribe::WalkthroughTranscription>(&b).ok())
+            .is_some_and(|r| r.segments.iter().any(|s| s.end_ms.saturating_sub(s.start_ms) > LONGEST_LINE_MS));
+        if long {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
 /// Fills the transcription cache ahead of `transcribe_chunks`, which reads it.
 /// A failure here is left for that pass to retry and report.
 fn prefetch_transcripts(
@@ -346,7 +367,13 @@ fn prefetch_transcripts(
         if cached_transcript(dir, index, chunk).is_some() {
             continue;
         }
-        let Ok(result) = transcribe(&dir.join(&chunk.path)) else { continue };
+        let result = match transcribe(&dir.join(&chunk.path)) {
+            Ok(result) => result,
+            Err(error) => {
+                tracing::warn!("early walkthrough transcription failed at {}: {error}", timestamp(chunk.start_ms));
+                continue;
+            }
+        };
         if let Ok(bytes) = serde_json::to_vec(&result) {
             let _ = atomic_write(&transcript_cache(dir, index), &bytes);
         }
@@ -768,7 +795,10 @@ pub fn recording_context(app: AppHandle, id: String) -> Result<String, String> {
 }
 #[tauri::command(async)]
 pub fn retry_walkthrough(app: AppHandle, id: String) -> Result<(), String> {
-    recording(&app, &id)?;
+    let rec = recording(&app, &id)?;
+    if let Ok(dir) = folder(&rec) {
+        forget_long_blocks(&dir);
+    }
     crate::store::set_status(&app, &id, "processing")?;
     spawn(app, id);
     Ok(())
@@ -1056,8 +1086,16 @@ mod tests {
         let mut bundle = fixture();
         bundle.segments.clear();
         transcribe_chunks(&dir, &mut bundle, &chunks, |_| { calls += 1; Ok(response(3000)) }, || {}).unwrap();
-        assert_eq!(calls, 1, "a thirty-second block is not kept");
+        assert_eq!(calls, 0, "what was fetched early is not paid for twice");
+        assert_eq!(bundle.segments[0].end_ms, 31_000);
+
+        forget_long_blocks(&dir);
+        let mut bundle = fixture();
+        bundle.segments.clear();
+        transcribe_chunks(&dir, &mut bundle, &chunks, |_| { calls += 1; Ok(response(3000)) }, || {}).unwrap();
+        assert_eq!(calls, 1, "asking again fetches a thirty-second block once more");
         assert_eq!(bundle.segments[0].end_ms, 3000);
+        forget_long_blocks(&dir);
 
         prefetch_transcripts(&dir, &chunks, |_| panic!("already saved"));
         let mut again = fixture();

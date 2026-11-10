@@ -180,9 +180,9 @@ pub fn load(folder: &Path) -> Option<Moments> {
     serde_json::from_slice(&std::fs::read(folder.join("moments.json")).ok()?).ok()
 }
 
-/// A window above the normal level that fills its display is an overlay to
-/// look through (the system's capture overlay, a screen dimmer), not what
-/// was clicked: anything it showed would hide every app.
+/// A window above the normal level that fills its display. From a helper
+/// with no Dock icon (the system's capture overlay, a screen dimmer) it is
+/// an overlay to look through, not what was clicked.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn covers_display(layer: f64, window: Rect, display: Rect) -> bool {
     layer > 0.0 && window.x <= display.x && window.y <= display.y
@@ -860,17 +860,33 @@ mod imp {
                     return Err(Own);
                 }
                 let layer = number(CFDictionaryGetValue(window, kCGWindowLayer)).unwrap_or(0.0);
-                if super::covers_display(layer, rect, display) {
-                    continue;
-                }
                 let place = running_app(pid);
                 if place.bundle_id.is_none() {
+                    continue;
+                }
+                // A presentation or game fills the display too; those are apps
+                // with a Dock icon, and what was clicked is theirs.
+                if super::covers_display(layer, rect, display) && !in_dock(pid) {
                     continue;
                 }
                 return Ok(Some((pid, place)));
             }
         }
         Ok(None)
+    }
+
+    /// Whether the process is an ordinary app with a Dock icon.
+    fn in_dock(pid: i32) -> bool {
+        use tauri_nspanel::cocoa::base::{id, nil};
+        use tauri_nspanel::objc::{class, msg_send, rc::autoreleasepool, sel, sel_impl};
+        autoreleasepool(|| unsafe {
+            let app: id = msg_send![class!(NSRunningApplication), runningApplicationWithProcessIdentifier: pid];
+            if app == nil {
+                return false;
+            }
+            let policy: isize = msg_send![app, activationPolicy];
+            policy == 0
+        })
     }
 
     /// What accessibility says is at a point, for places no app window covers
@@ -893,7 +909,8 @@ mod imp {
         if AXUIElementGetPid(hit.0, &mut pid) != 0 || pid == std::process::id() as i32 {
             return None;
         }
-        Some((hit, running_app(pid)))
+        let place = running_app(pid);
+        place.bundle_id.is_some().then_some((hit, place))
     }
 
     unsafe fn number(value: CFTypeRef) -> Option<f64> {
