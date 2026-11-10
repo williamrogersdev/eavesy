@@ -183,6 +183,25 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+/* What kind of capture this is, as a coloured index tab: the one place a row carries colour. */
+[data-kind='voice'] { --ev-kind: var(--ev-voice); --ev-kind-soft: var(--ev-voice-soft); }
+[data-kind='meetings'] { --ev-kind: var(--ev-meeting); --ev-kind-soft: var(--ev-meeting-soft); }
+[data-kind='screens'] { --ev-kind: var(--ev-screen); --ev-kind-soft: var(--ev-screen-soft); }
+[data-kind='notes'] { --ev-kind: var(--ev-note); --ev-kind-soft: var(--ev-note-soft); }
+.ev-rh-tab {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 2px;
+  border-radius: 6px 6px 6px 2px;
+  background: var(--ev-kind-soft, var(--ev-well));
+  color: var(--ev-kind, var(--ev-ink-2));
+}
+.ev-row[data-kind] .ev-rh-kind { color: var(--ev-kind); }
+.ev-kind-dot { flex: none; width: 7px; height: 7px; border-radius: 2px 2px 2px 1px; background: var(--ev-kind); }
+.ev-listbar .ev-chip[data-kind][aria-pressed='true'] { background: var(--ev-kind-soft); color: var(--ev-kind); }
 .ev-rh-icon { flex: none; }
 .ev-rh-kind { color: var(--ev-ink-2); font: 600 11.5px/1 var(--ev-font-round); overflow: hidden; text-overflow: ellipsis; }
 .ev-rh-device { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -216,7 +235,7 @@
 .ev-row-title > button:hover { text-decoration: underline; text-decoration-color: var(--ev-line-strong); text-underline-offset: 3px; }
 .ev-row-title > button:focus-visible { outline: none; box-shadow: var(--ev-focus); border-radius: 4px; }
 /* What the meeting decided and left to do, under its overview. */
-.ev-brief { display: grid; gap: 8px; margin: 8px 0 2px; padding-left: 10px; border-left: 2px solid var(--ev-line-strong); }
+.ev-brief { display: grid; gap: 8px; margin: 8px 0 2px; padding-left: 10px; border-left: 2px solid var(--ev-kind, var(--ev-line-strong)); }
 .ev-brief h4 { margin: 0 0 2px; color: var(--ev-ink-2); font: var(--ev-t-group); }
 .ev-brief ul { display: grid; gap: 3px; margin: 0; padding: 0 0 0 14px; list-style: disc; color: var(--ev-ink); font: var(--ev-t-body); }
 .ev-brief li::marker { color: var(--ev-ink-3); }

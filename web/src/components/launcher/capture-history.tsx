@@ -543,9 +543,9 @@ const CaptureRow = memo(function CaptureRow({
   else body = <div className="ev-body" data-muted="true">Saved on this Mac.</div>;
 
   return (
-    <article className="ev-row" data-menu={menuOpen || trayOpen || attached} data-attached={attached || undefined} aria-label={`${kind.label}, ${timeOfDay(rec.startedAt)}`}>
+    <article className="ev-row" data-menu={menuOpen || trayOpen || attached} data-attached={attached || undefined} data-kind={filterOf(rec)} aria-label={`${kind.label}, ${timeOfDay(rec.startedAt)}`}>
       <header className="ev-rh">
-        <Icon className="ev-rh-icon" size={13} strokeWidth={1.75} aria-hidden />
+        <span className="ev-rh-tab" aria-hidden><Icon size={12} strokeWidth={2} /></span>
         <span className="ev-rh-kind">{kind.label}</span>
         {timed && <span>· {clock(rec.durationSec)}</span>}
         {rec.device && <span className="ev-rh-device" title={`Recorded on ${rec.device}`}>· {rec.device}</span>}
@@ -845,10 +845,12 @@ export const CaptureHistory = memo(function CaptureHistory({
             <Chip
               key={f.value}
               data-all={f.value === 'all' || undefined}
+              data-kind={f.value === 'all' ? undefined : f.value}
               selected={filter === f.value}
               count={searching && !onlyPrompts ? counts[f.value] : undefined}
               onClick={() => setFilter(filter === f.value ? 'all' : f.value)}
             >
+              {f.value !== 'all' && <span className="ev-kind-dot" aria-hidden />}
               {f.label}
             </Chip>
           ))}

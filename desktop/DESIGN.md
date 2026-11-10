@@ -186,6 +186,11 @@ alias block so old classes still work.
   --ev-manila-soft: #F6E8CC;  /* highlight wash, search hits */
   --ev-manila-ink:  #6E4A12;  /* text on manila-soft */
   --ev-mascot-body:#2B2523; --ev-mascot-band:#4A403C; --ev-mascot-eye:#FBF7F0;
+  /* kinds: index-tab inks, one per kind of capture (dark values in tokens.css) */
+  --ev-voice:   #2F66C8;  --ev-voice-soft:   #E3EBFA;  /* voice notes, dictation */
+  --ev-meeting: #7A4BB5;  --ev-meeting-soft: #ECE4F7;  /* meetings */
+  --ev-screen:  #0F7F8C;  --ev-screen-soft:  #DCF0F1;  /* screenshots, videos */
+  --ev-note:    #A8741A;  --ev-note-soft:    #F6E8CC;  /* notes */
   /* meaning */
   --ev-rec:        #FF5A3C;  /* the coral light: RECORDING ONLY. Same as web --signal */
   --ev-rec-soft:   #FFE3DA;
@@ -242,6 +247,21 @@ just warm. Warmth must not depend on the wallpaper. The native material is
 `Popover`, which follows the system appearance; the always-dark `HudWindow`
 material is for the pill only (under paper it turned the panel into a black
 slab).
+
+**Colour says what a thing is.** Paper and ink carry the text; colour is
+kept for the index tabs. Each kind of capture has one ink (voice blue, meeting
+violet, screen teal, note manila) and wears it in three places only: the small
+tab that holds a row's icon and its kind label, the dot on its filter chip
+(the chip fills with the soft tint while chosen), and the rule beside a
+meeting's details. Settings files its sections in four groups (Recording, Your
+words, Connected, This app) that borrow the same four inks for their icon
+tiles; the open section's tile is filled. A kind ink never marks a state:
+coral is still only "recording now", leaf "granted", warn "needs attention".
+Body text, buttons and switches stay ink and coat.
+
+A meeting row leads with the meeting's name and its summary's overview;
+decisions and action items sit behind one line, the transcript behind
+another, and the name opens the meeting on eavesy.com.
 
 **One surface, one mascot, one live signal.** (From
 [assistant.md](../docs/plans/assistant.md), Visual rules.)
