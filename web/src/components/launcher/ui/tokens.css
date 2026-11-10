@@ -36,13 +36,13 @@
   --ev-warn-ink: #9a5b00; /* errors use warn, not coral: coral means recording */
   --ev-warn-soft: #fff0d6;
   /* kinds: index-tab inks, one per kind of capture. They say what a thing is, never a state. */
-  --ev-voice: #2f66c8; /* voice notes and dictation: blue ink */
+  --ev-voice: #2a5cb8; /* voice notes and dictation: blue ink */
   --ev-voice-soft: #e3ebfa;
   --ev-meeting: #7a4bb5; /* meetings: violet */
   --ev-meeting-soft: #ece4f7;
-  --ev-screen: #0f7f8c; /* screenshots and videos: teal */
+  --ev-screen: #0a6772; /* screenshots and videos: teal */
   --ev-screen-soft: #dcf0f1;
-  --ev-note: #a8741a; /* notes: the manila folder's own ink */
+  --ev-note: #85580c; /* notes: the manila folder's own ink */
   --ev-note-soft: #f6e8cc;
   /* HUD glass (same in both modes: it sits over any app) */
   --ev-hud: rgb(22 19 18 / 0.97);

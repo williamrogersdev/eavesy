@@ -187,10 +187,10 @@ alias block so old classes still work.
   --ev-manila-ink:  #6E4A12;  /* text on manila-soft */
   --ev-mascot-body:#2B2523; --ev-mascot-band:#4A403C; --ev-mascot-eye:#FBF7F0;
   /* kinds: index-tab inks, one per kind of capture (dark values in tokens.css) */
-  --ev-voice:   #2F66C8;  --ev-voice-soft:   #E3EBFA;  /* voice notes, dictation */
+  --ev-voice:   #2A5CB8;  --ev-voice-soft:   #E3EBFA;  /* voice notes, dictation */
   --ev-meeting: #7A4BB5;  --ev-meeting-soft: #ECE4F7;  /* meetings */
-  --ev-screen:  #0F7F8C;  --ev-screen-soft:  #DCF0F1;  /* screenshots, videos */
-  --ev-note:    #A8741A;  --ev-note-soft:    #F6E8CC;  /* notes */
+  --ev-screen:  #0A6772;  --ev-screen-soft:  #DCF0F1;  /* screenshots, videos */
+  --ev-note:    #85580C;  --ev-note-soft:    #F6E8CC;  /* notes */
   /* meaning */
   --ev-rec:        #FF5A3C;  /* the coral light: RECORDING ONLY. Same as web --signal */
   --ev-rec-soft:   #FFE3DA;

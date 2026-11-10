@@ -193,7 +193,7 @@ export function meetingBrief(summary: string | undefined): MeetingBrief | null {
       sections.push(section);
       continue;
     }
-    const text = inline(line.replace(/^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, ''));
+    const text = inline(section ? line.replace(/^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?/, '') : line.replace(/^[-*+]\s+/, ''));
     if (!text) continue;
     if (section) section.items.push(text);
     else overview.push(text);

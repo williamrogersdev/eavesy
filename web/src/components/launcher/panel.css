@@ -202,7 +202,6 @@
 .ev-row[data-kind] .ev-rh-kind { color: var(--ev-kind); }
 .ev-kind-dot { flex: none; width: 7px; height: 7px; border-radius: 2px 2px 2px 1px; background: var(--ev-kind); }
 .ev-listbar .ev-chip[data-kind][aria-pressed='true'] { background: var(--ev-kind-soft); color: var(--ev-kind); }
-.ev-rh-icon { flex: none; }
 .ev-rh-kind { color: var(--ev-ink-2); font: 600 11.5px/1 var(--ev-font-round); overflow: hidden; text-overflow: ellipsis; }
 .ev-rh-device { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .ev-rh-time { margin-left: auto; }

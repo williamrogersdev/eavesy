@@ -296,6 +296,8 @@ function Brief({ brief, query }: { brief: MeetingBrief; query: string }) {
   const hit = matchesEveryWord(query, brief.sections.flatMap((section) => section.items).join(' '));
   const [chosen, setChosen] = useState<boolean | null>(null);
   const shown = chosen ?? hit;
+  // A new search decides again, so a hit is never left folded away.
+  useEffect(() => setChosen(null), [query]);
   return (
     <>
       {brief.overview && <Body text={brief.overview} query={query} />}
@@ -303,11 +305,11 @@ function Brief({ brief, query }: { brief: MeetingBrief; query: string }) {
         <>
           {shown && (
             <div className="ev-brief">
-              {brief.sections.map((section) => (
-                <section key={section.heading}>
+              {brief.sections.map((section, index) => (
+                <section key={`${index}-${section.heading}`}>
                   <h4>{section.heading}</h4>
                   <ul>
-                    {section.items.map((item, index) => <li key={index} dir="auto"><Highlighted text={item} query={query} /></li>)}
+                    {section.items.map((item, at) => <li key={at} dir="auto"><Highlighted text={item} query={query} /></li>)}
                   </ul>
                 </section>
               ))}
@@ -461,6 +463,7 @@ const CaptureRow = memo(function CaptureRow({
   const title = meeting ? meetingTitle(current) : null;
   const brief = useMemo(() => (meeting ? meetingBrief(current.summary) : null), [meeting, current.summary]);
   const [transcriptChosen, setTranscriptChosen] = useState<boolean | null>(null);
+  useEffect(() => setTranscriptChosen(null), [query]);
   const open = () => runTask(() => openMeeting(rec.id), 'Couldn’t open that meeting');
   const canOpen = meeting && signedIn === true && rec.status !== 'recording';
   const rewritable = !!text && !image && !video;
@@ -530,6 +533,7 @@ const CaptureRow = memo(function CaptureRow({
     />}
     {signedIn === true && rec.status === 'processing' && <div className="ev-sub">First pass. Refining in the cloud…</div>}
   </>;
+  else if (brief) body = <Brief brief={brief} query={query} />;
   else if (signedIn === false && spoken && rec.status !== 'complete') body = (
     <div className="ev-body" data-muted="true">
       Saved on this Mac. <button type="button" className="ev-link" onClick={onSignIn}>Sign in</button> to get a transcript.

@@ -587,8 +587,8 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
             const items = shown.filter((item) => item.group === group.id);
             if (!items.length) return null;
             return (
-              <div key={group.id} className="ev-settings-group" data-group={group.id} role="group" aria-label={group.label}>
-                <h2>{group.label}</h2>
+              <div key={group.id} className="ev-settings-group" data-group={group.id} role="group" aria-labelledby={`settings-group-${group.id}`}>
+                <h2 id={`settings-group-${group.id}`}>{group.label}</h2>
                 {items.map(({ id, label, icon: Icon }) => (
                   <button key={id} type="button" aria-current={section === id ? 'page' : undefined} aria-controls={`settings-${id}`} onClick={() => go(id)}>
                     <span className="ev-settings-tile" aria-hidden><Icon size={14} strokeWidth={2} /></span>{label}
