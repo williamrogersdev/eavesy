@@ -26,7 +26,14 @@ if let index = CommandLine.arguments.firstIndex(of: "--walkthrough"),
     let video = URL(fileURLWithPath: CommandLine.arguments[index + 1])
     let folder = URL(fileURLWithPath: CommandLine.arguments[out + 1])
     Task {
-        do { try await WalkthroughProcessor.run(video: video, folder: folder); exit(0) }
+        do {
+            try await WalkthroughProcessor.run(video: video, folder: folder) { chunks in
+                EventEmitter.emit(["event": "audioChunks", "audioChunks": chunks.map {
+                    ["path": $0.path, "startMs": $0.startMs, "durationMs": $0.durationMs] as [String: Any]
+                }])
+            }
+            exit(0)
+        }
         catch { fail(error.localizedDescription) }
     }
     RunLoop.main.run()

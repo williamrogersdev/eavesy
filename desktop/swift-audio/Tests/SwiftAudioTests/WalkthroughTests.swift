@@ -66,7 +66,9 @@ final class WalkthroughTests: XCTestCase {
         let stats = try JSONSerialization.jsonObject(with: Data(contentsOf: URL(fileURLWithPath: video.path + ".capture.json"))) as! [String: Any]
         XCTAssertGreaterThan(stats["microphoneSamplesWritten"] as! Int, 48_000)
         XCTAssertGreaterThan(stats["microphonePeakRms"] as! Double, 0.05)
-        try await WalkthroughProcessor.run(video: video, folder: dir, audioChunkSeconds: 2)
+        var early: [WalkthroughProcessor.AudioChunk] = []
+        try await WalkthroughProcessor.run(video: video, folder: dir, audioChunkSeconds: 2) { early = $0 }
+        XCTAssertEqual(early.map(\.startMs), [0, 2000])
         let manifest = try JSONDecoder().decode(WalkthroughProcessor.Result.self, from: Data(contentsOf: dir.appendingPathComponent("visual.json")))
         XCTAssertGreaterThan(manifest.durationMs, 2800)
         XCTAssertEqual(manifest.audioChunks.count, 2)

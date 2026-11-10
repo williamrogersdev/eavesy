@@ -16,6 +16,17 @@ const NOTES_FILE: &str = "notes.md";
 const MANIFEST_FILE: &str = "meeting.json";
 const SUMMARY_PLACEHOLDER: &str =
     "# Brief\n\nEavesy is processing this recording. Your brief will appear here automatically.\n";
+const NO_BRIEF: &str = "# Brief\n\nEavesy doesn't write a brief for screen recordings. What was said and shown is in context.md.\n";
+
+/// The brief, or what stands in for it. A screen recording never gets one,
+/// so once it is processed the file stops saying one is on its way.
+fn summary_text(recording: &StoredRecording) -> &str {
+    match recording.summary.as_deref() {
+        Some(summary) => summary,
+        None if recording.source == "screen" && !matches!(recording.status.as_str(), "recording" | "processing") => NO_BRIEF,
+        None => SUMMARY_PLACEHOLDER,
+    }
+}
 const TRANSCRIPT_PLACEHOLDER: &str = "# Transcript\n\nEavesy is processing this recording. The transcript will appear here automatically.\n";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,7 +160,7 @@ pub fn persist_recording_artifacts<R: Runtime>(
         .map_err(|error| format!("could not create recording folder: {error}"))?;
 
     let started = started_at(recording.started_at_ms);
-    let summary = recording.summary.as_deref().unwrap_or(SUMMARY_PLACEHOLDER);
+    let summary = summary_text(recording);
     let transcript = recording
         .transcript
         .as_deref()
@@ -285,12 +296,7 @@ pub(crate) fn expected_editable_content(
     role: &str,
 ) -> Option<String> {
     match role {
-        "summary" => Some(
-            recording
-                .summary
-                .clone()
-                .unwrap_or_else(|| SUMMARY_PLACEHOLDER.to_string()),
-        ),
+        "summary" => Some(summary_text(recording).to_string()),
         "transcript" => Some(
             recording
                 .transcript
