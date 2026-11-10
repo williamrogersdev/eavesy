@@ -197,13 +197,16 @@ pub enum Delivery {
     /// On the clipboard: no app to paste into was noted at the start, or
     /// another app is in front now.
     CopiedNoTextBox,
+    /// The words typed as heard stayed in the field, because they could not
+    /// be replaced; the finished ones are on the clipboard.
+    DraftKept,
 }
 
 impl Delivery {
     fn event(self) -> &'static str {
         match self {
             Delivery::Pasted | Delivery::InEavesy => "dictation_pasted",
-            Delivery::CopiedNoAccessibility | Delivery::CopiedNoTextBox => "dictation_copied",
+            Delivery::CopiedNoAccessibility | Delivery::CopiedNoTextBox | Delivery::DraftKept => "dictation_copied",
         }
     }
 
@@ -213,6 +216,7 @@ impl Delivery {
             Delivery::InEavesy => "in_eavesy",
             Delivery::CopiedNoAccessibility => "no_accessibility",
             Delivery::CopiedNoTextBox => "no_text_box",
+            Delivery::DraftKept => "draft_kept",
         }
     }
 
@@ -222,8 +226,28 @@ impl Delivery {
             Delivery::Pasted | Delivery::InEavesy => None,
             Delivery::CopiedNoAccessibility => Some("Copied — allow Accessibility to paste automatically"),
             Delivery::CopiedNoTextBox => Some("Copied — press ⌘V to paste"),
+            Delivery::DraftKept => Some("Left as typed — the tidied version is on the clipboard"),
         }
     }
+}
+
+/// Why the words typed as heard were not replaced, as one of a few fixed
+/// names: the full reason goes to the log, never to telemetry.
+fn not_replaced_because(why: &str) -> &'static str {
+    const NAMES: [(&str, &str); 11] = [
+        ("caret moved", "caret_moved"),
+        ("didn't take", "not_taken"),
+        ("no longer has the keyboard", "focus_moved"),
+        ("lost the keyboard", "focus_moved"),
+        ("couldn't be read back", "unreadable"),
+        ("edited", "text_changed"),
+        ("changed", "text_changed"),
+        ("select", "selection_refused"),
+        ("didn't show", "not_shown"),
+        ("didn't finish", "typing_unfinished"),
+        ("stopped", "typing_unfinished"),
+    ];
+    NAMES.iter().find(|(part, _)| why.contains(part)).map_or("other", |(_, name)| name)
 }
 
 fn delivery(trusted: bool, target: Option<Target>, front: Option<Target>) -> Delivery {
@@ -318,6 +342,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         }
         let (front, role) = target.and_then(|_| front_app_and_role()).map_or((None, None), |(front, role)| (Some(front), role));
         let mut how = if in_eavesy { Delivery::InEavesy } else { delivery(accessibility_trusted(), target, front) };
+        let mut reason = None;
         match how {
             // The box acknowledges delivery; otherwise the clipboard remains available.
             Delivery::InEavesy if !hand_to_panel(&app, &session_id, &text) => {
@@ -345,8 +370,9 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                     Typed::Unknown => Err("live typing didn't finish".to_string()),
                     Typed::Nothing => crate::commands::paste_text(&app, &text).map(|()| None),
                 };
+                let not_replaced = delivered.as_ref().err().map(|why| not_replaced_because(why));
                 if typed_live {
-                    crate::telemetry::track("dictation_typed_live", serde_json::json!({ "replaced": delivered.is_ok() }));
+                    crate::telemetry::track("dictation_typed_live", serde_json::json!({ "replaced": delivered.is_ok(), "reason": not_replaced }));
                 }
                 // Only once the field reads the finished words in place of the
                 // typed ones: a send never goes out with the draft or a
@@ -365,12 +391,17 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                     *PASTED.lock().unwrap_or_else(|e| e.into_inner()) = Some((session_id.clone(), text.clone(), project.clone()));
                 } else {
                     // Say what actually stopped it: the permission, or anything else.
-                    how = if accessibility_trusted() { Delivery::CopiedNoTextBox } else { Delivery::CopiedNoAccessibility };
+                    how = match (accessibility_trusted(), typed_live) {
+                        (false, _) => Delivery::CopiedNoAccessibility,
+                        (true, true) => Delivery::DraftKept,
+                        (true, false) => Delivery::CopiedNoTextBox,
+                    };
+                    reason = not_replaced;
                 }
             }
             _ => {}
         }
-        if matches!(how, Delivery::CopiedNoAccessibility | Delivery::CopiedNoTextBox) {
+        if matches!(how, Delivery::CopiedNoAccessibility | Delivery::CopiedNoTextBox | Delivery::DraftKept) {
             // A failed paste may have left the text on the clipboard already;
             // writing it again makes sure it is there whatever step failed,
             // and that no pending restore takes it away again.
@@ -384,10 +415,10 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         let label = if how == Delivery::Pasted && !says_text(role.as_deref()) { "pasted_unverified" } else { how.label() };
         tracing::info!(
             session_id = %session_id, delivery = label, delivery_ms, corrected = source_text.is_some(),
-            target_pid = target.map(|t| t.pid), front_pid = front.map(|t| t.pid), focused_role = role.as_deref(),
+            target_pid = target.map(|t| t.pid), front_pid = front.map(|t| t.pid), focused_role = role.as_deref(), reason,
             "dictation delivered"
         );
-        crate::telemetry::track(how.event(), serde_json::json!({ "delivery": label, "delivery_ms": delivery_ms }));
+        crate::telemetry::track(how.event(), serde_json::json!({ "delivery": label, "delivery_ms": delivery_ms, "reason": reason }));
         // Never over a newer recording that is running or being written down.
         let current = crate::hud::current();
         let busy_elsewhere = matches!(current.phase, crate::hud::Phase::Recording | crate::hud::Phase::Transcribing)
@@ -807,6 +838,23 @@ mod tests {
         assert_eq!(delivery(false, None, None), Delivery::CopiedNoAccessibility);
         assert_eq!(Delivery::CopiedNoAccessibility.notice(), Some("Copied — allow Accessibility to paste automatically"));
         assert_eq!(Delivery::Pasted.notice(), None);
+    }
+
+    #[test]
+    fn a_draft_left_in_the_field_says_so_and_names_why() {
+        assert_eq!(Delivery::DraftKept.label(), "draft_kept");
+        assert_eq!(Delivery::DraftKept.event(), "dictation_copied");
+        assert!(Delivery::DraftKept.notice().is_some_and(|notice| notice.starts_with("Left as typed")));
+        assert_ne!(Delivery::DraftKept.notice(), Delivery::CopiedNoTextBox.notice());
+        assert_eq!(not_replaced_because("the field no longer has the keyboard"), "focus_moved");
+        assert_eq!(not_replaced_because("the typed words couldn't be read back"), "unreadable");
+        assert_eq!(not_replaced_because("the text around the typed words was changed (at 3 units)"), "text_changed");
+        assert_eq!(not_replaced_because("the user edited the words"), "text_changed");
+        assert_eq!(not_replaced_because("the app didn't select the typed words"), "selection_refused");
+        assert_eq!(not_replaced_because("live typing didn't finish"), "typing_unfinished");
+        assert_eq!(not_replaced_because("the caret moved"), "caret_moved");
+        assert_eq!(not_replaced_because("the app didn't take the typed words"), "not_taken");
+        assert_eq!(not_replaced_because("something new"), "other");
     }
 
     #[test]

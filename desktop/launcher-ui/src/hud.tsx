@@ -181,7 +181,7 @@ function browserPreviewState(): HudState | null {
     mode,
     notice: params.get('notice'),
     // Rust's reading of a finished dictation (`hud::shown`), stood in for here.
-    receipt: phase !== 'done' || mode !== 'audio' ? null : params.get('notice')?.includes('Accessibility') ? 'blocked' : params.has('notice') ? 'copied' : 'pasted',
+    receipt: phase !== 'done' || mode !== 'audio' ? null : params.get('notice')?.includes('Accessibility') ? 'blocked' : params.get('notice')?.startsWith('Left as typed') ? 'kept' : params.has('notice') ? 'copied' : 'pasted',
     // The server's word on the tone (`?style=concise&forai`; `?plain` when the model didn't apply it, `?untold` when it didn't say).
     written: phase === 'done' && mode === 'audio' && !params.has('untold') ? { ...browserPreviewWriting() ?? PLAIN, projectId: params.get('project'), applied: !params.has('plain') } : null,
     opensItself: phase === 'done' && mode === 'audio' && !params.has('opening') && !params.has('receipt') && !params.get('notice')?.includes('Accessibility'),
@@ -835,6 +835,7 @@ function Hud() {
   const editable = !!source || !!ownDraft;
   const notice = state.notice ?? null;
   const notPasted = !!notice?.includes('Accessibility');
+  const draftKept = state.receipt === 'kept';
   const busy = starting || state.phase === 'transcribing';
   const keys = eavesy ? talkShortcut : shortcut;
   const kbd = keys ? ` (${keys})` : '';
@@ -1328,6 +1329,7 @@ function Hud() {
     // The words are already where they went: say so on the pill, and keep them one hover away.
     const stamp = receipt === 'blocked' ? <Stamp tone="warn">Not pasted</Stamp>
       : receipt === 'copied' ? <><Stamp tone="manila">Copied</Stamp><span className="ctl-say ctl-quiet">⌘V to paste</span></>
+      : receipt === 'kept' ? <><Stamp tone="manila">As typed</Stamp><span className="ctl-say ctl-quiet" title={notice ?? undefined}>Tidied on clipboard</span></>
       : <Stamp tone="leaf">Pasted<span className="ctl-stamp-sub"> · {wordCount(words)}</span></Stamp>;
     top = (
       <>
@@ -1338,14 +1340,14 @@ function Hud() {
       </>
     );
   } else if (state.phase === 'done' && (size === 'wide' || size === 'result')) {
-    const stamp = learnedStamp ?? (notPasted ? <Stamp tone="warn">Not pasted</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted<span className="ctl-stamp-sub"> · {wordCount(words)}</span></Stamp>);
+    const stamp = learnedStamp ?? (notPasted ? <Stamp tone="warn">Not pasted</Stamp> : draftKept ? <Stamp tone="manila">As typed</Stamp> : notice ? <Stamp tone="manila">Copied</Stamp> : <Stamp tone="leaf">Pasted<span className="ctl-stamp-sub"> · {wordCount(words)}</span></Stamp>);
     // A rewrite's own stamp outranks the save it starts, so "Updated" doesn't flicker through "Saving…".
     const status = saveError ? <span role="alert"><span className="ctl-say ctl-warn">Save failed </span><button ref={retrySaveButton} className="ctl-btn ctl-warn" title={saveError} onClick={() => void flushEdit()}>Retry save</button></span>
       : errorSay ?? toneStamp ?? (saving ? <span className="ctl-say ctl-quiet">Saving…</span> : stamp);
     top = (
       <>
         {status}
-        {notice && !notPasted && !learnedStamp && !toneStamp && !errorSay && <span className="ctl-say ctl-quiet">⌘V to paste</span>}
+        {notice && !notPasted && !learnedStamp && !toneStamp && !errorSay && <span className="ctl-say ctl-quiet">{draftKept ? 'Tidied on clipboard' : '⌘V to paste'}</span>}
         <span className="ctl-fill" />
         {notPasted && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
         {size === 'result' && <button type="button" className="ctl-btn ctl-icon" onClick={() => act('show_launcher')} aria-label="Open in Eavesy" title="Open in Eavesy, with the whole transcript"><Maximize2 className="h-3.5 w-3.5" /></button>}

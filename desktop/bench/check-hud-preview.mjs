@@ -22,7 +22,7 @@ try {
     window.__qaLiveEdits=[];
     window.__qaFailSave=false;
     // As hud::shown sends it: Rust's receipt, and whether it opens by itself.
-    const shown = (s) => { const words=s.phase==='done'&&s.mode==='audio'&&!!s.message?.trim(); const receipt=!words?null:s.notice?.includes('Accessibility')?'blocked':s.notice?'copied':'pasted'; return {...s,receipt,opensItself:localStorage.getItem('qa-preview')==='on'&&!!s.sessionId&&(receipt==='pasted'||receipt==='copied')}; };
+    const shown = (s) => { const words=s.phase==='done'&&s.mode==='audio'&&!!s.message?.trim(); const receipt=!words?null:s.notice?.includes('Accessibility')?'blocked':s.notice?.startsWith('Left as typed')?'kept':s.notice?'copied':'pasted'; return {...s,receipt,opensItself:localStorage.getItem('qa-preview')==='on'&&!!s.sessionId&&(receipt==='pasted'||receipt==='copied'||receipt==='kept')}; };
     window.__qaEmit = (next) => { state=next; (listeners.get('hud:state')??[]).forEach(fn=>fn({payload:shown(state)})); };
     window.__TAURI__ = {
       core:{invoke:async (cmd,args) => {
@@ -317,6 +317,13 @@ try {
   await page.locator('[data-size="receipt"]').waitFor();
   assert.equal(await editor.count(),0);
   console.log('PASS: a result without a recording ID shows only its receipt, with nothing to edit');
+  await page.evaluate(() => window.__qaEmit({phase:'done',sessionId:null,mode:'audio',message:'A draft that stayed as typed',notice:'Left as typed — the tidied version is on the clipboard',startedAtMs:null}));
+  await page.getByText('As typed', {exact:true}).waitFor();
+  const keptSay = page.getByText('Tidied on clipboard', {exact:true});
+  await keptSay.waitFor();
+  assert.equal(await page.getByText('⌘V to paste').count(), 0);
+  assert.ok(await keptSay.evaluate((say) => say.scrollWidth <= say.clientWidth), 'the kept-draft line is cut off on the receipt pill');
+  console.log('PASS: a draft left as typed says so, and does not ask for a second paste');
   await page.evaluate(() => window.__qaEmit({phase:'failed',sessionId:'qa-failed',mode:'audio',message:"Didn't hear anything",notice:null,startedAtMs:null}));
   await page.locator('[data-phase="failed"][data-size="wide"]').waitFor();
   await page.clock.runFor(5_000);

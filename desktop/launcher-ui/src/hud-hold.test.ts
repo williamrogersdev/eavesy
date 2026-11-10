@@ -25,6 +25,7 @@ test('a receipt keeps its own time, whatever the pointer does', () => {
   expect(holdMs('done', 'away', 0, 0, 'pasted')).toBe(PASTED_HOLD_MS);
   expect(holdMs('done', 'over', 0, 0, 'pasted')).toBe(PASTED_HOLD_MS);
   expect(holdMs('done', 'left', 0, 0, 'copied')).toBe(COPIED_HOLD_MS);
+  expect(holdMs('done', 'away', 0, 0, 'kept')).toBe(COPIED_HOLD_MS);
   expect(holdMs('done', 'away', 0, 0, 'blocked')).toBeNull();
 });
 

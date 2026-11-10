@@ -346,6 +346,7 @@ fn receipt(state: &HudState) -> Option<&'static str> {
     Some(match state.notice.as_deref() {
         None => "pasted",
         notice if notice == crate::dictation::Delivery::CopiedNoAccessibility.notice() => "blocked",
+        notice if notice == crate::dictation::Delivery::DraftKept.notice() => "kept",
         Some(_) => "copied",
     })
 }
@@ -354,7 +355,7 @@ fn receipt(state: &HudState) -> Option<&'static str> {
 /// shown after dictation, unless it is blocked on Accessibility: then the
 /// pill keeps its Allow button. Without a recording there is nothing to edit.
 fn opens_by_itself(state: &HudState, preview: bool) -> bool {
-    preview && state.session_id.is_some() && matches!(receipt(state), Some("pasted" | "copied"))
+    preview && state.session_id.is_some() && matches!(receipt(state), Some("pasted" | "copied" | "kept"))
 }
 
 fn peeking(state: &HudState) -> bool {
@@ -872,6 +873,9 @@ mod tests {
         assert_eq!(receipt(&pasted), Some("pasted"));
         assert_eq!(receipt(&copied), Some("copied"));
         assert_eq!(receipt(&blocked), Some("blocked"));
+        let kept = HudState { notice: crate::dictation::Delivery::DraftKept.notice().map(Into::into), ..pasted.clone() };
+        assert!(opens_by_itself(&kept, true));
+        assert_eq!(receipt(&kept), Some("kept"));
         let empty = HudState { session_id: Some("s1".into()), ..state(Phase::Done, Some("audio"), Some("  ")) };
         assert!(!opens_by_itself(&empty, true));
         let shot = HudState { session_id: Some("s1".into()), ..state(Phase::Done, Some("image"), None) };
