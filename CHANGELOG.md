@@ -6,6 +6,17 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.13] - 2026-11-10 - desktop
+
+### Added
+
+- Mac app: a shortcut that starts and stops a screen recording ([#363](https://github.com/williamrogersdev/eavesy/pull/363))
+
+### Fixed
+
+- Mac app: Return sends reliably when the finished words take a second try ([#360](https://github.com/williamrogersdev/eavesy/pull/360))
+- Mac app: name what was clicked, transcribe during the screenshot pass, and shorten the paste ([#362](https://github.com/williamrogersdev/eavesy/pull/362))
+
 ## [0.9.12] - 2026-11-10 - desktop
 
 ### Added
