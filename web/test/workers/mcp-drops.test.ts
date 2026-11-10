@@ -9,7 +9,7 @@ import { sha256Hex } from '../../src/lib/sha256';
 
 // The DropsHub Durable Object lives in the web worker; here we only check what
 // would be broadcast to it.
-vi.mock('../../src/server/drops-hub', () => ({ publish: vi.fn(async () => {}) }));
+vi.mock('../../src/server/drops-hub', () => ({ publish: vi.fn(async () => {}), publishSync: vi.fn(async () => {}) }));
 
 interface TestEnv {
   DB: D1Database;

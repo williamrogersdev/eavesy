@@ -220,6 +220,8 @@ export function DropsProvider({ children }: { children: ReactNode }) {
         setItems((prev) => prev.filter((d) => d.id !== event.id));
         return;
       }
+      // Anything else is not for this panel, and has no drop to show.
+      if (event.type !== 'drop') return;
       upsert(event.drop);
       if (!panelOpenRef.current) setUnseen((n) => n + 1);
       pushToast({

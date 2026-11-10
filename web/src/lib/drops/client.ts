@@ -16,7 +16,9 @@ export interface Drop {
 
 export type HubEvent =
   | { type: 'drop'; drop: Drop; origin: string | null }
-  | { type: 'delete'; id: string; origin: string | null };
+  | { type: 'delete'; id: string; origin: string | null }
+  // Sent to Mac apps only; named here so a tab that ever receives one ignores it.
+  | { type: 'sync'; origin?: null };
 
 let cachedClientId: string | null = null;
 

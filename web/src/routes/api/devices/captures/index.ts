@@ -7,6 +7,7 @@ import { getDb } from '@/db/client';
 import { pid } from '@/db/ids';
 import * as capturesRepo from '@/db/repo/captures';
 import { resolveIngestActor } from '@/server/device-auth';
+import { publishSync } from '@/server/drops-hub';
 import { captureKey, deleteObject, putObject } from '@/server/r2';
 import { guardUserQuota, refundUserQuota } from '@/server/rate-limit';
 import { emitWebhookEvent, webhookEnv, webhookItem } from '@/server/webhooks';
@@ -123,8 +124,12 @@ export const Route = createFileRoute('/api/devices/captures/')({
           return Response.json({ error: 'upload interrupted' }, { status: 400 });
         }
 
-        const created = (id: string) =>
-          emitWebhookEvent(webhookEnv(), actor.userId, 'capture.created', webhookItem({ id, kind: type.kind, title, createdAt }));
+        // The user's other Macs are told first, so the note is on its way to them
+        // while the webhook is queued.
+        const created = async (id: string) => {
+          await publishSync(actor.userId, actor.deviceId);
+          await emitWebhookEvent(webhookEnv(), actor.userId, 'capture.created', webhookItem({ id, kind: type.kind, title, createdAt }));
+        };
         try {
           const id = await capturesRepo.create(db, {
             id: captureId,
@@ -225,6 +230,7 @@ export const Route = createFileRoute('/api/devices/captures/')({
             });
             if (updatedAt !== null) {
               const replaced = current.r2Key;
+              await publishSync(actor.userId, actor.deviceId);
               await deleteObject(replaced).catch((cause: unknown) => console.error('[device-captures] replaced note object left behind', replaced, cause));
               return Response.json({ id: existing.id, updatedAt });
             }
