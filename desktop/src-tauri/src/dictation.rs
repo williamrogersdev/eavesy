@@ -377,14 +377,19 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                 // Only once the field reads the finished words in place of the
                 // typed ones: a send never goes out with the draft or a
                 // doubled paste. Otherwise the draft waits for the user's Return.
-                if let (Some(command), Ok(Some(live))) = (send.command(), &delivered) {
-                    if !live.shows(&text, SEND_CONFIRM) {
-                        tracing::info!(session_id = %session_id, "held Return not pressed: the finished words didn't show in the field");
-                    } else if let Err(why) = press_return(command) {
-                        tracing::warn!(session_id = %session_id, "could not press the held Return: {why}");
-                    } else {
-                        tracing::info!(session_id = %session_id, "dictation sent with the held Return");
+                match (send.command(), &delivered) {
+                    (Some(command), Ok(Some(live))) => {
+                        if !live.shows(&text, SEND_CONFIRM) {
+                            tracing::info!(session_id = %session_id, "held Return not pressed: the finished words didn't show in the field");
+                        } else if let Err(why) = press_return(command) {
+                            tracing::warn!(session_id = %session_id, "could not press the held Return: {why}");
+                        } else {
+                            tracing::info!(session_id = %session_id, "dictation sent with the held Return");
+                        }
                     }
+                    (Some(_), Ok(None)) => tracing::info!(session_id = %session_id, "held Return not pressed: no typed words to check the finished ones against"),
+                    (Some(_), Err(why)) => tracing::info!(session_id = %session_id, "held Return not pressed: the finished words didn't go in ({why})"),
+                    (None, _) => {}
                 }
                 let delivered = delivered.map(|_| ());
                 if delivered.is_ok() {
