@@ -29,6 +29,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode
 import { createPortal } from 'react-dom';
 import {
   captureMediaUrl,
+  contextPending,
   copyCaptureMedia,
   copyText,
   pasteToFrontmost,
@@ -447,6 +448,7 @@ const CaptureRow = memo(function CaptureRow({
   };
 
   const copy = () => runTask(async () => {
+    if (video && contextPending(rec)) flash('Preparing the recording…', 8000);
     if (image || video) await copyCaptureMedia(rec.id);
     else await copyText(changed ? shownText : plainTranscript((await loadRecordingDetails(rec)).transcript ?? ''));
     flash('Copied');

@@ -12,7 +12,7 @@ import {
   Video,
 } from 'lucide-react';
 import { type RefObject } from 'react';
-import { copyText, recordingContext, pasteToFrontmost } from '@/lib/desktop/bridge';
+import { copyText, contextPending, recordingContext, pasteToFrontmost } from '@/lib/desktop/bridge';
 import type { Recording } from '@/lib/launcher/types';
 import { type Action, type BeginRecording, type Flash, type Item, type RunTask } from './types';
 import { downloadMarkdown } from './format';
@@ -157,6 +157,7 @@ export function PaletteView({
                   title="Copy"
                   onClick={() =>
                     runTask(async () => {
+                      if (contextPending(currentRec)) flash('Preparing the recording…', 8000);
                       await copyText(await recordingContext(currentRec.id, currentRec.transcript ?? ''));
                       flash('Transcript copied');
                     }, 'Couldn’t copy transcript')
@@ -167,6 +168,7 @@ export function PaletteView({
                 <ToolbarBtn
                   title="Paste into active app"
                   onClick={() => {
+                    if (contextPending(currentRec)) flash('Preparing the recording…', 8000);
                     runTask(
                       async () => pasteToFrontmost(await recordingContext(currentRec.id, currentRec.transcript ?? ''), !currentRec.hasVideo),
                       'Couldn’t paste transcript',

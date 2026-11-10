@@ -9,7 +9,7 @@ import {
   Globe,
 } from 'lucide-react';
 import { useMemo } from 'react';
-import { copyText, recordingContext, pasteToFrontmost, revealInFinder, retryWalkthrough } from '@/lib/desktop/bridge';
+import { copyText, contextPending, recordingContext, pasteToFrontmost, revealInFinder, retryWalkthrough } from '@/lib/desktop/bridge';
 import { loadRecordingDetails } from '@/lib/launcher/data';
 import type { Recording } from '@/lib/launcher/types';
 import { type Action, type Flash, type Item, type RunTask } from './types';
@@ -54,6 +54,7 @@ export function useRecordingActions({
         icon: <CornerDownLeft className="h-4 w-4" />,
         hint: '⌘↵',
         run: async () => {
+          if (contextPending(rec)) flash('Preparing the recording…', 8000);
           await pasteToFrontmost(await recordingContext(rec.id, (await loadRecordingDetails(rec)).transcript ?? ''), !rec.hasVideo);
           close();
           if (!desktop) flash('Transcript copied — paste anywhere');
@@ -65,6 +66,7 @@ export function useRecordingActions({
         icon: <Copy className="h-4 w-4" />,
         hint: '⌘C',
         run: async () => {
+          if (contextPending(rec)) flash('Preparing the recording…', 8000);
           await copyText(await recordingContext(rec.id, (await loadRecordingDetails(rec)).transcript ?? ''));
           close();
           flash('Transcript copied');

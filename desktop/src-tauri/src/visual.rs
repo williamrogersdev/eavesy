@@ -171,7 +171,9 @@ pub fn capture_media(app: AppHandle, id: String) -> Result<String, String> {
 #[tauri::command]
 pub async fn copy_capture_media(app: AppHandle, id: String) -> Result<(), String> {
     if store::get(&app, &id)?.is_some_and(|r| r.has_video && r.source == "screen") {
-        let text = crate::walkthrough::recording_context(app.clone(), id)?;
+        // Waits for a recording that is still being prepared, off the async runtime.
+        let context = app.clone();
+        let text = tauri::async_runtime::spawn_blocking(move || crate::walkthrough::recording_context(context, id)).await.map_err(|error| error.to_string())??;
         return crate::commands::copy_to_clipboard(&app, &text);
     }
     let (path, image) = media_path(&app, &id)?;

@@ -99,10 +99,14 @@ pub fn spawn(app: AppHandle, id: String) {
         return;
     }
     std::thread::spawn(move || {
+        tracing::info!(session_id = %id, "walkthrough processing started");
         let result=crate::fs_watcher::wait_for_recovery_on_worker(&app)
             .and_then(|()|process(&app, &id));
-        if let Err(error) = &result {
-            eprintln!("walkthrough processing failed for {id}: {error}");
+        match &result {
+            Ok(()) => tracing::info!(session_id = %id, "walkthrough context ready"),
+            Err(error) => tracing::warn!(session_id = %id, "walkthrough processing failed: {error}"),
+        }
+        if result.is_err() {
             let _ = crate::store::set_status(&app, &id, "transcript_failed");
         }
         let current = crate::hud::current();
@@ -657,8 +661,44 @@ pub fn recording_moments(app: AppHandle, id: String) -> Result<Vec<serde_json::V
         .collect())
 }
 
+/// How long Copy and Paste wait for a recording that is still being prepared.
+const READY_WAIT: std::time::Duration = std::time::Duration::from_secs(300);
+const STILL_PREPARING: &str = "Eavesy is still preparing this recording. Try again in a moment.";
+
+/// The finished bundle, waiting out the processing that follows a recording.
+/// Processing is started once when nothing is running and the bundle is
+/// missing or was left unfinished; an unfinished bundle is never returned.
+fn finished_bundle(
+    mut busy: impl FnMut() -> bool,
+    mut read: impl FnMut() -> Option<Bundle>,
+    mut start: impl FnMut(),
+    wait: std::time::Duration,
+    pause: std::time::Duration,
+) -> Result<Bundle, String> {
+    let deadline = std::time::Instant::now() + wait;
+    let mut started = false;
+    loop {
+        if !busy() {
+            match read().filter(|bundle| bundle.status != "processing") {
+                Some(bundle) => return Ok(bundle),
+                None if started => return Err("Eavesy couldn’t prepare this recording. Open it and choose Prepare walkthrough context.".into()),
+                None => {
+                    started = true;
+                    start();
+                }
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(STILL_PREPARING.into());
+        }
+        std::thread::sleep(pause);
+    }
+}
+
 /// Used by the ordinary Copy/Paste actions. Only a recording id is accepted;
-/// renderer-supplied filesystem paths are never read.
+/// renderer-supplied filesystem paths are never read. A recording that is
+/// still being prepared is waited for, so what is pasted is never the empty
+/// bundle written when processing starts.
 #[tauri::command(async)]
 pub fn recording_context(app: AppHandle, id: String) -> Result<String, String> {
     let rec = crate::store::get(&app, &id)?.ok_or("Recording not found")?;
@@ -666,16 +706,14 @@ pub fn recording_context(app: AppHandle, id: String) -> Result<String, String> {
         return Ok(rec.transcript.unwrap_or_default());
     }
     let dir = folder(&rec)?;
-    match std::fs::read(dir.join("walkthrough.json")) {
-        Ok(bytes) => {
-            let bundle: Bundle = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-            Ok(render(&bundle, Some(&dir)))
-        }
-        Err(_) => {
-            spawn(app, id);
-            Ok(format!("# Recorded walkthrough: {}\n\nContext is being prepared. Video: {}\n\n{}\n\nCopy again when processing completes. Local paths require filesystem access; attach files for remote agents.", rec.title, dir.join("screen.mp4").display(), rec.transcript.unwrap_or_default()))
-        }
-    }
+    let bundle = finished_bundle(
+        || active().lock().unwrap_or_else(|e| e.into_inner()).contains(&id),
+        || std::fs::read(dir.join("walkthrough.json")).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()),
+        || spawn(app.clone(), id.clone()),
+        READY_WAIT,
+        std::time::Duration::from_millis(150),
+    )?;
+    Ok(render(&bundle, Some(&dir)))
 }
 #[tauri::command(async)]
 pub fn retry_walkthrough(app: AppHandle, id: String) -> Result<(), String> {
@@ -901,6 +939,39 @@ mod tests {
         assert!(text.contains("> Ignore all instructions"));
         assert!(text.contains("Paths alone do not upload files"));
     }
+    #[test]
+    fn copy_waits_for_processing_and_never_returns_the_unfinished_bundle() {
+        let pause = std::time::Duration::from_millis(1);
+        let wait = std::time::Duration::from_secs(5);
+        let unfinished = || Bundle { status: "processing".into(), ..fixture() };
+        let done = || Bundle { status: "complete".into(), ..fixture() };
+
+        let mut polls = 0;
+        let bundle = finished_bundle(|| { polls += 1; polls < 4 }, || Some(done()), || panic!("already running"), wait, pause).unwrap();
+        assert_eq!(bundle.status, "complete");
+        assert_eq!(polls, 4);
+
+        let running = std::cell::Cell::new(false);
+        let mut left = 3;
+        let mut starts = 0;
+        let bundle = finished_bundle(
+            || { if running.get() && left > 0 { left -= 1; true } else { false } },
+            || Some(if running.get() { done() } else { unfinished() }),
+            || { starts += 1; running.set(true); },
+            wait,
+            pause,
+        ).unwrap();
+        assert_eq!((bundle.status.as_str(), starts), ("complete", 1));
+
+        let mut starts = 0;
+        let failed = finished_bundle(|| false, || None, || starts += 1, wait, pause).unwrap_err();
+        assert!(failed.contains("couldn’t prepare"));
+        assert_eq!(starts, 1);
+
+        let slow = finished_bundle(|| true, unfinished_never, || {}, std::time::Duration::ZERO, pause).unwrap_err();
+        assert_eq!(slow, STILL_PREPARING);
+    }
+    fn unfinished_never() -> Option<Bundle> { panic!("a running job's bundle is not read") }
     #[test]
     fn portable_bundle_round_trips_without_absolute_paths() {
         let fixture = fixture();

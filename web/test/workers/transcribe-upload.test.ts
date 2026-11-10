@@ -14,7 +14,7 @@ const transcribed = vi.hoisted(() => ({ bytes: 0 }));
 vi.mock('../../src/lib/transcription/transcribe-file', () => ({
   transcribeAudioFile: async ({ audio }: { audio: Uint8Array }) => {
     transcribed.bytes = audio.byteLength;
-    return { text: 'ok', language: 'en', durationSec: 1 };
+    return { text: 'ok', segments: [], language: 'en', durationSec: 1 };
   },
 }));
 
@@ -66,7 +66,7 @@ describe('/api/transcribe large uploads', () => {
       params: {},
     });
 
-    expect(await response.json()).toEqual({ text: 'ok', rawText: 'ok', repairStatus: 'unavailable', language: 'en', durationSec: 1 });
+    expect(await response.json()).toEqual({ text: 'ok', rawText: 'ok', segments: [], repairStatus: 'unavailable', language: 'en', durationSec: 1 });
     expect(response.status).toBe(200);
     expect(transcribed.bytes).toBe(audioBytes);
   }, 60_000);
