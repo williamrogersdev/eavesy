@@ -1266,6 +1266,11 @@ export async function onDictionaryLearning(cb: (event: LearningEvent) => void): 
 
 
 /** The ordinary Copy/Paste payload for a recording, including video evidence. */
+/** A screen recording whose context is still being written: Copy and Paste wait for it. */
+export function contextPending(rec: { hasVideo?: boolean; status?: string }): boolean {
+  return isDesktop() && !!rec.hasVideo && rec.status === 'processing';
+}
+
 export async function recordingContext(id: string, fallback: string): Promise<string> {
   return isDesktop() ? invoke<string>('recording_context', { id }) : fallback;
 }

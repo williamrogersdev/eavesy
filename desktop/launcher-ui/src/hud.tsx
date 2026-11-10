@@ -391,6 +391,7 @@ function Hud() {
   // How lively the voice is right now, 0–1: a caption arriving lifts it, quiet lets it settle.
   const [voice, setVoice] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [copying, setCopying] = useState(false);
   const marking = useMarking(browserPreviewMarking());
   const [editing, setEditing] = useState(false);
   const [pointer, setPointer] = useState<'away' | 'over' | 'left'>('away');
@@ -608,9 +609,11 @@ function Hud() {
 
   const copy = (cmd: string, args: Record<string, unknown>) => {
     setActionError(null);
+    setCopying(true);
     void invoke(cmd, args)
       .then(() => setCopied(true))
-      .catch((error: unknown) => setActionError(hudError(error, 'Couldn’t copy it')));
+      .catch((error: unknown) => setActionError(hudError(error, 'Couldn’t copy it')))
+      .finally(() => setCopying(false));
   };
 
   const readyToCapture = async (mode: 'audio' | 'video' | 'image'): Promise<boolean> => {
@@ -1305,10 +1308,10 @@ function Hud() {
       {talkShortcut && <p className="ctl-reply-hint">Press {talkShortcut} to reply.</p>}
     </>;
   } else if (state.phase === 'done' && video) {
-    top = <>{errorSay ?? <span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copied ? 'Copied' : 'Saved'}</span>}
+    top = <>{errorSay ?? <span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copying ? 'Preparing…' : copied ? 'Copied' : 'Saved'}</span>}
       <span className="ctl-fill" />
       <button type="button" className="ctl-btn" onClick={() => act('show_launcher')} aria-label="Open recording"><Maximize2 className="h-3.5 w-3.5" /></button>
-      <button type="button" className="ctl-btn" onClick={() => copy('copy_capture_media', { id: state.sessionId })}><Copy className="h-3.5 w-3.5" />Copy</button>{minimize}{close}</>;
+      <button type="button" className="ctl-btn" disabled={copying} onClick={() => copy('copy_capture_media', { id: state.sessionId })}><Copy className="h-3.5 w-3.5" />Copy</button>{minimize}{close}</>;
   } else if (state.phase === 'done' && state.mode === 'image') {
     top = (
       <>

@@ -7,6 +7,7 @@ import { getDb } from '@/db/client';
 import { transcriptionPrefs } from '@/db/repo/users';
 import { isTranscriptionLanguage } from '@/lib/transcription/language';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
+import { sentenceSegments } from '@/lib/transcription/sentences';
 import { resolveIngestActor } from '@/server/device-auth';
 import { guardSpend, guardUserQuota } from '@/server/rate-limit';
 import { capBody } from '@/lib/http/cap-body';
@@ -89,7 +90,7 @@ export const Route = createFileRoute('/api/transcribe')({
           return Response.json({
             text: repaired.text,
             rawText: result.text,
-            segments: result.segments,
+            segments: sentenceSegments(result.segments),
             timestampSource: result.timestampSource,
             repairStatus: repaired.status,
             language: result.language ?? language,

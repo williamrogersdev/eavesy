@@ -1,5 +1,5 @@
 import { getCloudflareContext } from '@/server/cloudflare-context';
-import type { TranscriptSegment } from './types';
+import type { TimedWord, WordTimedSegment } from './sentences';
 import { audioBase64 } from './base64';
 import { retryLanguage, whisperLanguage } from './language';
 import { isHallucination } from './two-track';
@@ -10,7 +10,7 @@ const WHISPER_MODEL = '@cf/openai/whisper-large-v3-turbo';
 
 export interface FileTranscriptionResult {
   text: string;
-  segments: TranscriptSegment[];
+  segments: WordTimedSegment[];
   language?: string;
   languageProbability?: number;
   durationSec?: number;
@@ -108,7 +108,8 @@ export function mapWhisperResult(
 
   const text = fixBuiltInTerms(result.text);
   const info = isRecord(result.transcription_info) ? result.transcription_info : {};
-  const segments: TranscriptSegment[] = [];
+  const segments: WordTimedSegment[] = [];
+  const allWords = timedWords(result.words);
   let timestampSource: FileTranscriptionResult['timestampSource'] = 'unavailable';
   let missingTiming = false;
 
@@ -122,6 +123,10 @@ export function mapWhisperResult(
       else missingTiming = true;
       const noSpeechProb = finiteNumber(s.no_speech_prob);
       const compressionRatio = finiteNumber(s.compression_ratio);
+      const own = timedWords(s.words);
+      const startMs = secondsToMilliseconds(s.start);
+      const endMs = secondsToMilliseconds(s.end);
+      const words = own.length || !timed ? own : allWords.filter((word) => word.startMs >= startMs && word.endMs <= endMs);
       segments.push({
         startMs: secondsToMilliseconds(s.start),
         endMs: secondsToMilliseconds(s.end),
@@ -129,6 +134,7 @@ export function mapWhisperResult(
         isFinal: true,
         ...(noSpeechProb !== undefined ? { noSpeechProb } : {}),
         ...(compressionRatio !== undefined ? { compressionRatio } : {}),
+        ...(words.length ? { words } : {}),
       });
     }
   } else if (Array.isArray(result.words) && result.words.length > 0 && text.trim()) {
@@ -152,6 +158,13 @@ export function mapWhisperResult(
     languageProbability: finiteNumber(info.language_probability),
     durationSec: finiteNumber(info.duration),
   };
+}
+
+function timedWords(value: unknown): TimedWord[] {
+  if (!Array.isArray(value)) return [];
+  const words = value.filter(isRecord).map((word) => ({ start: finiteNumber(word.start), end: finiteNumber(word.end) }));
+  if (words.some((word) => word.start === undefined || word.end === undefined)) return [];
+  return words.map((word) => ({ startMs: secondsToMilliseconds(word.start), endMs: secondsToMilliseconds(word.end) }));
 }
 
 function finiteNumber(value: unknown): number | undefined {

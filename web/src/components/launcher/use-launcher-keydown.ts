@@ -1,5 +1,5 @@
 import { useCallback, type Dispatch, type SetStateAction, type RefObject } from 'react';
-import { copyText, recordingContext, pasteToFrontmost } from '@/lib/desktop/bridge';
+import { copyText, contextPending, recordingContext, pasteToFrontmost } from '@/lib/desktop/bridge';
 import type { Recording } from '@/lib/launcher/types';
 import { type Action, type Flash, type Item, type RunTask } from './types';
 import { downloadMarkdown } from './format';
@@ -96,7 +96,7 @@ export function useLauncherKeyDown({
             async () => pasteToFrontmost(await recordingContext(currentRec.id, currentRec.transcript ?? ''), !currentRec.hasVideo),
             'Couldn’t paste the transcript',
           );
-          flash('Transcript copied — paste anywhere');
+          flash(contextPending(currentRec) ? 'Preparing the recording…' : 'Transcript copied — paste anywhere', contextPending(currentRec) ? 8000 : undefined);
         } else {
           runPrimary();
         }
@@ -112,6 +112,7 @@ export function useLauncherKeyDown({
         if (k === 'c' && !e.shiftKey) {
           e.preventDefault();
           runTask(async () => {
+            if (contextPending(currentRec)) flash('Preparing the recording…', 8000);
             await copyText(await recordingContext(currentRec.id, currentRec.transcript ?? ''));
             flash('Transcript copied');
           }, 'Couldn’t copy the transcript');
