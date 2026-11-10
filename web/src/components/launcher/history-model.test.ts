@@ -152,6 +152,7 @@ describe('meeting rows', () => {
       ],
     });
     expect(meetingBrief('Just one line.')).toEqual({ overview: 'Just one line.', sections: [] });
+    expect(meetingBrief('2. The team agreed.')?.overview).toBe('2. The team agreed.');
     expect(meetingBrief('# Summary\n\n')).toBeNull();
     expect(meetingBrief(undefined)).toBeNull();
   });

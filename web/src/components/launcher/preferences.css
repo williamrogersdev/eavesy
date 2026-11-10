@@ -40,10 +40,20 @@
 .ev-settings-nav-title { display: flex; align-items: center; gap: 8px; padding: 0 8px 14px; color: var(--ev-ink); font: var(--ev-t-head); }
 .ev-preferences[data-standalone='true'] .ev-settings-nav-title { display: none; }
 .ev-settings-nav button { display: flex; align-items: center; gap: 9px; width: 100%; padding: 6px 10px; margin: 1px 0; border: 0; border-radius: 7px; color: var(--ev-ink); background: transparent; font: 500 13px/18px var(--ev-font-text); text-align: left; transition: background var(--ev-d-state); }
-.ev-settings-nav button svg { color: var(--ev-ink-3); transition: color var(--ev-d-state); }
+/* Sections are filed in groups, each with an index-tab colour its icons wear. */
+.ev-settings-group + .ev-settings-group { margin-top: 12px; }
+.ev-settings-group > h2 { margin: 0 0 3px; padding: 0 10px; color: var(--ev-ink-3); font: 600 11.5px/16px var(--ev-font-text); }
+[data-group='recording'] { --evs-tab: var(--ev-voice); --evs-tab-soft: var(--ev-voice-soft); }
+[data-group='words'] { --evs-tab: var(--ev-note); --evs-tab-soft: var(--ev-note-soft); }
+[data-group='connected'] { --evs-tab: var(--ev-meeting); --evs-tab-soft: var(--ev-meeting-soft); }
+[data-group='app'] { --evs-tab: var(--ev-screen); --evs-tab-soft: var(--ev-screen-soft); }
+.ev-settings-tile { display: inline-grid; flex: none; place-items: center; width: 22px; height: 22px; border-radius: 6px 6px 6px 2px; background: var(--evs-tab-soft); color: var(--evs-tab); }
+.ev-settings-tile[data-size='lg'] { width: 34px; height: 34px; border-radius: 9px 9px 9px 3px; }
+.ev-settings-nav button svg, .ev-settings-heading .ev-settings-tile svg { color: inherit; }
 .ev-settings-nav button:hover { background: var(--ev-hover); }
 .ev-settings-nav button[aria-current] { background: color-mix(in srgb, var(--ev-ink) 10%, transparent); }
-.ev-settings-nav button[aria-current] svg { color: var(--ev-manila-shade); }
+.ev-settings-nav button[aria-current] { font-weight: 600; }
+.ev-settings-nav button[aria-current] .ev-settings-tile { background: var(--evs-tab); color: var(--ev-paper); }
 .ev-settings-nav button:focus-visible { outline: none; box-shadow: var(--ev-focus); }
 .ev-settings-search { display: flex; align-items: center; gap: 7px; margin: 0 0 12px; padding: 6px 9px; border-radius: 7px; background: color-mix(in srgb, var(--ev-ink) 6%, transparent); color: var(--ev-ink-3); transition: box-shadow var(--ev-d-state); }
 .ev-settings-search:focus-within { box-shadow: var(--ev-focus-field); }
@@ -54,7 +64,7 @@
 .ev-settings-nav-foot { margin: auto 0 0; padding: 16px 10px 0; color: var(--ev-ink-3); font: var(--ev-t-small); }
 
 .ev-settings-pane { min-width: 0; min-height: 0; display: flex; flex-direction: column; background: var(--ev-paper); }
-.ev-settings-heading { flex: none; display: flex; align-items: center; gap: 16px; padding: 22px 32px 6px; }
+.ev-settings-heading { flex: none; display: flex; align-items: center; gap: 12px; padding: 22px 32px 6px; }
 .ev-preferences[data-standalone='true'] .ev-settings-heading { padding-top: 34px; }
 .ev-settings-heading h1 { margin: 0; font: var(--ev-t-title); color: var(--ev-ink); }
 .ev-settings-heading p { margin: 3px 0 0; font: 400 13px/18px var(--ev-font-text); color: var(--ev-ink-2); }
@@ -145,7 +155,8 @@
   .ev-settings-nav-title, .ev-settings-nav-foot, .ev-settings-search, .ev-settings-nav-empty, .ev-settings-drag { display: none; }
   .ev-preferences[data-standalone='true'] .ev-settings-nav { padding-top: 8px; }
   .ev-settings-nav button { flex: none; width: auto; padding: 8px 10px; }
-  .ev-settings-nav button svg { display: none; }
+  .ev-settings-nav button .ev-settings-tile, .ev-settings-group > h2, .ev-settings-heading .ev-settings-tile { display: none; }
+  .ev-settings-group { display: contents; }
   .ev-settings-nav button[aria-current]::before { display: none; }
   .ev-settings-heading { padding: 18px 16px; }
   .ev-settings-pane .ev-settings { padding: 16px 16px 24px; }
