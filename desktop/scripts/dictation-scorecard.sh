@@ -108,6 +108,9 @@ $1 !~ /^20[0-9][0-9]-/ || (since != "" && $1 < since) { next }
 /dictation polished/ { polished[++polished_count] = field("polish_ms") + 0 }
 /first live caption after/ { caption[++caption_count] = field("latency_ms") + 0 }
 /live-typed words not replaced: / { not_replaced[after("not replaced: ")]++; not_replaced_total++ }
+/dictation sent with the held Return/ { sent++ }
+/held Return not pressed|could not press the held Return/ { unsent++ }
+/the finished words aren/ { retried++ }
 /live typing stopped: / { stopped[after("live typing stopped: ")]++ }
 /live typing off for this dictation: / { off[after("for this dictation: ")]++ }
 END {
@@ -124,6 +127,8 @@ END {
   printf "\nTyped words not replaced (%d)\n", not_replaced_total
   for (why in not_replaced) printf "  %5d  %s\n", not_replaced[why], why
   for (why in reasons) printf "  %5d  reason=%s\n", reasons[why], why
+  printf "\nReturn pressed to send: %d sent, %d left as a draft (older builds do not log these)\n", sent, unsent
+  printf "Swaps to the finished words tried again: %d\n", retried
   printf "\nLive typing stopped early\n"
   for (why in stopped) printf "  %5d  %s\n", stopped[why], why
   printf "\nLive typing off for the dictation\n"
