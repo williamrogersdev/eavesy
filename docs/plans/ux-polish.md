@@ -170,6 +170,15 @@ already exist.
 | First live caption, median / 90th percentile | 1.1 s / 4.0 s | under 0.7 s / under 1.5 s |
 | Warning lines per day in the app log | about 250 (1,489 on a bad day) | under 50 |
 
+The "Now" column covers 5 to 10 November 2026 and mixes several app builds.
+The build installed late on 9 November (with #351 and #354) reads differently
+over its first 25 dictations: 76% placed in the app, and the largest failure
+of the earlier builds (the field read back empty after a Return sent the
+draft mid-dictation) no longer appears. Its stop-to-delivered time is no
+better: median 1.7 s, 90th percentile 5.6 s. Measure one build at a time
+with `dictation-scorecard.sh --since`; from the next release the logs name
+the version and the scorecard splits by it.
+
 ## The plan
 
 ### Phase 0: a scorecard (first, about a day)

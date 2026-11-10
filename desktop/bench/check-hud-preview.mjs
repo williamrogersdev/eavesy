@@ -70,7 +70,7 @@ try {
   await page.reload();
   await page.locator('[data-size="result"]').waitFor();
   await editor.waitFor();
-  await page.locator('.ctl-tone', { hasText: 'Friendly' }).waitFor();
+  await page.getByLabel('Dictation tone').waitFor();
   await page.getByText('Pasted').waitFor();
   console.log('PASS: with the words shown after dictation, the drawer opens by itself');
   // Collapsing it ends the result: the phase leaves done, so it can't reopen by itself.
@@ -89,14 +89,16 @@ try {
   await page.reload();
   await openDrawer();
   const original = 'Original first sentence. Original last sentence.';
-  const tone = (name) => page.locator('.ctl-tone', { hasText: name });
+  const toneSelect = page.getByLabel('Dictation tone');
+  const tone = (name) => ({ click: () => toneSelect.selectOption({ label: name }) });
+  const forAi = page.getByRole('switch', { name: 'For AI' });
   await tone('Friendly').click();
   await page.waitForFunction(() => document.querySelector('textarea')?.value === 'friendly: Original first sentence. Original last sentence.');
   assert.deepEqual(await page.evaluate(() => window.__qaRestyles.at(-1)), { sessionId: 'qa-1', text: original, style: 'friendly', forAgents: false });
   assert.equal(await page.evaluate(() => window.__qaReplaced.at(-1).text), 'friendly: ' + original);
   assert.equal(await page.evaluate(() => window.__qaSaves.at(-1).learn), false);
   await page.getByText('Updated').waitFor();
-  await page.locator('.ctl-tone', { hasText: 'For AI' }).click();
+  await forAi.click();
   await page.waitForFunction(() => window.__qaRestyles.length === 2);
   // Tones start from the words as pasted: they don't compound.
   assert.deepEqual(await page.evaluate(() => window.__qaRestyles.at(-1)), { sessionId: 'qa-1', text: original, style: 'friendly', forAgents: true });
@@ -104,15 +106,15 @@ try {
   await tone('Concise').click();
   await page.getByText('⌘V to paste').waitFor();
   await page.evaluate(() => { window.__qaReplaceAs = 'replaced'; });
-  await page.locator('.ctl-tone', { hasText: 'For AI' }).click();
+  await forAi.click();
   await page.waitForFunction(() => window.__qaRestyles.length === 4);
-  await tone('Original').click();
+  await tone('As spoken').click();
   await page.waitForFunction(text => document.querySelector('textarea')?.value === text, original);
   assert.equal(await page.evaluate(() => window.__qaRestyles.length), 4);
   assert.equal(await page.evaluate(() => window.__qaSaves.at(-1).text), original);
-  console.log('PASS: tone buttons rewrite from the pasted words, put the rewrite in place or copy it, and never teach the dictionary');
+  console.log('PASS: the tone row rewrites from the pasted words, put the rewrite in place or copy it, and never teach the dictionary');
   assert.ok((await page.evaluate(() => window.__qaReleases ?? [])).includes('qa-1'));
-  console.log('PASS: a tone click hands the keyboard back to the app before the rewrite goes in');
+  console.log('PASS: a tone pick hands the keyboard back to the app before the rewrite goes in');
   await page.reload();
   await openDrawer();
   // Hovering doesn't read the settings file: it's read once at start (twice
@@ -121,18 +123,19 @@ try {
   console.log('PASS: hovering the control does not read settings');
   await page.evaluate(() => { window.__qaFailRestyle = true; });
   await tone('Professional').click();
-  await page.getByRole('alert').filter({ hasText: "Couldn't rewrite it in that tone" }).waitFor();
+  await page.getByRole('alert').filter({ hasText: 'this one couldn’t be rewritten' }).waitFor();
   // The error sits in the stamp slot: the words, Copy, – and the tones all stay.
   await page.getByRole('button', { name: 'Copy', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Collapse to the pill' }).waitFor();
-  assert.equal(await page.locator('.ctl-tone').count(), 5);
-  assert.equal(await tone('Original').getAttribute('aria-pressed'), 'true');
+  await forAi.waitFor();
+  // The tone itself was kept, for the dictations to come.
+  assert.equal(await toneSelect.inputValue(), 'professional');
   assert.equal(await editor.inputValue(), original);
   await page.evaluate(() => { window.__qaFailRestyle = false; });
   await tone('Concise').click();
   await page.getByText('Updated').waitFor();
   assert.equal(await page.getByRole('alert').count(), 0);
-  console.log('PASS: a failed rewrite keeps the drawer and its controls, and the next tone click clears the error');
+  console.log('PASS: a failed rewrite keeps the drawer and its controls, and the next tone pick clears the error');
   await page.evaluate(() => { window.__qaBlockRestyle = true; window.__qaReplaced = []; });
   await tone('Friendly').click();
   await page.waitForFunction(() => !!window.__qaResolveRestyle);

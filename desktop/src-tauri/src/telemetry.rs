@@ -266,6 +266,11 @@ fn init_logging() -> Option<WorkerGuard> {
         .with(stderr_layer)
         .with(RecentLogs)
         .try_init();
+    tracing::info!(
+        version = env!("CARGO_PKG_VERSION"),
+        build = if cfg!(debug_assertions) { "debug" } else { "release" },
+        "eavesy started"
+    );
 
     let previous = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
