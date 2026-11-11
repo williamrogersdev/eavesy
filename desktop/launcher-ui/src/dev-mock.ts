@@ -108,7 +108,7 @@ export function installDevMock(): void {
       Object.assign(settings, { hud_preview_lines: lines, hud_translucent: translucent });
       if (fastLiveWords !== undefined) settings.fast_live_words = fastLiveWords;
       if (resultPreview !== undefined) settings.hud_result_preview = Boolean(resultPreview);
-      emit('hud:look', { lines, translucent, preview: settings.hud_result_preview ?? true });
+      emit('hud:look', { lines, translucent, preview: settings.hud_result_preview ?? false });
     },
     copy_text: ({ text }: Record<string, unknown>) => { copiedText = String(text); },
     sync_status: { signedOut: false },

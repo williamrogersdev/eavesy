@@ -9,7 +9,7 @@ import { WebhookSettings } from '@/components/settings/webhook-settings';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
 import { NOTES_LANGUAGES } from '@/lib/transcription/language';
-import { DICTATION_STYLES, dictationStyle, FOR_AGENTS_HINT, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { dictationStyle, isWritingChoice, WRITING_CHOICES, writingChoice, writingFor, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { SpokenLanguages } from '@/components/settings/spoken-languages';
 import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocabulary';
 import { ChipInput } from '@/components/ui/chip-input';
@@ -356,30 +356,26 @@ function SettingsPage() {
           </select>
         </Row>
         <Row
-          label="Dictation tone"
-          hint={DICTATION_STYLES.find((style) => style.id === me.dictationStyle)?.hint ?? ''}
+          label="Write dictation"
+          hint={WRITING_CHOICES.find((choice) => choice.id === writingChoice({ style: me.dictationStyle, forAgents: me.dictationForAgents }))?.hint ?? ''}
           htmlFor="settings-dictation-style"
         >
           <select
             id="settings-dictation-style"
-            value={me.dictationStyle}
-            onChange={(e) => void saveLanguage({ dictationStyle: dictationStyle(e.target.value) })}
+            value={writingChoice({ style: me.dictationStyle, forAgents: me.dictationForAgents })}
+            onChange={(e) => {
+              if (!isWritingChoice(e.target.value)) return;
+              const writing = writingFor(e.target.value, { style: me.dictationStyle, forAgents: me.dictationForAgents });
+              void saveLanguage({ dictationStyle: writing.style, dictationForAgents: writing.forAgents });
+            }}
             className={`${input} sm:w-56`}
           >
-            {DICTATION_STYLES.map((style) => (
-              <option key={style.id} value={style.id}>
-                {style.label}
+            {WRITING_CHOICES.map((choice) => (
+              <option key={choice.id} value={choice.id}>
+                {choice.label}
               </option>
             ))}
           </select>
-        </Row>
-        <Row label="Format dictation for AI agents" hint={FOR_AGENTS_HINT} htmlFor="settings-dictation-agents">
-          <input
-            id="settings-dictation-agents"
-            type="checkbox"
-            checked={me.dictationForAgents}
-            onChange={(e) => void saveLanguage({ dictationForAgents: e.target.checked })}
-          />
         </Row>
         <div className="flex flex-col gap-1.5">
           <div>

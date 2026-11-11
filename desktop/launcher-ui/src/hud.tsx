@@ -7,7 +7,7 @@ import { errMsg } from '@/lib/desktop/errors';
 import { addCaption, EMPTY_RUNNING, runningText, type LiveCaption } from '@/lib/desktop/live-captions';
 import { mergeTranscript } from '@/lib/desktop/live-edit';
 import { learnedLabel, learnedPending, type LearningEvent } from '@/lib/desktop/learning';
-import { DICTATION_STYLES, FOR_AGENTS_HINT, writingFrom, type DictationStyle, type Writing } from '@/lib/transcription/dictation-style';
+import { isWritingChoice, sameWriting, WRITING_CHOICES, writingChoice, writingFor, writingFrom, type DictationStyle, type Writing } from '@/lib/transcription/dictation-style';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { requestTranslation } from '@/lib/translation/client';
 import { languageName, type Language } from '@/lib/translation/languages';
@@ -101,7 +101,7 @@ interface TranslationChange {
 const MAX_REWRITE_CHARS = 20_000;
 
 /** In the browser preview, rewrites of the sample words instead of a server round trip. */
-const PREVIEW_REWRITES: Record<Exclude<DictationStyle, 'natural'>, string> = {
+const PREVIEW_REWRITES: Record<Exclude<DictationStyle, 'natural' | 'verbatim'>, string> = {
   professional: 'For the onboarding email, I suggest leading with the mascot, using one screenshot rather than three, and closing with the shortcut so that people try it immediately.',
   friendly: 'Ideas for the onboarding email: let’s lead with the mascot, keep it to one screenshot instead of three, and finish on the shortcut so people can try it right away!',
   concise: 'Onboarding email: lead with the mascot, one screenshot not three, end on the shortcut.',
@@ -168,7 +168,7 @@ function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], receipt: [248, 36], bar: [264, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [216, 36], receipt: [248, 36], bar: [400, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -293,7 +293,7 @@ function useMicSignal(sessionId: string | null, active: boolean, now: number): {
  * change made in Settings meanwhile. The shortcut is read again when the look
  * or the hotkeys change, never on hover.
  */
-function useHudSettings(): { shortcut: string; talkShortcut: string; look: Look } {
+function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: string; look: Look; typeLive: boolean; setTypeLive: (on: boolean) => void } {
   const [shortcut, setShortcut] = useState('');
   const [talkShortcut, setTalkShortcut] = useState('');
   const [look, setLook] = useState<Look>(() => {
@@ -301,10 +301,13 @@ function useHudSettings(): { shortcut: string; talkShortcut: string; look: Look 
     return tauri() ? DEFAULT_LOOK : lookFrom({ lines: params.has('lines') ? Number(params.get('lines')) : undefined, translucent: !params.has('solid') });
   });
   const lookChanged = useRef(false);
+  // "Type as I talk" (Settings → Dictation), shown and changed on the recording control.
+  const [typeLive, setTypeLive] = useState(() => !tauri() && new URLSearchParams(window.location.search).has('typelive'));
   const shortcutFrom = (settings: unknown) => {
-    const { dictation_hotkey: accel, assistant_hotkey: talk } = (settings ?? {}) as { dictation_hotkey?: string; assistant_hotkey?: string };
+    const { dictation_hotkey: accel, assistant_hotkey: talk, type_as_you_talk: live } = (settings ?? {}) as { dictation_hotkey?: string; assistant_hotkey?: string; type_as_you_talk?: boolean };
     setShortcut(accel ? prettyAccel(accel) : '');
     setTalkShortcut(talk ? prettyAccel(talk) : '');
+    setTypeLive(live === true);
   };
   const reloadShortcut = () => { void invoke('get_settings').then(shortcutFrom).catch(() => {}); };
   useEvent('hud:look', (payload) => { lookChanged.current = true; setLook(lookFrom(payload)); reloadShortcut(); });
@@ -323,7 +326,9 @@ function useHudSettings(): { shortcut: string; talkShortcut: string; look: Look 
     if (tauri()) load(0);
     return () => { disposed = true; };
   }, []);
-  return { shortcut, talkShortcut, look };
+  // Settings may have changed it since: each recording starts from what is saved.
+  useEffect(() => { if (recording && tauri()) reloadShortcut(); }, [recording]);
+  return { shortcut, talkShortcut, look, typeLive, setTypeLive };
 }
 
 /**
@@ -387,7 +392,7 @@ function Hud() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const { shortcut, talkShortcut, look: settingsLook } = useHudSettings();
+  const { shortcut, talkShortcut, look: settingsLook, typeLive, setTypeLive } = useHudSettings(state?.phase === 'recording');
   // How lively the voice is right now, 0–1: a caption arriving lifts it, quiet lets it settle.
   const [voice, setVoice] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -564,11 +569,15 @@ function Hud() {
   // keeps it greyed until the HUD moves on; one that failed can be tried again.
   const stoppingRef = useRef<string | null>(null);
   const [stopping, setStopping] = useState<string | null>(null);
+  /** The save of a Write choice made while recording, and whether Type live is being switched. */
+  const writeSave = useRef<Promise<unknown>>(Promise.resolve());
+  const typeLiveBusy = useRef(false);
   const stopRecording = (sessionId: string | null | undefined) => {
     if (!sessionId || stoppingRef.current === sessionId) return;
     stoppingRef.current = sessionId;
     setStopping(sessionId);
-    void within(liveUpdate.current, LIVE_EDIT_WAIT_MS)
+    // A Write choice still being saved is how this dictation should be written.
+    void within(Promise.all([liveUpdate.current, writeSave.current]), LIVE_EDIT_WAIT_MS)
       .then((settled) => {
         if (!settled) console.warn('Stopping before the last live correction reached the app');
         return act('stop_capture', { sessionId });
@@ -1036,11 +1045,33 @@ function Hud() {
       return { ok: false, error };
     }
   };
+  // While recording there are no words to rewrite yet: the choice is kept,
+  // and this dictation is written that way when it stops.
+  const pickWhileRecording = async (next: Writing) => {
+    if (sameWriting(next, prefs ?? PLAIN)) return;
+    setActionError(null);
+    // One after another: the choice made last is the one saved last.
+    const save = writeSave.current.then(() => keep(next));
+    writeSave.current = save;
+    const { ok, error } = await save;
+    if (!ok) setActionError(hudError(error, 'Couldn’t change how it’s written. Try again?'));
+  };
   const change = async (next: Writing) => {
     const sessionId = state.sessionId;
     const todo = needsRewrite(next, row);
     if (!sessionId || toneRequest.current !== null || translateRequest.current !== null || todo === 'none') return;
     setActionError(null);
+    // Tidied words can't be turned back into every word as it was said:
+    // kept for the dictations to come, with these as they are.
+    if (next.style === 'verbatim' && todo === 'rewrite') {
+      const token = ++toneSeq.current;
+      toneRequest.current = token;
+      const { ok, error } = await keep(next).finally(() => { if (toneRequest.current === token) toneRequest.current = null; });
+      if (currentSession.current !== sessionId) return;
+      if (ok) setTone({ sessionId, base: ownTone?.base ?? words, from: row.from, pick: next.style, forAgents: false, busy: false, landed: null });
+      setActionError(ok ? 'Kept for next time. These words stay as they are' : hudError(error, 'Couldn’t change how it’s written. Try again?'));
+      return;
+    }
     const token = ++toneSeq.current;
     toneRequest.current = token;
     const wanted = () => toneRequest.current === token && currentSession.current === sessionId;
@@ -1064,7 +1095,7 @@ function Hud() {
         // The rewrite goes where the words went, so that app needs the keyboard back first.
         const released = releaseEditor(sessionId);
         text = todo === 'restore' ? base
-          : !tauri() ? (next.forAgents ? PREVIEW_FOR_AGENTS : next.style === 'natural' ? base : PREVIEW_REWRITES[next.style])
+          : !tauri() ? (next.forAgents ? PREVIEW_FOR_AGENTS : next.style === 'natural' || next.style === 'verbatim' ? base : PREVIEW_REWRITES[next.style])
           : String(await invoke('restyle_dictation', { sessionId, text: base, style: next.style, forAgents: next.forAgents }));
         await within(released, 500);
         if (!wanted()) { settled(null); return; }
@@ -1216,6 +1247,22 @@ function Hud() {
       </div>
     </div>
   );
+  // Tone and "AI prompt" are one choice: the setting for every dictation.
+  const writePicker = (shown: Writing, disabled: boolean, pick: (next: Writing) => void) => {
+    const choice = writingChoice(shown);
+    return (
+      <label className="ctl-field" title={`${WRITING_CHOICES.find((option) => option.id === choice)?.hint ?? ''} Used for every dictation.`}>
+        <span>Write</span>
+        <span className="ctl-select">
+          <select aria-label="How dictations are written" value={choice} disabled={disabled}
+            onChange={(event) => { if (isWritingChoice(event.target.value)) pick(writingFor(event.target.value, shown)); }}>
+            {WRITING_CHOICES.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+          </select>
+          <ChevronsUpDown className="ctl-select-icon" aria-hidden />
+        </span>
+      </label>
+    );
+  };
   const tooLong = words.length > MAX_REWRITE_CHARS;
   const toneControls = !!state.sessionId && (tooLong ? (
     <div className="ctl-tones">
@@ -1225,20 +1272,7 @@ function Hud() {
     </div>
   ) : (
     <div className="ctl-tones" role="group" aria-label="How dictations are written">
-      <label className="ctl-field" title={`${DICTATION_STYLES.find((style) => style.id === picked.style)?.hint ?? ''} Your tone for every dictation.`}>
-        <span>Tone</span>
-        <span className="ctl-select">
-          <select aria-label="Dictation tone" value={picked.style} disabled={rewriting} onChange={(event) => void change({ ...picked, style: event.target.value as DictationStyle })}>
-            {DICTATION_STYLES.map((style) => <option key={style.id} value={style.id}>{style.label}</option>)}
-          </select>
-          <ChevronsUpDown className="ctl-select-icon" aria-hidden />
-        </span>
-      </label>
-      <span className="ctl-sep" aria-hidden />
-      <button type="button" role="switch" aria-checked={picked.forAgents} disabled={rewriting} className="ctl-switch-row" title={FOR_AGENTS_HINT}
-        onClick={() => void change({ ...picked, forAgents: !picked.forAgents })}>
-        For AI<span className="ctl-switch" aria-hidden />
-      </button>
+      {writePicker(picked, rewriting, (next) => void change(next))}
       <span className="ctl-fill" />
       {translateButton}
     </div>
@@ -1259,6 +1293,24 @@ function Hud() {
   const errorSay = actionError ? <span role="alert" title={actionError} className="ctl-say ctl-warn">{actionError}</span> : null;
 
   if (state.phase === 'recording') {
+    // A dictation (not a screen recording, not talking to Eavesy): how it is
+    // written and whether it is typed live are always in reach.
+    const dictating = !video && !eavesy && state.mode === 'audio';
+    const toggleTypeLive = async () => {
+      if (typeLiveBusy.current || stoppingRef.current === state.sessionId) return;
+      const next = !typeLive;
+      setTypeLive(next);
+      if (!tauri()) return;
+      typeLiveBusy.current = true;
+      try {
+        await invoke('set_type_as_you_talk', { enabled: next, sessionId: state.sessionId });
+      } catch (error) {
+        setTypeLive(!next);
+        setActionError(hudError(error, 'Couldn’t change that. Try again?'));
+      } finally {
+        typeLiveBusy.current = false;
+      }
+    };
     const elapsedSec = Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000));
     const cancelDisabled = opening || !state.sessionId || stopping === state.sessionId;
     top = (
@@ -1273,6 +1325,16 @@ function Hud() {
         {video && !opening && <Marking state={marking} act={act} />}
         {eavesy && !opening && <Stamp tone="manila" fit>Eavesy’s listening</Stamp>}
         <span className="ctl-fill" />
+        {dictating && !opening && (
+          <span className="ctl-live-opts" onMouseDown={(event) => event.stopPropagation()}>
+            {writePicker(prefs ?? PLAIN, cancelDisabled, (next) => void pickWhileRecording(next))}
+            <button type="button" role="switch" aria-checked={typeLive} aria-label="Type as I talk" disabled={cancelDisabled} className="ctl-switch-row"
+              title={typeLive ? 'Your words are typed where your cursor is while you talk. Turn off to paste them when you stop.' : 'Your words are pasted when you stop. Turn on to type them where your cursor is while you talk.'}
+              onClick={() => void toggleTypeLive()}>
+              Type live<span className="ctl-switch" aria-hidden />
+            </button>
+          </span>
+        )}
         {discarding === state.sessionId
           ? <button type="button" disabled={cancelDisabled} onClick={() => cancelRecording(state.sessionId, elapsedSec)} aria-label="Discard this recording" title="Click again to throw this recording away" className="ctl-btn ctl-discard">Discard</button>
           : <button type="button" disabled={cancelDisabled} onClick={() => cancelRecording(state.sessionId, elapsedSec)} aria-label="Cancel recording" title="Cancel: throw this recording away without saving" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>}

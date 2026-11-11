@@ -168,8 +168,9 @@ pub(crate) const STOPPING_TIMEOUT: std::time::Duration = std::time::Duration::fr
 const DEFAULT_SIZE: (f64, f64) = (216.0, 36.0);
 /// Recording and writing it down: controls above a scrollable transcript.
 const WIDE: (f64, f64) = (400.0, 142.0);
-/// Recording with the live words turned off: just the controls.
-const BAR: (f64, f64) = (264.0, 40.0);
+/// Recording with the live words turned off: just the controls, with room
+/// for how the words are written and whether they are typed live.
+const BAR: (f64, f64) = (400.0, 40.0);
 
 /// Recording or writing it down, with `lines` of live words under the controls.
 fn live_size(lines: u8) -> (f64, f64) {

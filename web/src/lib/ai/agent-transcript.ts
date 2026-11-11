@@ -82,6 +82,8 @@ Structure it the way AI agents work best:
 const MESSAGE_BRIEF = `You rewrite a dictation so it reads as a message the speaker typed. Use short paragraphs; when the speaker lists things, make a list. Keep their meaning and intent; adjust only wording, tone and layout.`;
 
 const TONE_BRIEFS: Record<DictationStyle, string> = {
+  // Never sent: exactly as said goes out without a model (`polishDictation`).
+  verbatim: `Tone: keep every word exactly as the speaker said it.`,
   natural: `Tone: keep the speaker's own voice and wording wherever it is already clear.`,
   professional: `Tone: professional. Polished, neutral and courteous, in complete sentences, suitable for work chat or email.`,
   friendly: `Tone: friendly. Warm, upbeat and supportive, while staying natural and never gushing.`,
@@ -193,8 +195,10 @@ export async function polishDictation(
   args: { text: string; context: string | null; style?: DictationStyle; forAgents?: boolean; confirmedSpellings?: string[]; corrections?: LearnedCorrection[]; terms?: readonly string[]; asked?: boolean },
 ): Promise<{ text: string; polished: boolean }> {
   const style = args.style ?? DEFAULT_DICTATION_STYLE;
-  const restyle = style !== 'natural' || !!args.forAgents;
   const said = args.text.trim();
+  // Exactly as said: the recognizer's words, untouched, and no wait for a model.
+  if (style === 'verbatim') return { text: said, polished: true };
+  const restyle = style !== 'natural' || !!args.forAgents;
   const plain = restyle ? withoutSwearing(stripFillers(said)) : stripFillers(said);
   const known = (args.corrections ?? []).filter(entry => count(said, entry.from) > 0).map(entry => entry.to).join(' ');
   // A tone someone asked for is worth a call however short the words are, and

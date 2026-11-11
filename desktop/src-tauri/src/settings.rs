@@ -214,7 +214,7 @@ impl Settings {
     }
 
     pub fn hud_result_preview(&self) -> bool {
-        self.hud_result_preview.unwrap_or(true)
+        self.hud_result_preview.unwrap_or(false)
     }
 
     pub fn type_as_you_talk(&self) -> bool {
@@ -781,11 +781,11 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_dictation_shows_its_words_unless_turned_off() {
+    fn a_finished_dictation_shows_its_words_only_when_turned_on() {
         let mut settings = Settings::default();
-        assert!(settings.hud_result_preview());
-        settings.hud_result_preview = Some(false);
         assert!(!settings.hud_result_preview());
+        settings.hud_result_preview = Some(true);
+        assert!(settings.hud_result_preview());
     }
 
     #[test]

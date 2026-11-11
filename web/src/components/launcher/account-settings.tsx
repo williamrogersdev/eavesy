@@ -6,10 +6,10 @@ import { parseProject, type ProjectFields, type ProjectSummary } from '@/lib/api
 import { accountCall, errMsg } from '@/lib/desktop/bridge';
 import { isRecord } from '@/lib/json';
 import { PROJECT_LIMITS } from '@/lib/projects';
-import { DICTATION_EXAMPLE, DICTATION_STYLES, dictationStyle, effectiveDictation, FOR_AGENTS_HINT, isDictationStyle, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { DICTATION_EXAMPLE, DICTATION_STYLES, dictationStyle, effectiveDictation, isDictationStyle, WRITING_CHOICES, writingChoice, writingFor, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { languageName, NOTES_LANGUAGES } from '@/lib/transcription/language';
 import { MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocabulary';
-import { Button, Card, IconButton, Row, Select, Switch, TagInput } from './ui';
+import { Button, Card, IconButton, Row, Select, TagInput } from './ui';
 
 const SAVE_DELAY_MS = 500;
 
@@ -47,6 +47,7 @@ function styleLabel(style: DictationStyle): string {
 }
 
 const TONE_OPTIONS = DICTATION_STYLES.map((s) => ({ value: s.id, label: s.label }));
+const WRITING_OPTIONS = WRITING_CHOICES.map((c) => ({ value: c.id, label: c.label }));
 
 /** The account settings shared with eavesy.com: languages, custom words and how dictations are written. */
 export interface AccountPrefs {
@@ -193,30 +194,24 @@ export function DictationCard({ account, projects, onOpenProject }: {
   const { prefs, update, error } = account;
   const style = prefs?.style ?? 'natural';
   const forAgents = prefs?.forAgents ?? false;
+  const choice = writingChoice({ style, forAgents });
   const list = projects.projects;
   const create = (name: string) => { void projects.create(name).then((project) => { if (project) onOpenProject(project.id); }); };
   return (
     <>
       <Card title="Your default style">
-        <Row label="Tone" hint={DICTATION_STYLES.find((s) => s.id === style)?.hint}>
+        <Row label="Write it" hint={WRITING_CHOICES.find((c) => c.id === choice)?.hint}>
           <Select
-            label="Dictation tone"
-            value={style}
-            options={TONE_OPTIONS}
+            label="How dictations are written"
+            value={choice}
+            options={WRITING_OPTIONS}
             disabled={!prefs}
-            onChange={(next) => update({ style: next }, { dictationStyle: next })}
+            onChange={(next) => {
+              const writing = writingFor(next, { style, forAgents });
+              update(writing, { dictationStyle: writing.style, dictationForAgents: writing.forAgents });
+            }}
           />
         </Row>
-        <div className="ev-set-row">
-          <Switch
-            className="w-full"
-            checked={forAgents}
-            disabled={!prefs}
-            onCheckedChange={(next) => update({ forAgents: next }, { dictationForAgents: next })}
-            label="Write it as a prompt for AI agents"
-            hint={FOR_AGENTS_HINT}
-          />
-        </div>
         <div className="ev-set-body"><StyleExample style={style} forAgents={forAgents} /></div>
         <Status error={error} />
       </Card>

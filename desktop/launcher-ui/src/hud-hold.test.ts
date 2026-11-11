@@ -44,8 +44,8 @@ test('a save that says why the words were not typed stays long enough to read', 
   expect(holdMs('saved', 'left', 0, 0, null, true)).toBe(LEFT_HOLD_MS);
 });
 
-test('a finished dictation stays long enough to read, fix and copy', () => {
-  expect(DONE_HOLD_MS).toBe(30_000);
+test('a finished dictation stays long enough to read, then gets out of the way', () => {
+  expect(DONE_HOLD_MS).toBe(12_000);
   expect(DRAWER_LEFT_HOLD_MS).toBe(10_000);
   // A failure still gets out of the way quickly once the pointer leaves it.
   expect(holdMs('failed', 'left', 0, 0)).toBe(LEFT_HOLD_MS);
