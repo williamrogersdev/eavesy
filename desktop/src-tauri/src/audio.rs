@@ -467,6 +467,51 @@ pub fn start_screen_capture(
     result
 }
 
+/// The Record screen shortcut: starts a screen recording with the mic, or
+/// stops the one running. Another capture in progress is left alone.
+pub fn toggle_screen_recording(app: &AppHandle) {
+    // One press at a time: a second press while the first is still starting
+    // or stopping is dropped, not raced.
+    static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if BUSY.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let press = screen_press(&crate::hud::current());
+        let result = match &press {
+            ScreenPress::Stop(session_id) => stop_capture(app.clone(), app.state::<Captures>(), session_id.clone()).map(|_| ()),
+            ScreenPress::Start => start_screen_capture(app.clone(), app.state::<Captures>(), Some(true)).map(|_| ()),
+            ScreenPress::Nothing => Ok(()),
+        };
+        BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
+        if let Err(error) = result {
+            crate::commands::show_notice(app, if press == ScreenPress::Start { "Eavesy couldn't start recording" } else { "Eavesy couldn't stop the recording" }.into(), error);
+        }
+    });
+}
+
+#[derive(Debug, PartialEq)]
+enum ScreenPress {
+    Start,
+    Stop(String),
+    Nothing,
+}
+
+/// What a press of Record screen does: stop the screen recording that is
+/// running, however it was started; start one when nothing is being
+/// captured; and nothing during a dictation, a meeting or a capture that is
+/// still starting.
+fn screen_press(now: &crate::hud::HudState) -> ScreenPress {
+    if now.phase != crate::hud::Phase::Recording {
+        return ScreenPress::Start;
+    }
+    match (now.mode.as_deref(), &now.session_id) {
+        (Some("video"), Some(session_id)) => ScreenPress::Stop(session_id.clone()),
+        _ => ScreenPress::Nothing,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn spawn_capture(
     app: &AppHandle,
@@ -1933,6 +1978,17 @@ mod tests {
         assert_eq!(error, "denied");
     }
     use super::*;
+
+    #[test]
+    fn record_screen_starts_when_idle_stops_a_screen_recording_and_leaves_other_captures() {
+        use crate::hud::{HudState, Phase};
+        let live = |mode: &str, session: Option<&str>| HudState { phase: Phase::Recording, mode: Some(mode.into()), session_id: session.map(Into::into), ..HudState::idle() };
+        assert_eq!(screen_press(&HudState::idle()), ScreenPress::Start);
+        assert_eq!(screen_press(&HudState { phase: Phase::Done, ..live("video", Some("s1")) }), ScreenPress::Start);
+        assert_eq!(screen_press(&live("video", Some("s1"))), ScreenPress::Stop("s1".into()));
+        assert_eq!(screen_press(&live("video", None)), ScreenPress::Nothing, "still starting");
+        assert_eq!(screen_press(&live("audio", Some("s2"))), ScreenPress::Nothing, "a dictation or meeting");
+    }
 
     #[test]
     fn a_hint_to_an_engine_that_stopped_reading_fails_instead_of_waiting() {

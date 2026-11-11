@@ -249,6 +249,9 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
       crossUser: { call: { path: `/api/devices/captures/${CAPTURE}`, params: { id: CAPTURE } }, status: 404 },
     },
   },
+  '/api/devices/live': {
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'mints a live-sync ticket for the calling device’s own user’s hub' },
+  },
   '/api/devices/me': {
     GET: { unauthenticated: SIGNED_IN, scopedToCaller: 'describes the calling device' },
     DELETE: { unauthenticated: SIGNED_IN, scopedToCaller: 'signs out the calling device' },

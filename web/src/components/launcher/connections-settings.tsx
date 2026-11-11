@@ -17,6 +17,7 @@ import {
   type MeetingCapturePrefs,
   type CalendarStatus,
   type UpcomingMeeting,
+  syncFailingLine,
 } from '@/lib/api/calendar';
 import { listMcpTokens, revokeMcpToken } from '@/lib/api/mcp-tokens';
 import {
@@ -276,6 +277,7 @@ function Accounts({ signedIn, active }: { signedIn: boolean; active: boolean }) 
               {connection.needsReconnect
                 ? <span className="ev-conn-warn">Google stopped sharing this calendar. Connect it again.</span>
                 : syncedLine(connection.upcoming, connection.calendars)}
+              {!connection.needsReconnect && connection.syncFailing && <span className="ev-conn-warn block">{syncFailingLine(connection.lastSyncAt, Date.now())}</span>}
             </>
           }
           action={

@@ -339,6 +339,15 @@ fn read_mic_reports(app: &AppHandle) {
     }
 }
 
+/// Whether the last calendar fetch failed: a failure is logged once per streak, not every minute.
+static FETCH_FAILING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn fetch_failed(why: impl std::fmt::Display) {
+    if !FETCH_FAILING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        tracing::warn!("meeting watch: could not fetch calendar meetings, will keep trying: {why}");
+    }
+}
+
 async fn fetch_events(app: &AppHandle) -> Option<Vec<Event>> {
     #[derive(Deserialize)]
     struct Answer {
@@ -355,14 +364,21 @@ async fn fetch_events(app: &AppHandle) -> Option<Vec<Event>> {
         .timeout(ACCOUNT_TIMEOUT)
         .send()
         .await
+        .inspect_err(|error| fetch_failed(error))
         .ok()?;
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        fetch_failed("the account no longer accepts this Mac");
         return Some(Vec::new());
     }
     if !response.status().is_success() {
+        fetch_failed(format_args!("the server answered {}", response.status()));
         return None;
     }
-    Some(parse_upcoming(response.json::<Answer>().await.ok()?.upcoming))
+    let answer = response.json::<Answer>().await.inspect_err(|error| fetch_failed(error)).ok()?;
+    if FETCH_FAILING.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        tracing::info!("meeting watch: calendar meetings fetched again");
+    }
+    Some(parse_upcoming(answer.upcoming))
 }
 
 /// The meetings that read as one; a malformed one is left out rather than dropping the calendar.
@@ -439,15 +455,21 @@ fn tick(app: &AppHandle) {
             // Armed only once it is on screen; otherwise the next tick tries again.
             Act::Offer(prompt, until) => {
                 if show_prompt(app, &prompt, prompt.countdown.then_some(until)) {
+                    tracing::info!(key = %prompt.key, countdown = prompt.countdown, "meeting watch: prompt shown");
                     with_watch(|watch| watch.prompt = Some((prompt, until)));
                 }
             }
-            Act::Clear(key) => clear_prompt(app, &key),
+            Act::Clear(key) => {
+                tracing::info!(%key, "meeting watch: prompt cleared without recording");
+                clear_prompt(app, &key);
+            }
             Act::Record(prompt) => {
                 let visible = app.get_webview_window("hud").is_some_and(|window| window.is_visible().unwrap_or(false));
                 if prompt_on_screen(&hud::current(), &prompt_session(&prompt.key), visible) {
+                    tracing::info!(key = %prompt.key, "meeting watch: countdown finished, recording");
                     record(app, &prompt);
                 } else {
+                    tracing::warn!(key = %prompt.key, "meeting watch: countdown finished off screen, not recording");
                     // Replaced or hidden before it finished counting: never record unseen.
                     clear_prompt(app, &prompt.key);
                 }

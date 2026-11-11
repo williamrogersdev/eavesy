@@ -16,7 +16,7 @@ function sampleRecordings(now: number) {
   return [
     { id: 'r1', title: 'Dictation', started_at_ms: now - 0.2 * HOUR, duration_sec: 14, source: 'dictation', status: 'complete', has_audio: true, transcript: 'Remind me to send Priya the revised onboarding deck before Thursday, and ask whether the pricing page copy is final.' },
     { id: 'r2', title: 'Screenshot', started_at_ms: now - 0.9 * HOUR, duration_sec: 0, source: 'screenshot', status: 'complete', has_audio: false },
-    { id: 'r3', title: 'Weekly design sync', started_at_ms: now - 2.5 * HOUR, duration_sec: 1840, source: 'both', status: 'complete', has_audio: true, transcript: 'We agreed the capture panel ships first and the HUD restyle follows. Sam will check the drag and drop on a real Mac. The empty state keeps the mascot but loses the second paragraph. Open question: whether imported audio should be transcribed automatically or only on request. We also talked through the tray icon, which now swaps to the recording glyph while the mic is live, and the screenshot folder watcher, which is now on by default.' },
+    { id: 'r3', title: 'Weekly design sync', started_at_ms: now - 2.5 * HOUR, duration_sec: 1840, source: 'both', status: 'complete', has_audio: true, summary: '# Summary\n\nThe capture panel ships first and the HUD restyle follows. The empty state keeps the mascot but loses its second paragraph.\n\n## Decisions\n\n- The capture panel ships before the HUD restyle\n- The screenshot folder watcher is on by default\n\n## Action items\n\n- Sam checks drag and drop on a real Mac\n\n## Open questions\n\n- Should imported audio be transcribed automatically or only on request?\n', transcript: 'We agreed the capture panel ships first and the HUD restyle follows. Sam will check the drag and drop on a real Mac. The empty state keeps the mascot but loses the second paragraph. Open question: whether imported audio should be transcribed automatically or only on request. We also talked through the tray icon, which now swaps to the recording glyph while the mic is live, and the screenshot folder watcher, which is now on by default.' },
     { id: 'r4', title: 'Note', started_at_ms: now - day - 3 * HOUR, duration_sec: 0, source: 'note', status: 'complete', has_audio: false, transcript: 'Ideas for the onboarding email:\n- lead with the mascot\n- one screenshot, not three' },
     { id: 'r5', title: 'Talk', started_at_ms: now - day - 5 * HOUR, duration_sec: 42, source: 'mic', status: 'processing', has_audio: true },
   ];
@@ -43,7 +43,7 @@ export function installDevMock(): void {
   let copiedText = '';
   const live = params.has('live');
   const settings = {
-    toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', assistant_hotkey: 'Alt+Space', device_id: 'dev', setup_completed: true,
+    toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', assistant_hotkey: 'Alt+Space', screen_hotkey: 'Alt+Shift+R', device_id: 'dev', setup_completed: true,
     recordings_root: '~/Eavesy/Recordings', launcher_position: 'top_center', live_captions: true, add_screenshots: true,
     hud_preview_lines: params.has('lines') ? Number(params.get('lines')) : undefined, hud_translucent: params.has('solid') ? false : undefined,
     fast_live_words: undefined as unknown, hud_result_preview: params.has('receipt') ? false : undefined as boolean | undefined,
@@ -60,7 +60,7 @@ export function installDevMock(): void {
   ];
   let calendars = params.has('noconnections') ? [] : [
     {
-      id: 'cal-1', provider: 'google', accountEmail: 'robin@example.com', lastSyncAt: Date.now() - 60_000, upcoming: 7, needsReconnect: false, canAddCalendars: false,
+      id: 'cal-1', provider: 'google', accountEmail: 'robin@example.com', lastSyncAt: Date.now() - 60_000, upcoming: 7, needsReconnect: false, syncFailing: new URLSearchParams(window.location.search).has('syncfailing'), canAddCalendars: false,
       calendars: [
         { id: 'robin@example.com', name: 'Robin', primary: true, selected: true },
         { id: 'team@group.calendar.google.com', name: 'Team', primary: false, selected: true },
@@ -102,6 +102,7 @@ export function installDevMock(): void {
       return { items: visible.slice(start, start + count).map((row) => ({ ...row, transcript: row.transcript?.slice(0, 2048), transcript_truncated: (row.transcript?.length ?? 0) > 2048, revision: 1 })), next_offset: start + count < visible.length ? start + count : null,
         counts: { all: recordings.length, voice: recordings.filter((row) => category(row) === 'voice').length, meetings: recordings.filter((row) => category(row) === 'meetings').length, screens: recordings.filter((row) => category(row) === 'screens').length, notes: recordings.filter((row) => category(row) === 'notes').length } };
     },
+    open_meeting: ({ id }: Record<string, unknown>) => { console.info('open meeting', id); },
     get_recording: ({ id }: Record<string, unknown>) => { const row = recordings.find((row) => row.id === id); return row ? { ...row, revision: 2 } : null; },
     set_hud_look: ({ lines, translucent, fastLiveWords, resultPreview }: Record<string, unknown>) => {
       Object.assign(settings, { hud_preview_lines: lines, hud_translucent: translucent });
@@ -241,10 +242,10 @@ function installSetupMock(results: Record<string, unknown>): void {
   });
 }
 
-type Bindings = { toggle_hotkey: string; dictation_hotkey: string; assistant_hotkey: string };
-type Action = 'toggle' | 'dictation' | 'assistant';
-const ACTIONS: Action[] = ['toggle', 'dictation', 'assistant'];
-const DEFAULTS: Record<Action, string> = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Space' };
+type Bindings = { toggle_hotkey: string; dictation_hotkey: string; assistant_hotkey: string; screen_hotkey: string };
+type Action = 'toggle' | 'dictation' | 'assistant' | 'screen';
+const ACTIONS: Action[] = ['toggle', 'dictation', 'assistant', 'screen'];
+const DEFAULTS: Record<Action, string> = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Space', screen: 'Alt+Shift+R' };
 const COMMON: Record<string, string> = { C: 'Copy', V: 'Paste', X: 'Cut', A: 'Select All', Z: 'Undo', S: 'Save', Q: 'Quit', W: 'Close' };
 
 /** A rough stand-in for hotkeys.rs + shortcut_conflicts.rs, enough to see every Settings state. */
@@ -284,6 +285,7 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
       settings.toggle_hotkey = DEFAULTS.toggle;
       settings.dictation_hotkey = DEFAULTS.dictation;
       settings.assistant_hotkey = DEFAULTS.assistant;
+      settings.screen_hotkey = DEFAULTS.screen;
       return Promise.resolve(null);
     },
     get_hotkey_defaults: () => Promise.resolve(DEFAULTS),

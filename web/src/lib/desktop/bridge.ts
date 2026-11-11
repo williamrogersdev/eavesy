@@ -939,6 +939,8 @@ export interface Settings {
   toggle_hotkey: string;
   dictation_hotkey: string;
   assistant_hotkey: string;
+  /** Missing from Mac apps older than the Record screen shortcut. */
+  screen_hotkey?: string;
   device_id: string;
   setup_completed: boolean;
   recordings_root?: string | null;
@@ -1009,6 +1011,11 @@ export async function openWebApp(path?: string): Promise<void> {
   await invoke('open_web_app', path ? { path } : undefined);
 }
 
+/** Opens a meeting's page on eavesy.com (notes, summary, transcript, chat). Rejects when it hasn't synced. */
+export async function openMeeting(id: string): Promise<void> {
+  await invoke('open_meeting', { id });
+}
+
 export async function getSettings(): Promise<Settings | null> {
   if (!isDesktop()) return null;
   return invoke<Settings>('get_settings').catch(() => null);
@@ -1050,7 +1057,7 @@ export async function setupStepShown(step: number): Promise<void> {
   await invoke('setup_step_shown', { step }).catch(() => undefined);
 }
 
-export type HotkeyAction = 'toggle' | 'dictation' | 'assistant';
+export type HotkeyAction = 'toggle' | 'dictation' | 'assistant' | 'screen';
 /** Every shortcut; "" means unbound, "Fn" the fn / 🌐 key on its own, "Fn+Space" fn held with a key. */
 export type HotkeyBindings = Record<HotkeyAction, string>;
 /** Why the Mac app refused a shortcut (Rust `HotkeyError`). */
@@ -1093,7 +1100,7 @@ export async function checkAllHotkeys(): Promise<Partial<Record<HotkeyAction, Ho
 }
 
 export async function getHotkeyDefaults(): Promise<HotkeyBindings> {
-  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space' };
+  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space', screen: 'Alt+Shift+R' };
   if (!isDesktop()) return fallback;
   return (await invoke<HotkeyBindings | null>('get_hotkey_defaults').catch(() => null)) ?? fallback;
 }

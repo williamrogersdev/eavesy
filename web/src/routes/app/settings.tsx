@@ -15,7 +15,7 @@ import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocab
 import { ChipInput } from '@/components/ui/chip-input';
 import { SaveToast, useSaveToast } from '@/components/ui/save-toast';
 import { Link } from '@/components/ui/app-link';
-import { disconnectCalendar, getCalendarStatus, NOT_REVOKED, type CalendarStatus } from '@/lib/api/calendar';
+import { disconnectCalendar, getCalendarStatus, NOT_REVOKED, syncFailingLine, type CalendarStatus } from '@/lib/api/calendar';
 
 interface Me {
   id: string;
@@ -662,7 +662,7 @@ function GoogleCalendarRows({ onError }: { onError: (message: string) => void })
           label="Google Calendar"
           hint={connection.needsReconnect
             ? `${connection.accountEmail} · Google stopped sharing this calendar. Connect it again.`
-            : `${connection.accountEmail} · ${connection.upcoming} upcoming ${connection.upcoming === 1 ? 'meeting' : 'meetings'}`}
+            : `${connection.accountEmail} · ${connection.upcoming} upcoming ${connection.upcoming === 1 ? 'meeting' : 'meetings'}${connection.syncFailing ? ` · ${syncFailingLine(connection.lastSyncAt, Date.now())}` : ''}`}
         >
           {connection.needsReconnect ? (
             <a href="/api/connections/google" className={appButton('primary', 'sm')}>Reconnect</a>

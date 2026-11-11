@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { Recording } from '@/lib/launcher/types';
-import { askLabel, clock, countByFilter, dayLabel, filterOf, groupByDay, highlightParts, historyView, kindLabel, plainTranscript, reuseRows, sameRecording, searchFocusOpens, timeOfDay, visibleRecordings } from './history-model';
+import { askLabel, briefCounts, hitOnlyInTranscript, matchesEveryWord, meetingBrief, meetingTitle, clock, countByFilter, dayLabel, filterOf, groupByDay, highlightParts, historyView, kindLabel, plainTranscript, reuseRows, sameRecording, searchFocusOpens, timeOfDay, visibleRecordings } from './history-model';
 
 const NOW = new Date(2026, 9, 17, 15, 0).getTime();
 const at = (daysAgo: number, hour = 10) => new Date(2026, 9, 17 - daysAgo, hour).getTime();
@@ -131,5 +131,46 @@ describe('searchFocusOpens', () => {
   });
   test('the window getting focus back leaves it an icon', () => {
     expect(searchFocusOpens({ asked: false, quiet: false, fromElement: false })).toBe(false);
+  });
+});
+
+describe('meeting rows', () => {
+  const summary = '# Summary\n\nThe team agreed to ship the panel first.\nThe HUD follows.\n\n## Decisions\n\n- Ship the **panel** first\n\n## Action items\n\n- Sam checks drag and drop\n- [ ] Priya sends the deck\n\n## Open questions\n\n';
+
+  test('a meeting is named only once something named it', () => {
+    expect(meetingTitle({ title: 'Meeting recording' })).toBeNull();
+    expect(meetingTitle({ title: ' Untitled recording ' })).toBeNull();
+    expect(meetingTitle({ title: 'Weekly design sync' })).toBe('Weekly design sync');
+  });
+
+  test('reads the overview and the sections that say something', () => {
+    expect(meetingBrief(summary)).toEqual({
+      overview: 'The team agreed to ship the panel first. The HUD follows.',
+      sections: [
+        { heading: 'Decisions', items: ['Ship the panel first'] },
+        { heading: 'Action items', items: ['Sam checks drag and drop', 'Priya sends the deck'] },
+      ],
+    });
+    expect(meetingBrief('Just one line.')).toEqual({ overview: 'Just one line.', sections: [] });
+    expect(meetingBrief('2. The team agreed.')?.overview).toBe('2. The team agreed.');
+    expect(meetingBrief('# Summary\n\n')).toBeNull();
+    expect(meetingBrief(undefined)).toBeNull();
+  });
+
+  test('counts what the brief holds', () => {
+    expect(briefCounts(meetingBrief(summary)!)).toBe('1 decision · 2 action items');
+    expect(briefCounts({ overview: '', sections: [{ heading: 'Risks', items: ['One'] }, { heading: 'Open questions', items: ['Why?'] }] })).toBe('1 risks · 1 open question');
+  });
+
+  test('a hit only in the transcript opens the transcript', () => {
+    expect(hitOnlyInTranscript('invoice', 'We shipped.', 'About the Invoice')).toBe(true);
+    expect(hitOnlyInTranscript('shipped', 'We shipped.', 'We shipped the invoice')).toBe(false);
+    expect(hitOnlyInTranscript('', 'a', 'b')).toBe(false);
+    expect(hitOnlyInTranscript('zebra', 'a', 'b')).toBe(false);
+    expect(hitOnlyInTranscript('drag mac', 'We shipped.', 'Sam checks drag and drop on a real Mac')).toBe(true);
+    expect(hitOnlyInTranscript('shipped mac', 'We shipped.', 'on a real Mac')).toBe(true);
+    expect(matchesEveryWord('Drag  mac', 'drag and drop on a Mac')).toBe(true);
+    expect(matchesEveryWord('drag zebra', 'drag and drop')).toBe(false);
+    expect(matchesEveryWord(' ', 'anything')).toBe(false);
   });
 });

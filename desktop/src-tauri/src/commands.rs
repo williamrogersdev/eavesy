@@ -922,6 +922,24 @@ pub fn open_web_app(app: AppHandle, path: Option<String>) -> Result<(), String> 
     app.shell().open(url, None).map_err(|e| e.to_string())
 }
 
+/// Opens a meeting's page on eavesy.com: its notes, summary, transcript and chat.
+/// `id` is a local recording id, or the meeting id of one brought in from the cloud.
+#[tauri::command(async)]
+#[allow(deprecated)]
+pub fn open_meeting(app: AppHandle, id: String) -> Result<(), String> {
+    use tauri_plugin_shell::ShellExt;
+    let remote = match crate::sqlite::remote_meeting_id(&app, &id)? {
+        Some(remote) => remote,
+        None if crate::cloud_pull::is_pulled(&app, &id) => id,
+        None => return Err("This meeting hasn’t synced to your account yet.".to_string()),
+    };
+    if remote.is_empty() || !remote.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Err("This meeting can’t be opened.".to_string());
+    }
+    let url = format!("{}/app/meetings/{remote}", crate::sync::api_base());
+    app.shell().open(url, None).map_err(|e| e.to_string())
+}
+
 /// A page under /app, such as `/settings#projects`; anything else opens /app.
 fn web_app_path(path: Option<&str>) -> &str {
     match path {

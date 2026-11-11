@@ -11,6 +11,7 @@ mod audio_upload;
 mod base_url;
 mod captions;
 mod capture_sync;
+mod live;
 mod live_transcript;
 mod live_edit;
 mod live_typing;
@@ -258,6 +259,7 @@ pub fn run() {
             front_window::front_window,
             commands::disconnect_account,
             commands::open_web_app,
+            commands::open_meeting,
             commands::show_setup,
             commands::cancel_pairing,
             commands::open_privacy_settings,
@@ -383,6 +385,7 @@ pub fn run() {
 
             tauri::async_runtime::spawn(live_transcript::run(handle.clone()));
             meeting_watch::start(&handle);
+            tauri::async_runtime::spawn(live::run(handle.clone()));
             let sync_handle = handle.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = sync::run(sync_handle).await {

@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 use crate::panel;
-use crate::settings::{self, Settings, DEFAULT_ASSISTANT_HOTKEY, DEFAULT_DICTATION_HOTKEY, DEFAULT_TOGGLE_HOTKEY, OLD_ASSISTANT_HOTKEY};
+use crate::settings::{self, Settings, DEFAULT_ASSISTANT_HOTKEY, DEFAULT_DICTATION_HOTKEY, DEFAULT_SCREEN_HOTKEY, DEFAULT_TOGGLE_HOTKEY, OLD_ASSISTANT_HOTKEY};
 
 pub const EVENT_LAUNCHER_OPENED: &str = "launcher:opened";
 /// A lone fn tap while shortcuts are suspended for recording one in Settings.
@@ -25,23 +25,26 @@ pub enum Action {
     Dictation,
     /// Talk to Eavesy: records like dictation, and the words go to Eavesy.
     Assistant,
+    /// Record the screen: press to start, press again to stop.
+    Screen,
 }
 
 impl Action {
-    pub const ALL: [Action; 3] = [Action::Toggle, Action::Dictation, Action::Assistant];
+    pub const ALL: [Action; 4] = [Action::Toggle, Action::Dictation, Action::Assistant, Action::Screen];
 
     pub fn parse(s: &str) -> Result<Self, HotkeyError> {
         match s {
             "toggle" => Ok(Action::Toggle),
             "dictation" => Ok(Action::Dictation),
             "assistant" => Ok(Action::Assistant),
+            "screen" => Ok(Action::Screen),
             other => Err(HotkeyError::invalid(format!("unknown shortcut action '{other}'"))),
         }
     }
 
     /// The name people see in Settings.
     pub fn label(self) -> &'static str {
-        match self { Action::Toggle => "Open Eavesy", Action::Dictation => "Talk", Action::Assistant => "Talk to Eavesy" }
+        match self { Action::Toggle => "Open Eavesy", Action::Dictation => "Talk", Action::Assistant => "Talk to Eavesy", Action::Screen => "Record screen" }
     }
 
     pub fn default_accelerator(self) -> &'static str {
@@ -49,6 +52,7 @@ impl Action {
             Action::Toggle => DEFAULT_TOGGLE_HOTKEY,
             Action::Dictation => DEFAULT_DICTATION_HOTKEY,
             Action::Assistant => DEFAULT_ASSISTANT_HOTKEY,
+            Action::Screen => DEFAULT_SCREEN_HOTKEY,
         }
     }
 }
@@ -60,20 +64,21 @@ pub enum TakenBy {
     Toggle,
     Dictation,
     Assistant,
+    Screen,
     /// Another app or macOS registered it first.
     Other,
 }
 
 impl From<Action> for TakenBy {
     fn from(action: Action) -> Self {
-        match action { Action::Toggle => TakenBy::Toggle, Action::Dictation => TakenBy::Dictation, Action::Assistant => TakenBy::Assistant }
+        match action { Action::Toggle => TakenBy::Toggle, Action::Dictation => TakenBy::Dictation, Action::Assistant => TakenBy::Assistant, Action::Screen => TakenBy::Screen }
     }
 }
 
 impl TakenBy {
     /// The shortcut's own action, unless another app holds it.
     fn action(self) -> Option<Action> {
-        match self { TakenBy::Toggle => Some(Action::Toggle), TakenBy::Dictation => Some(Action::Dictation), TakenBy::Assistant => Some(Action::Assistant), TakenBy::Other => None }
+        match self { TakenBy::Toggle => Some(Action::Toggle), TakenBy::Dictation => Some(Action::Dictation), TakenBy::Assistant => Some(Action::Assistant), TakenBy::Screen => Some(Action::Screen), TakenBy::Other => None }
     }
 }
 
@@ -243,19 +248,20 @@ pub struct Bindings {
     pub toggle: String,
     pub dictation: String,
     pub assistant: String,
+    pub screen: String,
 }
 
 impl Bindings {
     pub fn defaults() -> Self {
-        Bindings { toggle: DEFAULT_TOGGLE_HOTKEY.into(), dictation: DEFAULT_DICTATION_HOTKEY.into(), assistant: DEFAULT_ASSISTANT_HOTKEY.into() }
+        Bindings { toggle: DEFAULT_TOGGLE_HOTKEY.into(), dictation: DEFAULT_DICTATION_HOTKEY.into(), assistant: DEFAULT_ASSISTANT_HOTKEY.into(), screen: DEFAULT_SCREEN_HOTKEY.into() }
     }
 
     pub fn of(settings: &Settings) -> Self {
-        Bindings { toggle: settings.toggle_hotkey.clone(), dictation: settings.dictation_hotkey.clone(), assistant: settings.assistant_hotkey.clone() }
+        Bindings { toggle: settings.toggle_hotkey.clone(), dictation: settings.dictation_hotkey.clone(), assistant: settings.assistant_hotkey.clone(), screen: settings.screen_hotkey.clone() }
     }
 
     pub fn get(&self, action: Action) -> &str {
-        match action { Action::Toggle => &self.toggle, Action::Dictation => &self.dictation, Action::Assistant => &self.assistant }
+        match action { Action::Toggle => &self.toggle, Action::Dictation => &self.dictation, Action::Assistant => &self.assistant, Action::Screen => &self.screen }
     }
 
     fn set(&mut self, action: Action, accelerator: String) {
@@ -263,6 +269,7 @@ impl Bindings {
             Action::Toggle => self.toggle = accelerator,
             Action::Dictation => self.dictation = accelerator,
             Action::Assistant => self.assistant = accelerator,
+            Action::Screen => self.screen = accelerator,
         }
     }
 }
@@ -279,8 +286,15 @@ pub fn plan(current: &Bindings, action: Action, accelerator: &str, swap: bool) -
         next.set(other, current.get(action).to_string());
     }
     next.set(action, accelerator.to_string());
+    // Checked on the result, so a swap can't hand Record screen an fn shortcut either.
+    if next.screen != current.screen && matches!(keys(&next.screen), Ok(Some(Keys::Fn | Keys::FnChord { .. }))) {
+        return Err(HotkeyError::invalid(SCREEN_RULE));
+    }
     Ok(next)
 }
+
+/// Record screen is a press, not a hold, and fn belongs to talking.
+const SCREEN_RULE: &str = "Record screen needs a shortcut with ⌘, ⌃ or ⌥, not fn.";
 
 /// Held for every change to what is registered, so suspending for recording,
 /// resuming and saving a new shortcut happen one at a time, in order.
@@ -316,9 +330,10 @@ fn register(app: &AppHandle, action: Action, accelerator: &str) -> Result<(), Ho
     if action != Action::Toggle { crate::dictate::reset_key(); }
     let shortcut = match keys(accelerator).map_err(HotkeyError::invalid)? {
         None => return Ok(()),
+        Some(Keys::Fn | Keys::FnChord { .. }) if action == Action::Screen => return Err(HotkeyError::invalid(SCREEN_RULE)),
         Some(Keys::Fn) => {
             #[cfg(target_os = "macos")]
-            return crate::fn_key::bind(app, match action { Action::Toggle => 1, Action::Dictation => 2, Action::Assistant => crate::fn_key::TALK });
+            return crate::fn_key::bind(app, match action { Action::Toggle => 1, Action::Dictation => 2, Action::Assistant | Action::Screen => crate::fn_key::TALK });
             #[cfg(not(target_os = "macos"))]
             return Err(HotkeyError::invalid("fn works on macOS only"));
         }
@@ -348,6 +363,9 @@ fn register(app: &AppHandle, action: Action, accelerator: &str) -> Result<(), Ho
         Action::Assistant => app.global_shortcut().on_shortcut(shortcut, move |app, _shortcut, event| match event.state {
             ShortcutState::Pressed => crate::dictate::talk_key_down(app),
             ShortcutState::Released => crate::dictate::talk_key_up(app),
+        }),
+        Action::Screen => app.global_shortcut().on_shortcut(shortcut, move |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed { crate::audio::toggle_screen_recording(app); }
         }),
     };
     // macOS refuses a hotkey another app already registered.
@@ -492,6 +510,7 @@ fn apply(app: &AppHandle, settings: &mut Settings, current: &Bindings, next: &Bi
         config.toggle_hotkey = next.toggle.clone();
         config.dictation_hotkey = next.dictation.clone();
         config.assistant_hotkey = next.assistant.clone();
+        config.screen_hotkey = next.screen.clone();
         // Someone who chose their Talk to Eavesy shortcut keeps it.
         if next.assistant != current.assistant { config.assistant_hotkey_settled = Some(true); }
     });
@@ -579,7 +598,7 @@ mod tests {
     use super::*;
 
     fn bindings(toggle: &str, dictation: &str) -> Bindings {
-        Bindings { toggle: toggle.into(), dictation: dictation.into(), assistant: DEFAULT_ASSISTANT_HOTKEY.into() }
+        Bindings { toggle: toggle.into(), dictation: dictation.into(), assistant: DEFAULT_ASSISTANT_HOTKEY.into(), screen: DEFAULT_SCREEN_HOTKEY.into() }
     }
 
     #[test]
@@ -610,6 +629,15 @@ mod tests {
         assert_eq!((swapped.dictation.as_str(), swapped.assistant.as_str()), (DEFAULT_ASSISTANT_HOTKEY, "Cmd+Shift+D"));
         assert_eq!(plan(&now, Action::Toggle, DEFAULT_ASSISTANT_HOTKEY, false), Err(HotkeyError::Taken { by: TakenBy::Assistant }));
         assert_eq!(HotkeyError::Taken { by: TakenBy::Assistant }.to_string(), "Already used for Talk to Eavesy.");
+        assert_eq!(plan(&now, Action::Dictation, DEFAULT_SCREEN_HOTKEY, false), Err(HotkeyError::Taken { by: TakenBy::Screen }));
+        assert_eq!(plan(&now, Action::Screen, "Ctrl+Alt+R", false).unwrap().screen, "Ctrl+Alt+R");
+        assert_eq!(plan(&now, Action::Screen, "", false).unwrap().screen, "", "it can be turned off");
+        for fn_key in ["Fn", "Fn+R"] {
+            assert_eq!(plan(&now, Action::Screen, fn_key, false), Err(HotkeyError::invalid(SCREEN_RULE)));
+        }
+        assert_eq!(Action::parse("screen").unwrap().label(), "Record screen");
+        let talk_on_fn = Bindings { dictation: "Fn".into(), ..now.clone() };
+        assert_eq!(plan(&talk_on_fn, Action::Dictation, DEFAULT_SCREEN_HOTKEY, true), Err(HotkeyError::invalid(SCREEN_RULE)), "a swap would give it fn");
         assert_eq!(validate(DEFAULT_ASSISTANT_HOTKEY), Ok(()));
     }
 
@@ -672,7 +700,7 @@ mod tests {
         assert!(same_keys("Fn+Shift+Ctrl+K", "fn+ctrl+shift+k"));
         assert!(!same_keys("Fn+Space", "Space"));
         assert!(!same_keys("Fn", "Fn+Space"));
-        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Fn".into(), assistant: "Fn+Space".into() };
+        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Fn".into(), assistant: "Fn+Space".into(), screen: String::new() };
         assert_eq!(plan(&now, Action::Toggle, "fn+space", false), Err(HotkeyError::Taken { by: TakenBy::Assistant }));
         assert_eq!(plan(&now, Action::Toggle, "Fn+K", false).map(|b| b.toggle), Ok("Fn+K".to_string()));
         assert!(is_fn_chord("Fn+Space") && !is_fn_chord("Fn") && !is_fn_chord("Alt+Space"));

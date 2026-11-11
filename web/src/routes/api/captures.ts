@@ -11,6 +11,7 @@ import { headerText } from '@/lib/http/header-text';
 import { extractVisualText, isSupportedImageType } from '@/lib/vision';
 import { guardUserQuota } from '@/server/rate-limit';
 import { resolveActor } from '@/server/auth';
+import { publishSync } from '@/server/drops-hub';
 import { captureKey, deleteObject, mediaProxyUrl, putObject } from '@/server/r2';
 import { emitWebhookEvent, webhookEnv, webhookItem } from '@/server/webhooks';
 
@@ -149,6 +150,9 @@ export const Route = createFileRoute('/api/captures')({
           await deleteObject(r2Key).catch((cause: unknown) => console.warn('[captures] orphan cleanup failed', r2Key, cause));
           return Response.json({ error: 'upload failed' }, { status: 500 });
         }
+
+        // A screenshot taken on the web: the user's Macs fetch it now.
+        if (capturesRepo.isDeviceShared(mapped.kind)) await publishSync(actor.userId, null);
 
         await activityRepo.log(getDb(), {
           userId: actor.userId,

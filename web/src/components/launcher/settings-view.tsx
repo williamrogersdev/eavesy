@@ -53,6 +53,15 @@ import { useSavedPrompts } from './use-saved-prompts';
 
 export type AccountState = AccountInfo | null | undefined;
 
+/** How the sidebar files its sections; each group has its own index-tab colour. */
+type SettingsGroup = 'recording' | 'words' | 'connected' | 'app';
+const SETTINGS_GROUPS: { id: SettingsGroup; label: string }[] = [
+  { id: 'recording', label: 'Recording' },
+  { id: 'words', label: 'Your words' },
+  { id: 'connected', label: 'Connected' },
+  { id: 'app', label: 'This app' },
+];
+
 const PREVIEW_OPTIONS: { value: string; label: string }[] = [
   { value: '0', label: 'Off' },
   { value: '1', label: '1 line' },
@@ -342,20 +351,20 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
   const projects = useProjects(!!account, onProjectsChanged);
   const prompts = useSavedPrompts(!!account);
   const [openPrompt, setOpenPrompt] = useState<string | null>(null);
-  const sections: { id: SettingsSection; label: string; icon: typeof SlidersHorizontal; hint: string }[] = [
-    { id: 'capture', label: 'Capture', icon: SlidersHorizontal, hint: 'Recording, screenshots, and where things are saved.' },
-    { id: 'dictation', label: 'Dictation', icon: AudioLines, hint: 'How your words are written when Eavesy types them for you.' },
-    { id: 'transcription', label: 'Transcription', icon: Languages, hint: 'The languages Eavesy listens for.' },
-    { id: 'dictionary', label: 'Dictionary', icon: BookOpen, hint: 'Words to spell your way, and words to swap for others.' },
-    { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard, hint: 'Make Eavesy work the way you do.' },
-    { id: 'prompts', label: 'Prompts', icon: MessageSquareText, hint: 'Text you send often, ready to paste or to run as a slash command.' },
-    { id: 'projects', label: 'Projects', icon: FolderOpen, hint: 'Group recordings, words and dictation style by codebase, client or topic.' },
-    { id: 'connections', label: 'Connections', icon: Cable, hint: 'Your Google Calendar, and the AI apps that use Eavesy.' },
-    ...(isDesktop() ? [{ id: 'agents' as const, label: 'Agent notifications', icon: BellRing, hint: 'What your Claude Code sessions and other agents tell you: on a card at the top right, and out loud when they need you.' }] : []),
-    ...(isDesktop() ? [{ id: 'assistant' as const, label: 'Assistant', icon: MessageCircle, hint: 'How Eavesy talks, its voice, how much it does without asking, and what it did.' }] : []),
-    ...(isDesktop() ? [{ id: 'machine' as const, label: 'This Mac', icon: Laptop, hint: 'Worktrees and processes your agent sessions left behind, and cleaning them up.' }] : []),
-    { id: 'permissions', label: 'Permissions', icon: ShieldCheck, hint: 'What Eavesy can use on this Mac, and what it’s connected to.' },
-    { id: 'account', label: 'Account', icon: UserRound, hint: 'Your account, connection, and app updates.' },
+  const sections: { id: SettingsSection; group: SettingsGroup; label: string; icon: typeof SlidersHorizontal; hint: string }[] = [
+    { id: 'capture', group: 'recording' as const, label: 'Capture', icon: SlidersHorizontal, hint: 'Recording, screenshots, and where things are saved.' },
+    { id: 'dictation', group: 'recording' as const, label: 'Dictation', icon: AudioLines, hint: 'How your words are written when Eavesy types them for you.' },
+    { id: 'transcription', group: 'recording' as const, label: 'Transcription', icon: Languages, hint: 'The languages Eavesy listens for.' },
+    { id: 'shortcuts', group: 'recording' as const, label: 'Shortcuts', icon: Keyboard, hint: 'Make Eavesy work the way you do.' },
+    { id: 'dictionary', group: 'words' as const, label: 'Dictionary', icon: BookOpen, hint: 'Words to spell your way, and words to swap for others.' },
+    { id: 'prompts', group: 'words' as const, label: 'Prompts', icon: MessageSquareText, hint: 'Text you send often, ready to paste or to run as a slash command.' },
+    { id: 'projects', group: 'words' as const, label: 'Projects', icon: FolderOpen, hint: 'Group recordings, words and dictation style by codebase, client or topic.' },
+    { id: 'connections', group: 'connected' as const, label: 'Connections', icon: Cable, hint: 'Your Google Calendar, and the AI apps that use Eavesy.' },
+    ...(isDesktop() ? [{ id: 'agents' as const, group: 'connected' as const, label: 'Agent notifications', icon: BellRing, hint: 'What your Claude Code sessions and other agents tell you: on a card at the top right, and out loud when they need you.' }] : []),
+    ...(isDesktop() ? [{ id: 'assistant' as const, group: 'connected' as const, label: 'Assistant', icon: MessageCircle, hint: 'How Eavesy talks, its voice, how much it does without asking, and what it did.' }] : []),
+    ...(isDesktop() ? [{ id: 'machine' as const, group: 'connected' as const, label: 'This Mac', icon: Laptop, hint: 'Worktrees and processes your agent sessions left behind, and cleaning them up.' }] : []),
+    { id: 'permissions', group: 'app' as const, label: 'Permissions', icon: ShieldCheck, hint: 'What Eavesy can use on this Mac, and what it’s connected to.' },
+    { id: 'account', group: 'app' as const, label: 'Account', icon: UserRound, hint: 'Your account, connection, and app updates.' },
   ];
   const activeSection = sections.find((item) => item.id === section) ?? sections[0];
   const [query, setQuery] = useState('');
@@ -574,15 +583,25 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
             />
           </label>
           {!shown.length && <p className="ev-settings-nav-empty">No settings match “{query.trim()}”.</p>}
-          {shown.map(({ id, label, icon: Icon }) => (
-            <button key={id} type="button" aria-current={section === id ? 'page' : undefined} aria-controls={`settings-${id}`} onClick={() => go(id)}>
-              <Icon size={17} strokeWidth={1.75} aria-hidden />{label}
-            </button>
-          ))}
+          {SETTINGS_GROUPS.map((group) => {
+            const items = shown.filter((item) => item.group === group.id);
+            if (!items.length) return null;
+            return (
+              <div key={group.id} className="ev-settings-group" data-group={group.id} role="group" aria-labelledby={`settings-group-${group.id}`}>
+                <h2 id={`settings-group-${group.id}`}>{group.label}</h2>
+                {items.map(({ id, label, icon: Icon }) => (
+                  <button key={id} type="button" aria-current={section === id ? 'page' : undefined} aria-controls={`settings-${id}`} onClick={() => go(id)}>
+                    <span className="ev-settings-tile" aria-hidden><Icon size={14} strokeWidth={2} /></span>{label}
+                  </button>
+                ))}
+              </div>
+            );
+          })}
           <p className="ev-settings-nav-foot">Changes save as you make them.</p>
         </nav>
         <div className="ev-settings-pane">
-          <header className="ev-settings-heading" data-tauri-drag-region={standalone || undefined}>
+          <header className="ev-settings-heading" data-group={activeSection.group} data-tauri-drag-region={standalone || undefined}>
+            <span className="ev-settings-tile" data-size="lg" aria-hidden><activeSection.icon size={19} strokeWidth={1.9} /></span>
             <div className="min-w-0 flex-1">
               <h1>{activeSection.label}</h1>
               <p>{activeSection.hint}</p>
@@ -712,6 +731,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
         <Card title="Shortcuts">
           <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
           <ShortcutRow shortcuts={shortcuts} action="assistant" hint="Hold and ask Eavesy something, or tap to start and stop. It answers on the pill and out loud; esc stops it talking." />
+          <ShortcutRow shortcuts={shortcuts} action="screen" hint="Start a screen recording with your microphone. Press it again to stop." />
           <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Show or hide this panel." />
           {shortcuts.bindings ? <RestoreDefaultShortcuts shortcuts={shortcuts} /> : null}
         </Card>

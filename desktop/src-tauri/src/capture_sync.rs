@@ -56,20 +56,35 @@ const FIRST_CHANGES_WINDOW_MS: i64 = 3 * DAY_MS;
 
 static STATE: StateFile = StateFile::new("capture_sync.json");
 static FAILED: RetryGate = RetryGate::new(FAILED_RETRY);
-/// Set when a capture was just saved here or the launcher opened: the next
-/// pass runs now instead of after the usual pause between passes.
+/// Set when the launcher opened: the next pass runs soon instead of after the
+/// usual pause between passes.
 static NUDGED: AtomicBool = AtomicBool::new(false);
+/// Set when a capture was just saved or edited here, or the server said one
+/// was on another device: the next pass runs now.
+static URGENT: AtomicBool = AtomicBool::new(false);
 
-/// Asks for a pass now: a note or image saved on this Mac goes up at once, and
-/// opening the launcher brings in what the user's other Macs just saved.
+/// Asks for a pass soon: opening the launcher brings in what the user's other
+/// Macs saved, in case the live connection (`live`) missed it.
 pub fn nudge() {
     NUDGED.store(true, Ordering::SeqCst);
     crate::sync::wake();
 }
 
+/// Asks for a pass now: a note or image saved on this Mac goes up at once, and
+/// one the server says was saved elsewhere comes down at once.
+pub fn nudge_now() {
+    URGENT.store(true, Ordering::SeqCst);
+    nudge();
+}
+
 /// Whether a pass was asked for since the last one started.
 pub(crate) fn nudged() -> bool {
     NUDGED.load(Ordering::SeqCst)
+}
+
+/// Whether that pass was asked for with `nudge_now`.
+pub(crate) fn urgent() -> bool {
+    URGENT.load(Ordering::SeqCst)
 }
 
 /// Whether the server asked this Mac to slow down (429) and that pause still runs.
@@ -79,6 +94,7 @@ pub(crate) fn paused<R: Runtime>(app: &AppHandle<R>) -> bool {
 
 /// Clears the request, as a pass is starting.
 pub(crate) fn take_nudge() {
+    URGENT.store(false, Ordering::SeqCst);
     NUDGED.store(false, Ordering::SeqCst);
 }
 
@@ -235,7 +251,7 @@ pub fn note_edited<R: Runtime>(app: &AppHandle<R>, id: &str) {
     if let Err(error) = update_state(app, |state| state.edited.insert(id.to_string())) {
         tracing::warn!(%id, "capture sync: could not record a note edit: {error}");
     }
-    nudge();
+    nudge_now();
 }
 
 fn text_hash(text: &str) -> String {
