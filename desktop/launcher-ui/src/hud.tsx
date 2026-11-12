@@ -1463,6 +1463,7 @@ function Hud() {
     top = <>{errorSay}<span className="ctl-fill" />{close}</>;
   } else {
     // Open Eavesy leads the pill, away from Hide: a sure way in that can't start a capture or put the control away.
+    // Never disabled: opening the panel is safe to repeat, and it is the way to a capture that is starting or being written.
     top = (
       <>
         <button type="button" onClick={() => act('show_launcher')} aria-label="Open Eavesy" title="Open Eavesy" className="ctl-btn ctl-icon ctl-home"><House className="h-3.5 w-3.5" /></button>

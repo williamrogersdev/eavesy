@@ -408,6 +408,11 @@ body {
 /* Open Eavesy, first on the resting pill: a hairline sets it apart from the capture buttons. */
 .ctl-home { position: relative; margin-right: 4px; }
 .ctl-home::after { content: ''; position: absolute; right: -4px; top: 6px; bottom: 6px; width: 1px; background: var(--ctl-line); }
+/* The pill is one fixed width whatever the Talk shortcut is. A shortcut too
+   long to leave 12px of bare room (to drag by) wraps under Talk, out of
+   sight, rather than pushing a button off the edge; the tooltip still names it. */
+.ctl-home ~ .ctl-talk { flex: 0 1 auto; flex-wrap: wrap; justify-content: flex-start; align-content: flex-start; min-width: 0; padding-block: 4px; overflow: hidden; }
+.ctl-home ~ .ctl-fill { min-width: 12px; }
 .ctl-kbd {
   margin-left: 1px;
   padding: 0 5px;
