@@ -183,7 +183,7 @@ const STEPS = [
 
 const MODES = [
   { icon: AudioLines, title: 'Talk', body: 'Dictate into any app, or keep a voice note. Your mic only.' },
-  { icon: Users, title: 'Meeting', body: 'Both sides of a call, from your mic and system audio. No bot joins.' },
+  { icon: Users, title: 'Meeting', body: 'Both sides of a call, from your mic and system audio.' },
   { icon: Clapperboard, title: 'Video', body: 'Your screen with its sound and your voice, for walkthroughs and bug reports.' },
   { icon: Camera, title: 'Screenshots and clipboard', body: 'Screenshots, pasted text and dropped files, all in one searchable history.' },
 ];
