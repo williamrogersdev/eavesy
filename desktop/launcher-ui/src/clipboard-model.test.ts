@@ -8,7 +8,11 @@ describe('day headings', () => {
   test('today, yesterday, then the date', () => {
     expect(dayLabel(NOON - HOUR, NOON)).toBe('Today');
     expect(dayLabel(NOON - 13 * HOUR, NOON)).toBe('Yesterday');
-    expect(dayLabel(NOON - 72 * HOUR, NOON)).not.toMatch(/Today|Yesterday|2026/);
+    // Monday 9 November: the weekday and the day, and no year in the same year.
+    const earlier = dayLabel(NOON - 72 * HOUR, NOON);
+    expect(earlier).toBe(new Date(2026, 10, 9).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }));
+    expect(earlier).toContain('9');
+    expect(earlier).not.toContain('2026');
     // Another year says which.
     expect(dayLabel(new Date(2025, 11, 30, 12).getTime(), NOON)).toContain('2025');
   });

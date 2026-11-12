@@ -134,12 +134,15 @@ function ClipboardPanel() {
     selection.current = { ...selection.current, clips: left, clipId: next };
     setClips(left);
     setClipId(next);
-    void invoke('clipboard_delete', { id: clip }).catch((error) => setNotice(errMsg(error))).then(() => load(query));
+    // If it couldn't be removed, the row comes back and the reason stays up.
+    void invoke('clipboard_delete', { id: clip }).then(() => load(query), (error) => { setClips(rows); setClipId(clip); setNotice(errMsg(error)); });
   }, [view, load, query]);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.isComposing) return;
+      // After a click in the preview (to select some of it), typing goes back to the search field.
+      if (event.key.length === 1 && !event.metaKey && !event.ctrlKey && document.activeElement !== input.current) input.current?.focus();
       const { clips: clipRows, shots: shotRows, clipId: clip, shotId: shot } = selection.current;
       if (event.key === 'Tab') {
         event.preventDefault();
@@ -187,7 +190,12 @@ function ClipboardPanel() {
   const searching = query.trim().length > 0;
 
   return (
-    <div className="ev ev-clip" onMouseDown={(event) => { if (!(event.target instanceof HTMLInputElement)) { stay(event); input.current?.focus(); } }}>
+    <div className="ev ev-clip" onMouseDown={(event) => {
+      // The search field and the preview's text take their own clicks; anywhere else keeps the keyboard in the field.
+      if (event.target instanceof HTMLInputElement || (event.target instanceof Element && event.target.closest('.ev-clip-content pre'))) return;
+      stay(event);
+      input.current?.focus();
+    }}>
       <header className="ev-clip-top">
         <Search size={16} strokeWidth={1.75} aria-hidden className="ev-clip-search-icon" />
         <input
