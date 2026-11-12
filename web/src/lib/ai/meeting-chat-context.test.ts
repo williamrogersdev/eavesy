@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { MAX_CHAT_TRANSCRIPT, meetingChatContext, meetingClock } from './meeting-chat-context';
+import { keepEnd, MAX_CHAT_TRANSCRIPT, meetingChatContext, meetingClock } from './meeting-chat-context';
 
 const START = Date.UTC(2026, 10, 12, 15, 0, 0);
 const meeting = { title: 'Pricing call', startedAt: START, status: 'complete' };
@@ -50,5 +50,30 @@ describe('meetingChatContext', () => {
     expect(context).not.toContain('Line number 0 ');
     // The cut falls on a line start.
     expect(context.split('each line starts with its time into the meeting):\n')[1]?.startsWith('[')).toBe(true);
+  });
+
+  it('takes what the Mac heard only for a meeting still going on, and says it is not the transcript', () => {
+    const live = meetingChatContext({ meeting: { ...meeting, status: 'recording' }, segments: [] }, { heard: 'something about the budget' });
+    expect(live).toContain('No transcript has been written yet.');
+    expect(live).toContain('unchecked live captions, not the transcript');
+    expect(live).toContain('something about the budget');
+    expect(live).not.toContain('after the transcript above');
+    // A finished meeting has its transcript: nothing a client adds is read as part of it.
+    const done = meetingChatContext({ meeting, segments: [{ startMs: 0, text: 'Hello.', speakerId: null }] }, { heard: 'made-up words' });
+    expect(done).not.toContain('made-up words');
+  });
+});
+
+describe('keepEnd', () => {
+  it('cuts one very long line where it falls, never through a character', () => {
+    const long = 'x'.repeat(500) + '😀' + 'y'.repeat(9);
+    // Ten units from the end is the emoji's second half: it is dropped whole.
+    expect(keepEnd(long, 10)).toBe('y'.repeat(9));
+    expect(keepEnd(long, 11)).toBe('😀' + 'y'.repeat(9));
+    expect(keepEnd('short', 10)).toBe('short');
+  });
+
+  it('starts at a line start when one is near', () => {
+    expect(keepEnd('[0:01] one\n[0:02] two\n[0:03] three', 22)).toBe('[0:03] three');
   });
 });

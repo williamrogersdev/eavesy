@@ -1,11 +1,10 @@
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { isRecord, optionalString } from '@/lib/json';
-import { MCP_URL, parseMcpTokens, type McpToken } from '@/lib/mcp-tokens';
-import { AppAlert, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
+import { cn } from '@/lib/utils';
+import { AppAlert, AppPage, AppPageHeader, AppRow as Row, AppSection, appButton, appInput as input } from '@/components/ui/app-page';
 import { AccountData } from '@/components/settings/account-data';
-import { WebhookSettings } from '@/components/settings/webhook-settings';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
 import { NOTES_LANGUAGES } from '@/lib/transcription/language';
@@ -16,7 +15,6 @@ import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocab
 import { ChipInput } from '@/components/ui/chip-input';
 import { SaveToast, useSaveToast } from '@/components/ui/save-toast';
 import { Link } from '@/components/ui/app-link';
-import { disconnectCalendar, getCalendarStatus, NOT_REVOKED, syncFailingLine, type CalendarStatus } from '@/lib/api/calendar';
 
 interface Me {
   id: string;
@@ -51,15 +49,20 @@ interface Me {
   openRouterConnectedAt?: number | null;
 }
 
-/** A client config with the token in the Authorization header, not the URL. */
-function mcpClientConfig(serverUrl: string, token: string): string {
-  return JSON.stringify(
-    { mcpServers: { eavesy: { type: 'http', url: serverUrl, headers: { Authorization: `Bearer ${token}` } } } },
-    null,
-    2,
-  );
-}
+const TABS = [
+  { id: 'general', label: 'General' },
+  { id: 'transcription', label: 'Transcription' },
+  { id: 'notes', label: 'Notes and email' },
+  { id: 'data', label: 'Your data' },
+] as const;
+type Tab = (typeof TABS)[number]['id'];
 
+/** The tab a URL hash opens; `#email` is linked from notes emails. */
+function tabForHash(hash: string): Tab {
+  const id = hash.replace(/^#/, '');
+  if (id === 'email') return 'notes';
+  return TABS.find((tab) => tab.id === id)?.id ?? 'general';
+}
 
 export const Route = createFileRoute('/app/settings')({
   component: SettingsPage,
@@ -68,27 +71,20 @@ export const Route = createFileRoute('/app/settings')({
 function SettingsPage() {
   const [me, setMe] = useState<Me | null>(null);
   const [saving, setSaving] = useState(false);
-  const [anthropic, setAnthropic] = useState('');
   const [displayName, setDisplayName] = useState('');
+  // Read from the URL after hydration, so the server and first client render agree.
+  const [tab, setTab] = useState<Tab>('general');
   const vocabularySave = useRef(0);
   const savedVocabulary = useRef<{ attempt: number; words: string[] }>({ attempt: 0, words: [] });
   const navigate = useNavigate();
   const toast = useSaveToast();
-  const [mcpTokens, setMcpTokens] = useState<McpToken[]>([]);
-  const [newMcpConfig, setNewMcpConfig] = useState<string | null>(null);
-  const [newMcpKey, setNewMcpKey] = useState<string | null>(null);
-  const [mcpCopyStatus, setMcpCopyStatus] = useState<'idle' | 'copied'>('idle');
-  const [mcpBusy, setMcpBusy] = useState(false);
-  const [mcpAllowWrite, setMcpAllowWrite] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Read from the URL after hydration, so the server and first client render agree.
-  const [notice, setNotice] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
-    if (window.location.hash === '#projects') void navigate({ to: '/app/projects', replace: true });
-  }, [navigate]);
-
-  useEffect(() => {
+    if (window.location.hash === '#projects') {
+      void navigate({ to: '/app/projects', replace: true });
+      return;
+    }
     const params = new URLSearchParams(window.location.search);
     // Old Mac builds opened /app/settings?pair=CODE; /connect/mac approves codes now.
     const pairCode = params.get('pair');
@@ -96,17 +92,21 @@ function SettingsPage() {
       window.location.replace(`/connect/mac?code=${encodeURIComponent(pairCode)}`);
       return;
     }
-    if (params.get('connected') === 'openrouter') {
-      setNotice({ kind: 'ok', text: 'OpenRouter connected — chat, translation, regenerated briefs and screenshot descriptions now bill to your account.' });
-    } else if (params.get('error')?.startsWith('openrouter')) {
-      setNotice({ kind: 'error', text: 'Could not connect OpenRouter. Please try again.' });
-    }
-    const googleNotice = googleOutcome(params);
-    if (googleNotice) setNotice(googleNotice);
+    // Connections moved to Integrations; an old link's outcome is shown there.
     if (params.has('connected') || params.has('error')) {
-      window.history.replaceState({}, '', '/app/settings');
+      window.location.replace(`/app/integrations?${params.toString()}`);
+      return;
     }
-  }, []);
+    const followHash = () => setTab(tabForHash(window.location.hash));
+    followHash();
+    window.addEventListener('hashchange', followHash);
+    return () => window.removeEventListener('hashchange', followHash);
+  }, [navigate]);
+
+  const openTab = (next: Tab) => {
+    setTab(next);
+    window.history.replaceState({}, '', next === 'general' ? '/app/settings' : `/app/settings#${next}`);
+  };
 
   useEffect(() => {
     void fetch('/api/me')
@@ -119,40 +119,20 @@ function SettingsPage() {
         savedVocabulary.current = { attempt: 0, words: account.customVocabulary };
       })
       .catch(() => setError('Could not load account settings.'));
-    void fetch('/api/mcp-tokens')
-      .then(async (response): Promise<unknown> => (response.ok ? response.json() : []))
-      .then((tokens) => setMcpTokens(parseMcpTokens(tokens)))
-      .catch(() => setError('Could not load MCP connections.'));
   }, []);
 
-  const save = async () => {
+  const saveName = async () => {
     setSaving(true);
     setError(null);
     try {
-      const payload: Record<string, string> = {
-        displayName,
-        defaultTranscriptionEngine: 'whisper',
-      };
-      if (anthropic) payload.byoAnthropicKey = anthropic;
       const response = await fetch('/api/me', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ displayName }),
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
-      if (!anthropic) {
-        setMe((current) => (current ? { ...current, displayName: displayName.trim() } : current));
-        void refreshMe();
-        toast.show();
-        return;
-      }
-      const freshResponse = await fetch('/api/me');
-      if (!freshResponse.ok) throw new Error(`Server returned ${freshResponse.status}`);
-      const fresh = parseMe(await freshResponse.json());
-      if (!fresh) throw new Error('Server returned invalid account settings');
-      setMe(fresh);
+      setMe((current) => (current ? { ...current, displayName: displayName.trim() } : current));
       void refreshMe();
-      setAnthropic('');
       toast.show();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not save settings.');
@@ -222,515 +202,262 @@ function SettingsPage() {
     }
   };
 
-
-  const createMcpToken = async () => {
-    setMcpBusy(true);
-    setError(null);
-    try {
-      const response = await fetch('/api/mcp-tokens', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ name: 'AI assistant', scopes: mcpAllowWrite ? ['read', 'write'] : ['read'] }),
-      });
-      if (!response.ok) throw new Error('Could not create MCP connection');
-      const created: unknown = await response.json();
-      const serverUrl = isRecord(created) ? optionalString(created.serverUrl) : undefined;
-      const token = isRecord(created) ? optionalString(created.token) : undefined;
-      if (!serverUrl || !token) throw new Error('Server returned an invalid MCP connection');
-      setNewMcpConfig(mcpClientConfig(serverUrl, token));
-      setNewMcpKey(token);
-      setMcpCopyStatus('idle');
-      const refreshResponse = await fetch('/api/mcp-tokens');
-      if (!refreshResponse.ok) throw new Error('Could not refresh MCP connections');
-      setMcpTokens(parseMcpTokens(await refreshResponse.json()));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Could not create MCP connection.');
-    } finally {
-      setMcpBusy(false);
-    }
-  };
-
-  const revokeMcpToken = async (id: string) => {
-    setError(null);
-    const response = await fetch('/api/mcp-tokens', {
-      method: 'DELETE',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ id }),
-    });
-    if (!response.ok) throw new Error('Could not revoke MCP connection');
-    setMcpTokens((tokens) => tokens.filter((token) => token.id !== id));
-    setNewMcpConfig(null);
-    setNewMcpKey(null);
-    setMcpCopyStatus('idle');
-  };
-
-  const copyMcpConfig = async () => {
-    if (!newMcpConfig) return;
-    try {
-      await navigator.clipboard.writeText(newMcpConfig);
-      setMcpCopyStatus('copied');
-    } catch {
-      setError('Could not copy the MCP configuration. Select it and copy it manually.');
-    }
-  };
-
-  const disconnectOpenRouter = async () => {
-    setError(null);
-    const response = await fetch('/api/connections/openrouter', { method: 'DELETE' });
-    if (!response.ok) throw new Error('Could not disconnect OpenRouter');
-    const freshResponse = await fetch('/api/me');
-    if (!freshResponse.ok) throw new Error('Could not refresh account settings');
-    const fresh = parseMe(await freshResponse.json());
-    if (!fresh) throw new Error('Server returned invalid account settings');
-    setMe(fresh);
-  };
-
   if (!me && error) {
-    return <AppPage width="compact"><AppAlert>{error}</AppAlert></AppPage>;
+    return <AppPage width="reading"><AppAlert>{error}</AppAlert></AppPage>;
   }
   if (!me) {
-    return <AppPage width="compact"><p role="status" className="text-sm text-ev-ink-2">Loading settings…</p></AppPage>;
+    return <AppPage width="reading"><p role="status" className="text-sm text-ev-ink-2">Loading settings…</p></AppPage>;
   }
 
   const nameChanged = displayName.trim() !== (me.displayName ?? '');
-  const input = 'h-9 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm outline-none focus:border-ev-coat';
 
   return (
-    <AppPage width="compact">
+    <AppPage width="reading">
       <AppPageHeader title="Settings" />
 
+      <div role="tablist" aria-label="Settings" className="flex gap-1 overflow-x-auto border-b border-ev-line">
+        {TABS.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            role="tab"
+            id={`settings-tab-${item.id}`}
+            aria-selected={tab === item.id}
+            aria-controls="settings-panel"
+            onClick={() => openTab(item.id)}
+            className={cn(
+              '-mb-px shrink-0 border-b-2 px-3 pb-2.5 pt-1 font-round text-[13.5px] font-bold transition',
+              tab === item.id ? 'border-ev-coat text-ev-coat' : 'border-transparent text-ev-ink-2 hover:text-ev-ink',
+            )}
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+
       {error ? <AppAlert>{error}</AppAlert> : null}
-      {notice ? <AppAlert tone={notice.kind === 'ok' ? 'success' : 'danger'}>{notice.text}</AppAlert> : null}
 
-
-      <AppSection title="Account">
-        <Row label="Email">
-          <span className="text-sm">{me.email ?? '—'}</span>
-        </Row>
-        <Row label="Name" htmlFor="settings-display-name">
-          <div className="flex w-full gap-2">
-            <input
-              id="settings-display-name"
-              type="text"
-              autoComplete="name"
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && nameChanged && !saving) void save();
-              }}
-              className={input}
-            />
-            {nameChanged ? (
-              <button type="button" onClick={() => void save()} disabled={saving} className={appButton('primary')}>
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-            ) : null}
-          </div>
-        </Row>
-      </AppSection>
-
-      <AppSection title="AI models">
-        <Row
-          label="Meeting notes and questions"
-          hint={`Writes the notes after a meeting and answers what you ask about it. ${modelNote(me.notesModel, DEFAULT_NOTES_MODEL)}`}
-          htmlFor="settings-notes-model"
-        >
-          <select
-            id="settings-notes-model"
-            value={me.notesModel ?? ''}
-            onChange={(e) => void saveLanguage({ notesModel: e.target.value || null })}
-            className={`${input} sm:w-56`}
-          >
-            {modelOptions(DEFAULT_NOTES_MODEL).map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </Row>
-        <Row
-          label="Eavesy assistant"
-          hint={`What you talk to on the Mac. ${modelNote(me.assistantModel, DEFAULT_ASSISTANT_MODEL)}`}
-          htmlFor="settings-assistant-model"
-        >
-          <select
-            id="settings-assistant-model"
-            value={me.assistantModel ?? ''}
-            onChange={(e) => void saveLanguage({ assistantModel: e.target.value || null })}
-            className={`${input} sm:w-56`}
-          >
-            {modelOptions(DEFAULT_ASSISTANT_MODEL).map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </Row>
-      </AppSection>
-
-      <AppSection title="Transcription">
-        <Row
-          label="Languages you speak"
-          hint="Eavesy picks up whichever of these is spoken, line by line, even when a call switches between them. Leave it empty to detect any language."
-          htmlFor="settings-language"
-        >
-          <SpokenLanguages
-            id="settings-language"
-            value={me.spokenLanguages}
-            onChange={(spokenLanguages) => void saveLanguage({ spokenLanguages, defaultLanguage: 'auto' })}
-          />
-        </Row>
-        <Row
-          label="Notes language"
-          hint="Notes are written in this language, and transcripts in any other language get a Translate button. Same as the meeting keeps each meeting in the language it was spoken in."
-          htmlFor="settings-notes-language"
-        >
-          <select
-            id="settings-notes-language"
-            value={me.notesLanguage ?? ''}
-            onChange={(e) => void saveLanguage({ notesLanguage: e.target.value || null })}
-            className={`${input} sm:w-56`}
-          >
-            <option value="">Same as the meeting</option>
-            {NOTES_LANGUAGES.map((language) => (
-              <option key={language.code} value={language.code}>
-                {language.label}
-              </option>
-            ))}
-          </select>
-        </Row>
-        <Row
-          label="Write dictation"
-          hint={WRITING_CHOICES.find((choice) => choice.id === writingChoice({ style: me.dictationStyle, forAgents: me.dictationForAgents }))?.hint ?? ''}
-          htmlFor="settings-dictation-style"
-        >
-          <select
-            id="settings-dictation-style"
-            value={writingChoice({ style: me.dictationStyle, forAgents: me.dictationForAgents })}
-            onChange={(e) => {
-              if (!isWritingChoice(e.target.value)) return;
-              const writing = writingFor(e.target.value, { style: me.dictationStyle, forAgents: me.dictationForAgents });
-              void saveLanguage({ dictationStyle: writing.style, dictationForAgents: writing.forAgents });
-            }}
-            className={`${input} sm:w-56`}
-          >
-            {WRITING_CHOICES.map((choice) => (
-              <option key={choice.id} value={choice.id}>
-                {choice.label}
-              </option>
-            ))}
-          </select>
-        </Row>
-        <div className="flex flex-col gap-1.5">
-          <div>
-            <label htmlFor="settings-vocabulary" className="text-sm">Custom words</label>
-            <p className="text-xs text-ev-ink-2">
-              Names, products and jargon to spell your way in every recording. Words for one client or codebase belong
-              in <Link href="/app/projects" className="underline underline-offset-2 hover:text-ev-ink">Projects</Link>.
-            </p>
-          </div>
-          <ChipInput
-            id="settings-vocabulary"
-            label="Custom words"
-            value={me.customVocabulary}
-            onChange={(next) => void saveVocabulary(next)}
-            max={MAX_VOCABULARY_TERMS}
-            maxLength={MAX_TERM_LENGTH}
-            placeholder="Eavesy, Priya Raman, Kubernetes…"
-            hint="Press Enter or comma after each, or paste a list. Saves as you go."
-          />
-        </div>
-      </AppSection>
-
-      <TemplateManager />
-
-      <AppSection
-        id="email"
-        title="Email"
-        description={me.emailRecapsAvailable
-          ? `After a meeting, Eavesy emails ${me.email ?? 'you'} its notes: the TL;DR, decisions, action items and a link to the transcript. Only you get it, unless you send it on.`
-          : 'Email is not set up on this server.'}
-      >
-        <Row label="Email me notes after every meeting" hint="One email per finished meeting, to your account's address." htmlFor="settings-email-recaps">
-          <input
-            id="settings-email-recaps"
-            type="checkbox"
-            checked={me.emailRecaps}
-            disabled={!me.emailRecapsAvailable || me.isAnonymous || !me.email}
-            onChange={(e) => void saveRecaps({ emailRecaps: e.target.checked })}
-          />
-        </Row>
-        <Row label="Include the transcript" hint="Attaches the full transcript as a text file, to your notes and to notes you send on." htmlFor="settings-email-recap-transcript">
-          <input
-            id="settings-email-recap-transcript"
-            type="checkbox"
-            checked={me.emailRecapTranscript}
-            disabled={!me.emailRecapsAvailable}
-            onChange={(e) => void saveRecaps({ emailRecapTranscript: e.target.checked })}
-          />
-        </Row>
-        <Row label="Offer “Send to everyone”" hint="A button in your notes email and on each meeting that sends the notes to the people who were there. You review the list first." htmlFor="settings-share-notes-offer">
-          <input
-            id="settings-share-notes-offer"
-            type="checkbox"
-            checked={me.shareNotesOffer}
-            disabled={!me.emailRecapsAvailable}
-            onChange={(e) => void saveRecaps({ shareNotesOffer: e.target.checked })}
-          />
-        </Row>
-        <Row
-          label="Who can receive it"
-          hint={me.shareNotesScope === 'domain' && !me.companyDomain
-            ? 'Your address is a personal one, so nobody counts as your company: switch to Everyone to send notes on.'
-            : 'Applies to “Send to everyone” and to automatic sending.'}
-          htmlFor="settings-share-notes-scope"
-        >
-          <select
-            id="settings-share-notes-scope"
-            value={me.shareNotesScope}
-            disabled={!me.emailRecapsAvailable}
-            onChange={(e) => void saveRecaps({ shareNotesScope: e.target.value === 'domain' ? 'domain' : 'everyone' })}
-            className={`${input} sm:w-56`}
-          >
-            <option value="everyone">Everyone</option>
-            <option value="domain">{me.companyDomain ? `Only people at ${me.companyDomain}` : 'Only my company’s domain'}</option>
-          </select>
-        </Row>
-        <Row label="Send to attendees automatically" hint="Right after your own notes arrive, the calendar guests allowed above get them too, without asking you first." htmlFor="settings-share-notes-auto">
-          <input
-            id="settings-share-notes-auto"
-            type="checkbox"
-            checked={me.shareNotesAuto}
-            disabled={!me.emailRecapsAvailable || !me.emailRecaps}
-            onChange={(e) => void saveRecaps({ shareNotesAuto: e.target.checked })}
-          />
-        </Row>
-      </AppSection>
-
-      <AppSection title="Accounts" description="Calendars Eavesy can read.">
-        <GoogleCalendarRows onError={setError} />
-      </AppSection>
-
-      <AppSection title="AI providers" description="Optional. Without these, Eavesy’s own AI is used.">
-        <Row
-          label="OpenRouter"
-          hint={me.hasOpenRouterKey ? 'Connected — chat, translation, regenerated briefs and screenshot descriptions bill to your OpenRouter credits. Recordings are still summarized on Eavesy\'s account, or your Anthropic key.' : 'Run chat, translation, regenerated briefs and screenshot descriptions on your own account.'}
-        >
-          {me.hasOpenRouterKey ? (
-            <button
-              type="button"
-              onClick={() => void disconnectOpenRouter().catch((cause: unknown) => {
-                setError(cause instanceof Error ? cause.message : 'Could not disconnect OpenRouter.');
-              })}
-              className={appButton('secondary', 'sm')}
-            >
-              Disconnect
-            </button>
-          ) : (
-            <a href="/api/connections/openrouter" className={appButton('secondary', 'sm')}>
-              Connect
-            </a>
-          )}
-        </Row>
-        <Row
-          label="Anthropic API key"
-          hint={me.anthropicKeyHint ? `Current key ends ${me.anthropicKeyHint}. Summaries and chat bill to it.` : 'Summaries and chat bill to your Anthropic account.'}
-          htmlFor="settings-anthropic-key"
-        >
-          <div className="flex w-full gap-2">
-            <input
-              id="settings-anthropic-key"
-              type="password"
-              placeholder="sk-ant-…"
-              value={anthropic}
-              onChange={(e) => setAnthropic(e.target.value)}
-              autoComplete="off"
-              className={input}
-            />
-            {anthropic ? (
-              <button type="button" onClick={() => void save()} disabled={saving} className={appButton('primary')}>
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-            ) : null}
-          </div>
-        </Row>
-      </AppSection>
-
-      <AppSection
-        title="AI apps and API keys"
-        description={`Claude, ChatGPT and Claude Code connect by signing in at ${MCP_URL}. For an app that can’t sign in, or for the Eavesy API (${MCP_URL}/v1), make a key here: read-only unless you allow writes, and it stops working after 90 days unused.`}
-        action={
-          <span className="flex items-center gap-3">
-            <label className="flex items-center gap-1.5 text-xs text-ev-ink-2">
-              <input
-                type="checkbox"
-                checked={mcpAllowWrite}
-                onChange={(event) => setMcpAllowWrite(event.target.checked)}
-              />
-              Allow writes
-            </label>
-            <button type="button" onClick={() => void createMcpToken()} disabled={mcpBusy} className={appButton('secondary', 'sm')}>
-              {mcpBusy ? 'Creating…' : 'New key'}
-            </button>
-          </span>
-        }
-      >
-        {newMcpConfig ? (
-          <AppAlert tone="success">
-            <p className="text-xs font-medium">
-              Add this to your assistant’s MCP settings now. The key won’t be shown again.
-            </p>
-            <div className="mt-2 flex items-start gap-2">
-              <textarea
-                readOnly
-                value={newMcpConfig}
-                rows={newMcpConfig.split('\n').length}
-                wrap="off"
-                aria-label="New MCP configuration"
-                className="min-w-0 flex-1 resize-none rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-2 py-1 font-mono text-xs text-ev-ink"
-              />
-              <button type="button" onClick={() => void copyMcpConfig()} className={appButton('secondary', 'sm')}>
-                {mcpCopyStatus === 'copied' ? 'Copied' : 'Copy'}
-              </button>
-            </div>
-            {newMcpKey ? (
-              <p className="mt-2 text-xs">
-                For the API, send it as <code className="font-mono">Authorization: Bearer {newMcpKey}</code>.{' '}
-                <a href={`${MCP_URL}/v1/openapi.json`} className="underline">OpenAPI spec</a>
-              </p>
-            ) : null}
-            <p aria-live="polite" className="sr-only">
-              {mcpCopyStatus === 'copied' ? 'MCP configuration copied to clipboard.' : ''}
-            </p>
-          </AppAlert>
-        ) : null}
-        {mcpTokens.length ? (
-          <ul className="divide-y divide-ev-line rounded-[var(--ev-r-ctl)] border border-ev-line">
-            {mcpTokens.map((token) => (
-              <li key={token.id} className="flex items-center justify-between gap-3 px-3 py-2 text-sm">
-                <span className="min-w-0">
-                  <span className="block truncate">
-                    {token.name}
-                    <span className="ml-2 text-xs text-ev-ink-2">
-                      {token.canWrite ? 'read & write · ' : 'read-only · '}
-                      {token.lastUsedAt ? `used ${new Date(token.lastUsedAt).toLocaleDateString()}` : 'not used yet'}
-                      {token.expiresAt
-                        ? token.expiresAt <= Date.now()
-                          ? ' · expired'
-                          : ` · expires ${new Date(token.expiresAt).toLocaleDateString()} if unused`
-                        : null}
-                    </span>
-                  </span>
-                  {token.usesLegacyUrl ? (
-                    <span className="block text-xs text-ev-warn-ink">
-                      Uses the old URL-based setup, which is being retired. Create a new connection and replace it.
-                    </span>
+      <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${tab}`} className="flex max-w-2xl flex-col gap-5">
+        {tab === 'general' ? (
+          <>
+            <AppSection title="Account">
+              <Row label="Email">
+                <span className="text-sm">{me.email ?? '—'}</span>
+              </Row>
+              <Row label="Name" htmlFor="settings-display-name">
+                <div className="flex w-full gap-2">
+                  <input
+                    id="settings-display-name"
+                    type="text"
+                    autoComplete="name"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && nameChanged && !saving) void saveName();
+                    }}
+                    className={input}
+                  />
+                  {nameChanged ? (
+                    <button type="button" onClick={() => void saveName()} disabled={saving} className={appButton('primary')}>
+                      {saving ? 'Saving…' : 'Save'}
+                    </button>
                   ) : null}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => void revokeMcpToken(token.id).catch((cause: unknown) => {
-                    setError(cause instanceof Error ? cause.message : 'Could not revoke MCP connection.');
-                  })}
-                  className={appButton('ghost', 'sm')}
-                >
-                  Revoke
-                </button>
-              </li>
-            ))}
-          </ul>
+                </div>
+              </Row>
+            </AppSection>
+            <AppSection title="Connections">
+              <Row label="Calendar, AI apps and API keys" hint="Everything Eavesy connects to.">
+                <Link href="/app/integrations" className={appButton('secondary', 'sm')}>Open Integrations</Link>
+              </Row>
+            </AppSection>
+          </>
         ) : null}
-      </AppSection>
 
-      <AppSection
-        title="Webhooks"
-        description="Eavesy POSTs a signed event to your URL when a recording finishes, or a dictation, note or capture is saved. Retried for about a day if your server doesn’t answer."
-      >
-        <WebhookSettings />
-      </AppSection>
+        {tab === 'transcription' ? (
+          <>
+            <AppSection title="Languages">
+              <Row label="Languages you speak" hint="Empty detects any language." htmlFor="settings-language">
+                <SpokenLanguages
+                  id="settings-language"
+                  value={me.spokenLanguages}
+                  onChange={(spokenLanguages) => void saveLanguage({ spokenLanguages, defaultLanguage: 'auto' })}
+                />
+              </Row>
+              <Row label="Notes language" hint="Transcripts in another language get a Translate button." htmlFor="settings-notes-language">
+                <select
+                  id="settings-notes-language"
+                  value={me.notesLanguage ?? ''}
+                  onChange={(e) => void saveLanguage({ notesLanguage: e.target.value || null })}
+                  className={`${input} sm:w-56`}
+                >
+                  <option value="">Same as the meeting</option>
+                  {NOTES_LANGUAGES.map((language) => (
+                    <option key={language.code} value={language.code}>
+                      {language.label}
+                    </option>
+                  ))}
+                </select>
+              </Row>
+            </AppSection>
+            <AppSection title="Dictation">
+              <Row
+                label="Write dictation"
+                hint={WRITING_CHOICES.find((choice) => choice.id === writingChoice({ style: me.dictationStyle, forAgents: me.dictationForAgents }))?.hint ?? ''}
+                htmlFor="settings-dictation-style"
+              >
+                <select
+                  id="settings-dictation-style"
+                  value={writingChoice({ style: me.dictationStyle, forAgents: me.dictationForAgents })}
+                  onChange={(e) => {
+                    if (!isWritingChoice(e.target.value)) return;
+                    const writing = writingFor(e.target.value, { style: me.dictationStyle, forAgents: me.dictationForAgents });
+                    void saveLanguage({ dictationStyle: writing.style, dictationForAgents: writing.forAgents });
+                  }}
+                  className={`${input} sm:w-56`}
+                >
+                  {WRITING_CHOICES.map((choice) => (
+                    <option key={choice.id} value={choice.id}>
+                      {choice.label}
+                    </option>
+                  ))}
+                </select>
+              </Row>
+            </AppSection>
+            <AppSection
+              title="Custom words"
+              description={
+                <>
+                  Names and jargon to spell your way. Words for one client belong
+                  in <Link href="/app/projects" className="underline underline-offset-2 hover:text-ev-ink">Projects</Link>.
+                </>
+              }
+            >
+              <ChipInput
+                id="settings-vocabulary"
+                label="Custom words"
+                value={me.customVocabulary}
+                onChange={(next) => void saveVocabulary(next)}
+                max={MAX_VOCABULARY_TERMS}
+                maxLength={MAX_TERM_LENGTH}
+                placeholder="Eavesy, Priya Raman, Kubernetes…"
+                hint="Press Enter or comma after each."
+              />
+            </AppSection>
+            <AppSection title="Personal dictionary">
+              <DictionarySettings />
+            </AppSection>
+          </>
+        ) : null}
 
-      <AppSection title="Personal dictionary">
-        <DictionarySettings />
-      </AppSection>
-      <AppSection title="Your data">
-        <AccountData email={me.email} />
-      </AppSection>
+        {tab === 'notes' ? (
+          <>
+            <AppSection title="AI models">
+              <Row
+                label="Meeting notes and questions"
+                hint={`Writes the notes after a meeting and answers what you ask about it. ${modelNote(me.notesModel, DEFAULT_NOTES_MODEL)}`}
+                htmlFor="settings-notes-model"
+              >
+                <select
+                  id="settings-notes-model"
+                  value={me.notesModel ?? ''}
+                  onChange={(e) => void saveLanguage({ notesModel: e.target.value || null })}
+                  className={`${input} sm:w-56`}
+                >
+                  {modelOptions(DEFAULT_NOTES_MODEL).map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </Row>
+              <Row
+                label="Eavesy assistant"
+                hint={`What you talk to on the Mac. ${modelNote(me.assistantModel, DEFAULT_ASSISTANT_MODEL)}`}
+                htmlFor="settings-assistant-model"
+              >
+                <select
+                  id="settings-assistant-model"
+                  value={me.assistantModel ?? ''}
+                  onChange={(e) => void saveLanguage({ assistantModel: e.target.value || null })}
+                  className={`${input} sm:w-56`}
+                >
+                  {modelOptions(DEFAULT_ASSISTANT_MODEL).map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </Row>
+            </AppSection>
+            <TemplateManager />
+            <AppSection
+              id="email"
+              title="Email"
+              description={me.emailRecapsAvailable ? `Notes go to ${me.email ?? 'your address'} after each meeting.` : 'Email is not set up on this server.'}
+            >
+              <Row label="Email me notes after every meeting" htmlFor="settings-email-recaps">
+                <input
+                  id="settings-email-recaps"
+                  type="checkbox"
+                  checked={me.emailRecaps}
+                  disabled={!me.emailRecapsAvailable || me.isAnonymous || !me.email}
+                  onChange={(e) => void saveRecaps({ emailRecaps: e.target.checked })}
+                />
+              </Row>
+              <Row label="Attach the transcript" htmlFor="settings-email-recap-transcript">
+                <input
+                  id="settings-email-recap-transcript"
+                  type="checkbox"
+                  checked={me.emailRecapTranscript}
+                  disabled={!me.emailRecapsAvailable}
+                  onChange={(e) => void saveRecaps({ emailRecapTranscript: e.target.checked })}
+                />
+              </Row>
+            </AppSection>
+            <AppSection title="Sharing notes with attendees">
+              <Row label="Offer “Send to everyone”" hint="You review the list before anything is sent." htmlFor="settings-share-notes-offer">
+                <input
+                  id="settings-share-notes-offer"
+                  type="checkbox"
+                  checked={me.shareNotesOffer}
+                  disabled={!me.emailRecapsAvailable}
+                  onChange={(e) => void saveRecaps({ shareNotesOffer: e.target.checked })}
+                />
+              </Row>
+              <Row
+                label="Who can receive notes"
+                hint={me.shareNotesScope === 'domain' && !me.companyDomain ? 'Your address is a personal one, so nobody counts as your company.' : undefined}
+                htmlFor="settings-share-notes-scope"
+              >
+                <select
+                  id="settings-share-notes-scope"
+                  value={me.shareNotesScope}
+                  disabled={!me.emailRecapsAvailable}
+                  onChange={(e) => void saveRecaps({ shareNotesScope: e.target.value === 'domain' ? 'domain' : 'everyone' })}
+                  className={`${input} sm:w-56`}
+                >
+                  <option value="everyone">Everyone</option>
+                  <option value="domain">{me.companyDomain ? `Only people at ${me.companyDomain}` : 'Only my company’s domain'}</option>
+                </select>
+              </Row>
+              <Row label="Send to attendees automatically" hint="Without asking you first." htmlFor="settings-share-notes-auto">
+                <input
+                  id="settings-share-notes-auto"
+                  type="checkbox"
+                  checked={me.shareNotesAuto}
+                  disabled={!me.emailRecapsAvailable || !me.emailRecaps}
+                  onChange={(e) => void saveRecaps({ shareNotesAuto: e.target.checked })}
+                />
+              </Row>
+            </AppSection>
+          </>
+        ) : null}
+
+        {tab === 'data' ? (
+          <AppSection title="Your data">
+            <AccountData email={me.email} />
+          </AppSection>
+        ) : null}
+      </div>
 
       <SaveToast text={toast.text} />
     </AppPage>
-  );
-}
-
-const GOOGLE_ERRORS: Record<string, string> = {
-  google_cancelled: 'Google wasn’t connected: the Google screen was closed or cancelled.',
-  google_no_calendar: 'Google was connected without calendar access. Connect again and leave the calendar box ticked.',
-  google_expired: 'That Google sign-in took too long. Connect again.',
-  google_unavailable: 'Google isn’t set up on this Eavesy server yet.',
-  google_failed: 'Couldn’t connect Google. Try again.',
-};
-
-/** The notice for `?connected=google` or `?error=google_…`, pointing back to the Mac app when it started there. */
-function googleOutcome(params: URLSearchParams): { kind: 'ok' | 'error'; text: string } | null {
-  const back = params.get('from') === 'mac' ? ' You can go back to the Eavesy app.' : '';
-  if (params.get('connected') === 'google') return { kind: 'ok', text: `Google Calendar connected.${back}` };
-  const error = params.get('error');
-  if (error && error in GOOGLE_ERRORS) return { kind: 'error', text: GOOGLE_ERRORS[error] + back };
-  return null;
-}
-
-/** Google Calendar in Settings → Accounts: Connect, or each linked account with Disconnect. */
-function GoogleCalendarRows({ onError }: { onError: (message: string) => void }) {
-  const [status, setStatus] = useState<CalendarStatus | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  /** The connection Google couldn't be told about, so Disconnect kept it. */
-  const [stuck, setStuck] = useState<string | null>(null);
-  const load = useCallback(() => {
-    void getCalendarStatus().then(setStatus).catch(() => onError('Could not load your calendar connections.'));
-  }, [onError]);
-  useEffect(load, [load]);
-  if (!status) return <p className="text-xs text-ev-ink-2">Checking…</p>;
-  const google = status.connections.filter((connection) => connection.provider === 'google');
-  const disconnect = (id: string, force = false) => {
-    setBusy(id);
-    setStuck(null);
-    void disconnectCalendar(id, force)
-      .then((done) => { if (done) load(); else setStuck(id); })
-      .catch(() => onError('Could not disconnect Google.'))
-      .finally(() => setBusy(null));
-  };
-  return (
-    <>
-      {google.map((connection) => (
-        <Row
-          key={connection.id}
-          label="Google Calendar"
-          hint={connection.needsReconnect
-            ? `${connection.accountEmail} · Google stopped sharing this calendar. Connect it again.`
-            : `${connection.accountEmail} · ${connection.upcoming} upcoming ${connection.upcoming === 1 ? 'meeting' : 'meetings'}${connection.syncFailing ? ` · ${syncFailingLine(connection.lastSyncAt, Date.now())}` : ''}`}
-        >
-          {connection.needsReconnect ? (
-            <a href="/api/connections/google" className={appButton('primary', 'sm')}>Reconnect</a>
-          ) : (
-            <button type="button" disabled={busy === connection.id} onClick={() => disconnect(connection.id)} className={appButton('ghost', 'sm')}>
-              {busy === connection.id ? 'Disconnecting…' : 'Disconnect'}
-            </button>
-          )}
-        </Row>
-      ))}
-      {stuck ? (
-        <AppAlert tone="danger">
-          <p className="text-xs">{NOT_REVOKED}</p>
-          <span className="mt-2 flex gap-2">
-            <button type="button" onClick={() => disconnect(stuck)} className={appButton('secondary', 'sm')}>Try again</button>
-            <button type="button" onClick={() => disconnect(stuck, true)} className={appButton('ghost', 'sm')}>Remove anyway</button>
-          </span>
-        </AppAlert>
-      ) : null}
-      <Row
-        label={google.length ? 'Another Google account' : 'Google Calendar'}
-        hint={status.available.google ? 'Read-only access to your upcoming meetings.' : 'Google isn’t set up on this Eavesy server yet.'}
-      >
-        {status.available.google ? (
-          <a href="/api/connections/google" className={appButton(google.length ? 'secondary' : 'primary', 'sm')}>Connect</a>
-        ) : null}
-      </Row>
-    </>
   );
 }
 
@@ -787,29 +514,4 @@ function nullableString(value: unknown): string | null {
 
 function nullableNumber(value: unknown): number | null {
   return typeof value === 'number' ? value : null;
-}
-
-function Row({
-  label,
-  hint,
-  htmlFor,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  htmlFor?: string;
-  children: React.ReactNode;
-}) {
-  const Label = htmlFor ? 'label' : 'span';
-  return (
-    <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
-      <div className="min-w-0 sm:w-56 sm:shrink-0">
-        <Label {...(htmlFor ? { htmlFor } : {})} className="text-sm">
-          {label}
-        </Label>
-        {hint ? <p className="text-xs text-ev-ink-2">{hint}</p> : null}
-      </div>
-      <div className="flex min-w-0 flex-1 justify-start sm:justify-end">{children}</div>
-    </div>
-  );
 }

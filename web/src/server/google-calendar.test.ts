@@ -96,7 +96,7 @@ describe('Google OAuth', () => {
 
   test('sends a Mac-started connection back with from=mac', () => {
     expect(settingsRedirect('https://eavesy.com', 'mac', 'connected=google').headers.get('location')).toBe(
-      'https://eavesy.com/app/settings?connected=google&from=mac',
+      'https://eavesy.com/app/integrations?connected=google&from=mac',
     );
   });
 });

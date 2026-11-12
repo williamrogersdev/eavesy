@@ -10,7 +10,7 @@ export const Route = createFileRoute('/api/connections/openrouter/callback')({
       GET: async ({ request }) => {
         const url = new URL(request.url);
         const origin = url.origin;
-        const settings = (params: string) => Response.redirect(`${origin}/app/settings?${params}`, 302);
+        const settings = (params: string) => Response.redirect(`${origin}/app/integrations?${params}`, 302);
 
         let actor;
         try {

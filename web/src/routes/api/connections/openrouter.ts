@@ -17,7 +17,7 @@ export const Route = createFileRoute('/api/connections/openrouter')({
         try {
           actor = await resolveActor();
         } catch {
-          return Response.redirect(`${origin}/app/settings?error=signin_required`, 302);
+          return Response.redirect(`${origin}/app/integrations?error=signin_required`, 302);
         }
 
         const verifier = generateCodeVerifier();
