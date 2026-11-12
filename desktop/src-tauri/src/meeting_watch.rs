@@ -536,8 +536,10 @@ impl Drop for Starting {
 }
 
 fn record(app: &AppHandle, prompt: &Prompt) {
-    // Another start is under way: the prompt stays until that one puts
-    // Recording, or its failure, in its place. The answer is never just dropped.
+    // Another start is under way. The Mac records one meeting at a time, so
+    // that start is the recording this answer asked for: there is nothing to
+    // add, and it says so itself if it fails. A prompt still on screen stays
+    // until that start puts Recording, or its failure, in its place.
     let Some(starting) = Starting::claim() else { return };
     clear_prompt(app, &prompt.key);
     let handle = app.clone();
