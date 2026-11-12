@@ -1,6 +1,6 @@
 import { StrictMode, useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { CornerDownLeft, File as FileIcon, Image as ImageIcon, Link2, Search, Text } from 'lucide-react';
+import { CornerDownLeft, File as FileIcon, Image as ImageIcon, ImageOff, Link2, Search, Text } from 'lucide-react';
 import { Kbd } from '@/components/launcher/ui/kbd';
 import { Segmented } from '@/components/launcher/ui/segmented';
 import { captureMediaUrl, errMsg, getSettings } from '@/lib/desktop/bridge';
@@ -24,14 +24,33 @@ const KIND_ICON: Record<ClipKind, typeof Text> = { text: Text, link: Link2, imag
 
 const startView = (): View => new URLSearchParams(window.location.search).get('view') === 'screenshots' ? 'screenshots' : 'clipboard';
 
-function Thumb({ id }: { id: string }) {
+/**
+ * A screenshot's thumbnail. It loads once its tile scrolls into view, so a
+ * long grid doesn't ask for every picture at once. One that couldn't load
+ * says so, and is tried again the next time the panel opens (`attempt`).
+ */
+function Thumb({ id, attempt }: { id: string; attempt: number }) {
   const [src, setSrc] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  const [seen, setSeen] = useState(false);
+  const tile = useRef<HTMLSpanElement>(null);
   useEffect(() => {
+    const node = tile.current;
+    if (!node || seen) return;
+    if (typeof IntersectionObserver === 'undefined') { setSeen(true); return; }
+    const watch = new IntersectionObserver((entries) => { if (entries.some((entry) => entry.isIntersecting)) setSeen(true); }, { rootMargin: '200px' });
+    watch.observe(node);
+    return () => watch.disconnect();
+  }, [seen]);
+  useEffect(() => {
+    if (!seen || src) return;
     let live = true;
-    void captureMediaUrl(id).then((url) => { if (live) setSrc(url); }).catch(() => {});
+    setFailed(false);
+    void captureMediaUrl(id).then((url) => { if (live) setSrc(url); }).catch(() => { if (live) setFailed(true); });
     return () => { live = false; };
-  }, [id]);
-  return src ? <img src={src} alt="" draggable={false} /> : <span className="ev-clip-wait" aria-hidden />;
+  }, [id, seen, src, attempt]);
+  if (src) return <img src={src} alt="" draggable={false} onError={() => { setSrc(null); setFailed(true); }} />;
+  return <span ref={tile} className="ev-clip-wait" data-failed={failed || undefined} aria-hidden>{failed && <ImageOff size={18} strokeWidth={1.75} />}</span>;
 }
 
 /** The panel behind ⌥⇧V and ⌥⇧S (clipboard.rs): what you copied, and your screenshots. */
@@ -48,6 +67,8 @@ function ClipboardPanel() {
   const [loaded, setLoaded] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  // Counts the times the panel opened: thumbnails that failed try again.
+  const [opens, setOpens] = useState(0);
   const input = useRef<HTMLInputElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const asked = useRef(0);
@@ -87,6 +108,7 @@ function ClipboardPanel() {
     setNow(Date.now());
     void getSettings().then((settings) => setKeeping(settings?.clipboard_history ?? true)).catch(() => {});
     if (opened?.fresh) {
+      setOpens((count) => count + 1);
       fresh.current = true;
       body.current?.querySelectorAll('.ev-clip-scroll').forEach((pane) => { pane.scrollTop = 0; });
       if (query) setQuery(''); else load('');
@@ -284,7 +306,7 @@ function ClipboardPanel() {
                 onClick={() => setShotId(shot.id)}
                 onDoubleClick={() => { setShotId(shot.id); use(true, shot.id); }}
               >
-                <span className="ev-clip-thumb"><Thumb id={shot.id} /></span>
+                <span className="ev-clip-thumb"><Thumb id={shot.id} attempt={opens} /></span>
                 <span className="ev-clip-shot-when">{dayLabel(shot.atMs, now)} · {clock(shot.atMs)}</span>
               </button>
             ))}
