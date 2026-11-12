@@ -2,7 +2,7 @@
 
 Monorepo: `web/` (TanStack Start on Cloudflare Workers — read `web/AGENTS.md`
 before touching it), `workers/processing`, `workers/mcp`, `desktop/` (Tauri +
-Swift). Setup and the exact CI commands are in `CONTRIBUTING.md`.
+Swift), `mobile/` (SwiftUI iPhone app, `mobile/README.md`). Setup and the exact CI commands are in `CONTRIBUTING.md`.
 
 Don't test by driving the owner's own desktop (computer use). Run
 `scripts/test-local.sh` for headless checks, and `desktop/scripts/vm-test.sh`
