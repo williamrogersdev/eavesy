@@ -56,6 +56,11 @@ fn tooltip_now(settings: &crate::settings::Settings, recording: bool, meeting: b
     }
 }
 
+fn tooltip_for(app: &AppHandle, recording: bool) -> String {
+    let meeting = crate::hud::current().mode.as_deref() == Some(crate::hud::MEETING_MODE);
+    tooltip_now(&crate::settings::load(app), recording, meeting)
+}
+
 fn tooltip(settings: &crate::settings::Settings) -> String {
     if settings.dictation_hotkey.is_empty() { return "Eavesy".into(); }
     format!("Eavesy · {} to record", glyphs(&settings.dictation_hotkey))
@@ -99,7 +104,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
 pub fn refresh(app: &AppHandle) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
-    let _ = tray.set_tooltip(Some(tooltip(&crate::settings::load(app))));
+    let _ = tray.set_tooltip(Some(tooltip_for(app, WANT_RECORDING.load(Ordering::SeqCst))));
     if let Ok(menu) = build_menu(app) {
         let _ = tray.set_menu(Some(menu));
     }
@@ -123,21 +128,20 @@ pub fn set_recording(app: &AppHandle, recording: bool) {
 /// failed swap is retried by the next call (and by `install`).
 fn apply_recording_glyph(app: &AppHandle) {
     let want = WANT_RECORDING.load(Ordering::SeqCst);
+    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    // On every state change, not only when the glyph swaps: the capture's
+    // kind is known by now (the control's state is written before this runs).
+    let _ = tray.set_tooltip(Some(tooltip_for(app, want)));
     if SHOWING_RECORDING.load(Ordering::SeqCst) == want {
         return;
     }
-    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
     let icon = if want {
         tauri::include_image!("icons/tray-recording.png")
     } else {
         tauri::include_image!("icons/tray.png")
     };
     match tray.set_icon(Some(icon)).and_then(|()| tray.set_icon_as_template(!want)) {
-        Ok(()) => {
-            SHOWING_RECORDING.store(want, Ordering::SeqCst);
-            let meeting = crate::hud::current().mode.as_deref() == Some(crate::hud::MEETING_MODE);
-            let _ = tray.set_tooltip(Some(tooltip_now(&crate::settings::load(app), want, meeting)));
-        }
+        Ok(()) => SHOWING_RECORDING.store(want, Ordering::SeqCst),
         Err(error) => eprintln!("tray: couldn't swap the recording glyph: {error}"),
     }
 }

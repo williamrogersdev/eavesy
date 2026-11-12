@@ -1346,7 +1346,7 @@ function Hud() {
       </>
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
-    const doneHint = meeting ? 'press Stop when the call ends' : eavesy ? (talkShortcut ? `tap ${talkShortcut} to send` : 'press Stop to send') : shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
+    const doneHint = meeting ? 'press Stop to save the meeting' : eavesy ? (talkShortcut ? `tap ${talkShortcut} to send` : 'press Stop to send') : shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
     if (video) below = <div className="ctl-video-help">
       {!opening && !marking.tool && !actionError && <span className="ctl-video-count" title="Clicks are saved automatically. Highlights are tags you added."><MousePointerClick className="h-3 w-3" />{clicksLabel(marking.clicks)}{marking.marks.length > 0 ? ` · ${marking.marks.length} tags` : ''}</span>}
       <span role={actionError ? 'alert' : 'status'} className={actionError ? 'ctl-warn' : undefined} title={actionError ?? undefined}>

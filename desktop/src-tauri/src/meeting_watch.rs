@@ -495,7 +495,7 @@ fn show_prompt(app: &AppHandle, prompt: &Prompt, deadline: Option<i64>) -> bool 
         HudState {
             phase: Phase::Prompt,
             session_id: Some(prompt_session(&prompt.key)),
-            mode: Some("meeting".into()),
+            mode: Some(hud::MEETING_MODE.into()),
             started_at_ms: deadline,
             message: Some(prompt.title.clone()),
             notice: None,
@@ -527,7 +527,9 @@ fn record(app: &AppHandle, prompt: &Prompt) {
             // The countdown said it would record: never fail without a word.
             Err(error) => {
                 tracing::warn!("meeting watch: could not start recording: {error}");
-                not_recording(&handle);
+                if hud::current().phase != Phase::Recording {
+                    not_recording(&handle);
+                }
             }
         }
     });
@@ -542,17 +544,36 @@ fn not_recording(app: &AppHandle) {
     );
 }
 
-/// Records a meeting (both sides of the call) now, from the menu bar. Not an
-/// auto-recording: it runs until the user stops it.
+/// Records a meeting (both sides of the call) now, from the menu bar.
 pub fn record_now(app: &AppHandle) {
-    if hud::current().is_live() {
+    if !settings::load(app).setup_completed {
+        crate::commands::show_setup(app.clone());
+        return;
+    }
+    // Recording or starting to: show the control that says so, with its Stop.
+    if hud::current().phase == Phase::Recording {
+        hud::set_hidden_on_main(app, false);
+        return;
+    }
+    // A prompt for this call is waiting: this is its answer, so the recording
+    // stops with the call like any the prompt starts.
+    let asked = with_watch(|watch| {
+        let (prompt, _) = watch.prompt.take()?;
+        watch.dismissed.insert(prompt.key.clone());
+        Some(prompt)
+    });
+    if let Some(prompt) = asked {
+        record(app, &prompt);
         return;
     }
     let handle = app.clone();
     std::thread::spawn(move || {
         if let Err(error) = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now()) {
             tracing::warn!("tray: could not start a meeting recording: {error}");
-            not_recording(&handle);
+            // A second click loses to the first one's start: that is not a failure.
+            if hud::current().phase != Phase::Recording {
+                not_recording(&handle);
+            }
         }
     });
 }

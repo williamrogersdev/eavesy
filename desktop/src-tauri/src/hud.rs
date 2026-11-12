@@ -167,7 +167,7 @@ pub fn show_stopping(app: &AppHandle, session_id: &str) {
 /// stands down for the same time (`audio::JUST_STOPPED_FOR`).
 pub(crate) const STOPPING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// The resting pill: Open Eavesy, Talk, Screenshot, Video and close, with
+/// The resting pill: Open Eavesy, Talk, Meeting, Screenshot, Video and close, with
 /// bare room left between them to drag it by. Talk's shortcut shows only
 /// when it leaves that room (up to about 42pt, "fn" or "Space"); a longer
 /// one is in the tooltip (`.ctl-home ~ .ctl-talk` in styles.css).

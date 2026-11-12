@@ -442,6 +442,17 @@ pub fn start_audio_capture(
     result
 }
 
+/// What the capture control calls a capture that is starting.
+fn control_mode<'a>(mode: &'a str, source: &str, for_eavesy: bool) -> &'a str {
+    match (mode, source) {
+        ("screen", _) => "video",
+        ("audio", "mic") if for_eavesy => crate::assistant::voice::MODE,
+        // Both sides of a call: the control says it is a meeting, not a dictation to paste.
+        ("audio", "mixed") => crate::hud::MEETING_MODE,
+        (other, _) => other,
+    }
+}
+
 #[tauri::command(async)]
 pub fn start_screen_capture(
     app: AppHandle,
@@ -745,13 +756,7 @@ fn spawn_capture(
         crate::hud::HudState {
             phase: crate::hud::Phase::Recording,
             session_id: Some(id.clone()),
-            mode: Some(match mode {
-                "screen" => "video",
-                "audio" if source == "mic" && crate::assistant::voice::starting() => crate::assistant::voice::MODE,
-                // Both sides of a call: the control says it is a meeting, not a dictation to paste.
-                "audio" if source != "mic" => crate::hud::MEETING_MODE,
-                other => other,
-            }.to_string()),
+            mode: Some(control_mode(mode, source, crate::assistant::voice::starting()).to_string()),
             // The timer counts from the mic going live, not from the key press.
             started_at_ms: Some(now_ms()),
             message: None,
@@ -1953,6 +1958,16 @@ fn reap_child(child: &mut Child) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_call_is_a_meeting_on_the_control_and_talk_is_not() {
+        // `hud.tsx` reads the same word: `state.mode === 'meeting'`.
+        assert_eq!(crate::hud::MEETING_MODE, "meeting");
+        assert_eq!(control_mode("audio", "mixed", false), "meeting");
+        assert_eq!(control_mode("audio", "mic", false), "audio");
+        assert_eq!(control_mode("audio", "mic", true), crate::assistant::voice::MODE);
+        assert_eq!(control_mode("screen", "mixed", false), "video");
+    }
+
     #[test]
     fn startup_preserves_video_timing_before_microphone_ready() {
         let bytes = concat!(
