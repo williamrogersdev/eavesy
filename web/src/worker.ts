@@ -1,8 +1,9 @@
-import { withErrorReporting, type ObservabilityEnv } from '@/server/observability';
+import { reportError, withErrorReporting, type ObservabilityEnv } from '@/server/observability';
 import { withRequestTiming } from '@/server/perf';
 import { hubNamespace } from '@/server/drops-hub';
 import handler from '@tanstack/react-start/server-entry';
 import { getDb } from '@/db/client';
+import { purgeExpiredInvites } from '@/db/repo/teams';
 import { BACKGROUND_SYNC_CRON, syncAllDue } from '@/server/calendar-sync';
 
 export { DropsHub } from '@/server/drops-hub';
@@ -41,9 +42,12 @@ const worker = {
     return response;
   },
 
-  /** Every five minutes: refresh connected calendars, so upcoming meetings are known without the app open. */
+  /** Every five minutes: refresh connected calendars, so upcoming meetings are known without the app open; also drop lapsed team invitations. */
   async scheduled(controller: ScheduledController): Promise<void> {
-    if (controller.cron === BACKGROUND_SYNC_CRON) await syncAllDue(getDb());
+    if (controller.cron !== BACKGROUND_SYNC_CRON) return;
+    const db = getDb();
+    await purgeExpiredInvites(db).catch((error: unknown) => reportError('expired team invite sweep failed', error));
+    await syncAllDue(db);
   },
 };
 
