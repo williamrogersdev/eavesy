@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type Anthropic from '@anthropic-ai/sdk';
-import { polishDictation, restyledIsValid } from './agent-transcript';
+import { hedged, hedgeAfterMs, polishDictation, restyledIsValid } from './agent-transcript';
 
 function fakeClient(reply: string | Error) {
   const calls: { system: string; content: string }[] = [];
@@ -162,5 +162,55 @@ describe('restyledIsValid', () => {
   test('rejects empty, padded or unrelated output', () => {
     expect(restyledIsValid(said, '')).toBe(false);
     expect(restyledIsValid(said, 'Sure, rescheduled everything already, nothing further needed from anyone here.')).toBe(false);
+  });
+});
+
+describe('hedged', () => {
+  const after = (ms: number, value: string, signal?: AbortSignal) =>
+    new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(value), ms);
+      signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('aborted')); });
+    });
+
+  test('a quick answer is the only request made', async () => {
+    let calls = 0;
+    expect(await hedged(() => { calls += 1; return after(5, 'tidied'); }, 200)).toBe('tidied');
+    await after(250, '');
+    expect(calls).toBe(1);
+  });
+
+  test('a slow answer is asked for again, and the first one in wins', async () => {
+    const aborted: number[] = [];
+    let calls = 0;
+    const started = Date.now();
+    const result = await hedged((signal) => {
+      const call = (calls += 1);
+      signal.addEventListener('abort', () => aborted.push(call));
+      return after(call === 1 ? 2_000 : 10, `answer ${call}`, signal);
+    }, 50);
+    expect(result).toBe('answer 2');
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(aborted).toEqual([1]);
+  });
+
+  test('a slow first answer still wins when it lands before the second', async () => {
+    let calls = 0;
+    const result = await hedged(() => { const call = (calls += 1); return after(call === 1 ? 80 : 2_000, `answer ${call}`); }, 30);
+    expect(result).toBe('answer 1');
+  });
+
+  test('a failure is retried at once, and two failures fail', async () => {
+    let calls = 0;
+    const started = Date.now();
+    expect(await hedged(() => { calls += 1; return calls === 1 ? Promise.reject(new Error('overloaded')) : after(5, 'tidied'); }, 5_000)).toBe('tidied');
+    expect(Date.now() - started).toBeLessThan(1_000);
+    calls = 0;
+    await expect(hedged(() => { calls += 1; return Promise.reject(new Error(`failed ${calls}`)); }, 5_000)).rejects.toThrow('failed 2');
+    expect(calls).toBe(2);
+  });
+
+  test('a longer dictation is given longer before the second request', () => {
+    expect(hedgeAfterMs(0)).toBe(1_200);
+    expect(hedgeAfterMs(1_000)).toBe(3_200);
   });
 });
