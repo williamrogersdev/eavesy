@@ -72,7 +72,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     name: 'Talk, meetings and video',
     title: 'Record your voice, your calls, or your screen from your Mac',
     description:
-      'Talk records your mic. Meeting records your mic and the audio your Mac plays. Video records your screen, its audio, and your mic. Recording happens on your Mac, so no meeting link is needed.',
+      'Talk records your mic. Meeting records your mic and the audio your Mac plays. Video records your screen, its audio, and your mic. Record from your Mac with no meeting link, or send the Notetaker to a call you can’t capture locally.',
     intro:
       'Eavesy records from your Mac instead of joining your call. Pick the mode that fits: Talk for dictation and voice memos, Meeting for both sides of a call or a conversation in the room, and Video for walkthroughs and bug reports. You choose when it starts and stay in control of consent and sharing.',
     highlights: [
@@ -189,7 +189,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     intro:
       'Your conversations are sensitive. The Mac app keeps normal source files on your disk, the cloud copy is protected in transit and at rest, and Eavesy documents which providers process each artifact.',
     highlights: [
-      { title: 'Platform providers do not train on content', body: 'Cloudflare Workers AI and Anthropic’s commercial API state that customer content is not used for model training unless the customer explicitly opts in.' },
+      { title: 'Platform providers do not train on content by default', body: 'Cloudflare Workers AI and Anthropic’s commercial API state that customer content is not used for model training unless the customer explicitly opts in.' },
       { title: 'Encrypted in transit and at rest', body: 'TLS protects data in transit; Cloudflare-managed encryption protects object storage and database data at rest.' },
       { title: 'Capture is explicit', body: 'Recording begins only after you start it and grant the required microphone or screen permissions.' },
       { title: 'Clear deletion controls', body: 'Delete recordings or your account from the app. Cloud removal completes through the documented deletion process; local folders remain under your control.' },

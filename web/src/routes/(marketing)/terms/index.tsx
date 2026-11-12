@@ -32,8 +32,9 @@ function TermsPage() {
         </p>
         <p className="mt-4">
           We don't sell your data or share transcript content with analytics vendors. We
-          don't currently train models on it. See the <a href="/privacy" className="underline">privacy policy</a> for the
-          full subprocessor list.
+          don't currently train models on your recordings or transcripts. See the{' '}
+          <a href="/privacy" className="underline">privacy policy</a> for the full
+          subprocessor list.
         </p>
       </section>
     </main>

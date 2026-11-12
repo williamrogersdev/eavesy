@@ -40,7 +40,7 @@ export const INTEGRATIONS: Integration[] = [
     ],
     faqs: [
       { q: 'Do I need Zoom admin rights?', a: 'Eavesy captures Mac audio rather than using Zoom’s cloud recording. macOS permissions, device policy, and participant consent still apply.' },
-      { q: 'Will other people see a recording bot?', a: 'No. Nothing joins your Zoom call — Eavesy captures audio locally on your machine.' },
+      { q: 'Will other people see a recording bot?', a: 'Not when you record from your Mac: Eavesy captures the audio locally and adds no participant to the call. If you send the Eavesy Notetaker instead, it joins as a visible participant.' },
     ],
   },
   {
