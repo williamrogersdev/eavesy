@@ -86,6 +86,19 @@ export function transcriptAttachment(
     .join('\n');
 }
 
+/**
+ * A summary's open questions as stored, keeping only entries that are a
+ * question with words: one bad entry never stops the recap from going out.
+ */
+export function openQuestionsFrom(stored: string | null | undefined): { text: string }[] {
+  const decoded = decode<unknown>(stored, []);
+  if (!Array.isArray(decoded)) return [];
+  return decoded.flatMap((entry) => {
+    const text = typeof entry === 'object' && entry !== null ? (entry as { text?: unknown }).text : null;
+    return typeof text === 'string' && text.trim() ? [{ text: text.trim() }] : [];
+  });
+}
+
 export interface RecapContent {
   title: string;
   startedAt: number | null;
@@ -93,7 +106,7 @@ export interface RecapContent {
   decisions: Decision[];
   actionItems: ActionItem[];
   /** What the meeting left unanswered, as the meeting's panel and page show it. */
-  openQuestions?: { text: string }[];
+  openQuestions: { text: string }[];
   link: string;
   attachmentNote?: string | null;
   /** The "Send to everyone" button: a page in the app that asks before sending anything. */
@@ -115,7 +128,7 @@ export function renderRecap(content: RecapContent) {
     const meta = [a.owner, a.due && `due ${a.due}`].filter(Boolean).join(', ');
     return { text: a.text, meta };
   });
-  const questions = (content.openQuestions ?? []).map((q) => q.text).filter(Boolean);
+  const questions = content.openQuestions.map((q) => q.text).filter(Boolean);
 
   const text = [
     content.title,
@@ -244,7 +257,7 @@ export async function sendRecap(db: AppDb, env: RecapEnv, meetingId: string, now
     tldr: summary?.tldr ?? '',
     decisions: decode<Decision[]>(summary?.decisionsJson, []),
     actionItems: decode<ActionItem[]>(summary?.actionItemsJson, []),
-    openQuestions: decode<{ text: string }[]>(summary?.openQuestionsJson, []),
+    openQuestions: openQuestionsFrom(summary?.openQuestionsJson),
     link: `${app}/app/meetings/${encodeURIComponent(meetingId)}`,
     attachmentNote,
     shareLink: user.shareNotesOffer ? `${app}/app/meetings/${encodeURIComponent(meetingId)}/share-notes` : null,
