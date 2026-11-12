@@ -19,10 +19,10 @@ export function googleRedirectUri(origin: string): string {
   return `${origin}/api/connections/google/callback`;
 }
 
-/** Back to Settings with the outcome; `from=mac` makes the page say to go back to the app. */
+/** Back to Integrations with the outcome; `from=mac` makes the page say to go back to the app. */
 export function settingsRedirect(origin: string, from: 'mac' | 'web', params: string): Response {
   const suffix = from === 'mac' ? '&from=mac' : '';
-  return new Response(null, { status: 302, headers: { location: `${origin}/app/settings?${params}${suffix}` } });
+  return new Response(null, { status: 302, headers: { location: `${origin}/app/integrations?${params}${suffix}` } });
 }
 
 export function readStateCookie(request: Request): SavedState | null {
