@@ -70,14 +70,14 @@ export const FEATURE_PAGES: FeaturePage[] = [
     icon: Radio,
     eyebrow: 'Eyes and ears',
     name: 'Talk, meetings and video',
-    title: 'Record your voice, your calls, or your screen with no bot on the call',
+    title: 'Record your voice, your calls, or your screen from your Mac',
     description:
-      'Talk records your mic. Meeting records your mic and the audio your Mac plays. Video records your screen, its audio, and your mic. Nothing joins the call and no meeting link is needed.',
+      'Talk records your mic. Meeting records your mic and the audio your Mac plays. Video records your screen, its audio, and your mic. Record from your Mac with no meeting link, or send the Notetaker to a call you can’t capture locally.',
     intro:
-      'Eavesy records from your Mac instead of joining your call. Pick the mode that fits: Talk for dictation and voice memos, Meeting for both sides of a call or a conversation in the room, and Video for walkthroughs and bug reports. You choose when it starts and stay in control of consent and sharing.',
+      'Eavesy records from your Mac by default, and can send a visible Notetaker to a call you can’t capture locally. Pick the mode that fits: Talk for dictation and voice memos, Meeting for both sides of a call or a conversation in the room, and Video for walkthroughs and bug reports. You choose when it starts and stay in control of consent and sharing.',
     highlights: [
       { title: 'Three modes', body: 'Talk uses your mic only. Meeting adds the audio your Mac plays, without recording the screen. Video records your screen, its audio, and your mic.' },
-      { title: 'No meeting bot needed', body: 'Recording from your Mac adds nothing to the participant list. For a call you can’t record from your Mac, you can send a visible Eavesy Notetaker instead. Either way, you handle consent according to your organization and local requirements.' },
+      { title: 'From your Mac, or with a Notetaker', body: 'Recording from your Mac adds nothing to the participant list. For a call you can’t record from your Mac, you can send a visible Eavesy Notetaker instead. Either way, you handle consent according to your organization and local requirements.' },
       { title: 'Works in person too', body: 'No meeting link required. Record a hallway conversation, a workshop, or a 1:1 over coffee the same way you record a Zoom call.' },
       { title: 'Shortcuts to start', body: 'Press ⌘⇧D to talk from anywhere, or ⌘⇧Space to open the launcher and start a meeting or video.' },
     ],
@@ -189,7 +189,7 @@ export const FEATURE_PAGES: FeaturePage[] = [
     intro:
       'Your conversations are sensitive. The Mac app keeps normal source files on your disk, the cloud copy is protected in transit and at rest, and Eavesy documents which providers process each artifact.',
     highlights: [
-      { title: 'Platform providers do not train on content', body: 'Cloudflare Workers AI and Anthropic’s commercial API state that customer content is not used for model training unless the customer explicitly opts in.' },
+      { title: 'Cloudflare and Anthropic do not train on your content by default', body: 'Cloudflare Workers AI and Anthropic’s commercial API state that customer content is not used for model training unless the customer explicitly opts in.' },
       { title: 'Encrypted in transit and at rest', body: 'TLS protects data in transit; Cloudflare-managed encryption protects object storage and database data at rest.' },
       { title: 'Capture is explicit', body: 'Recording begins only after you start it and grant the required microphone or screen permissions.' },
       { title: 'Clear deletion controls', body: 'Delete recordings or your account from the app. Cloud removal completes through the documented deletion process; local folders remain under your control.' },
