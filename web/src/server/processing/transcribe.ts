@@ -124,6 +124,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
       contextBlurb: combinedContext(meeting.contextBlurb, project) ?? undefined,
       openRouter: plan.openRouter,
       byoApiKey: plan.summary.apiKey ?? env.ANTHROPIC_API_KEY,
+      model: plan.summary.model,
       notesLanguage: userRow?.notesLanguage,
     });
     await upsertSummary(db, { meetingId, summary, generatedByModel: summarizeMeetingModel(plan), generatedAt: now });

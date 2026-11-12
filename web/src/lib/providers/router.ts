@@ -1,4 +1,5 @@
 import type { EngineKey } from '@/lib/transcription';
+import { chosenModel, DEFAULT_NOTES_MODEL } from '@/lib/ai/model-choice';
 import { MODELS } from '@/lib/ai/client';
 import { AUTO_LANGUAGE } from '@/lib/transcription/language';
 
@@ -9,6 +10,8 @@ export interface RouterUser {
   byoOpenRouterKey?: string | null;
   defaultTranscriptionEngine?: EngineKey;
   defaultLanguage?: string | null;
+  /** The account's choice of model for meeting notes; null or absent is the default. */
+  notesModel?: string | null;
 }
 
 export interface TranscriptionPlan {
@@ -64,7 +67,7 @@ export function resolveModelPlan(user?: RouterUser | null): ModelPlan {
 
   const summary: SummaryPlan = {
     provider: 'anthropic',
-    model: MODELS.summary,
+    model: chosenModel(user?.notesModel, DEFAULT_NOTES_MODEL),
     apiKey: anthropicKey,
     billedTo: anthropicKey ? 'user' : 'platform',
   };

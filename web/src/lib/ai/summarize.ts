@@ -1,6 +1,6 @@
 import { OPENROUTER_MODELS, openRouterChat } from '@/lib/providers/openrouter-chat';
 import { notesLanguageRule } from '@/lib/transcription/language';
-import { anthropic, anthropicForUser, MODELS } from './client';
+import { anthropic, anthropicForUser, MODELS, REFUSAL_FALLBACK } from './client';
 import { isRecord } from '@/lib/json';
 
 export interface SummaryDecision {
@@ -70,6 +70,8 @@ export interface SummarizeInput {
   speakers?: string;
   byoApiKey?: string;
   openRouter?: { apiKey: string } | null;
+  /** The Claude model to write with (`plan.summary.model`); absent is the default. */
+  model?: string;
   customTemplatePrompt?: string;
   /** The language to write notes in; absent keeps the meeting's own. */
   notesLanguage?: string | null;
@@ -91,9 +93,10 @@ export function speakerNote(rendered: { labelled: boolean; recorderName?: string
 }
 
 /** The `generated_by_model` label for a brief `summarizeMeeting` wrote under this plan. */
-export function summarizeMeetingModel(plan: { openRouter?: { apiKey: string } | null; summary: { apiKey?: string } }): string {
+export function summarizeMeetingModel(plan: { openRouter?: { apiKey: string } | null; summary: { apiKey?: string; model?: string } }): string {
   if (plan.openRouter) return `openrouter:${OPENROUTER_MODELS.summary}`;
-  return plan.summary.apiKey ? `byo-anthropic:${MODELS.summary}` : MODELS.summary;
+  const model = plan.summary.model ?? MODELS.summary;
+  return plan.summary.apiKey ? `byo-anthropic:${model}` : model;
 }
 
 export async function summarizeMeeting(input: SummarizeInput): Promise<MeetingSummary> {
@@ -125,12 +128,17 @@ export async function summarizeMeeting(input: SummarizeInput): Promise<MeetingSu
     });
   } else {
     const client = input.byoApiKey ? anthropicForUser(input.byoApiKey) : anthropic();
-    const response = await client.messages.create({
-      model: MODELS.summary,
-      max_tokens: 4096,
+    // Room for the model's thinking as well as the notes: these models think
+    // before they write, and both count towards the limit.
+    const response = await client.beta.messages.create({
+      ...REFUSAL_FALLBACK,
+      model: input.model ?? MODELS.summary,
+      max_tokens: 16_000,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
+    if (response.stop_reason === 'refusal') throw new Error('summary refused by the model');
+    if (response.stop_reason === 'max_tokens') throw new Error('summary truncated at max_tokens');
     text = response.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
   }
 

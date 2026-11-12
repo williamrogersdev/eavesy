@@ -35,6 +35,10 @@ export const users = sqliteTable(
     spokenLanguagesJson: text('spoken_languages_json'),
     /** The language notes are written in and transcripts translate to; null keeps the meeting's own. */
     notesLanguage: text('notes_language'),
+    /** The model that writes meeting notes and answers questions about a meeting (`MODEL_CHOICES`); null is Eavesy's default. */
+    notesModel: text('notes_model'),
+    /** The model Eavesy's assistant runs on (`MODEL_CHOICES`); null is Eavesy's default. */
+    assistantModel: text('assistant_model'),
     /** How dictations are rewritten before they are typed (see `DICTATION_STYLES`); null keeps the speaker's own words. */
     dictationStyle: text('dictation_style'),
     /** Whether dictations are structured as a prompt for an AI agent, in addition to their tone. */

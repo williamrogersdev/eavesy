@@ -43,7 +43,7 @@ import { cn } from '@/lib/utils';
 import { AGENT_INSTRUCTIONS } from '@/lib/agent-instructions';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
-import { DictationCard, LanguagesCard, ProjectsSettings, useAccountPrefs, useProjects, WordsCard } from './account-settings';
+import { DictationCard, LanguagesCard, ModelsCard, ProjectsSettings, useAccountPrefs, useProjects, WordsCard } from './account-settings';
 import { AssistantSettings } from './assistant-settings';
 import { settingsMatch } from './settings-search';
 import { ConnectionsSettings } from './connections-settings';
@@ -354,7 +354,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
   const sections: { id: SettingsSection; group: SettingsGroup; label: string; icon: typeof SlidersHorizontal; hint: string }[] = [
     { id: 'capture', group: 'recording' as const, label: 'Capture', icon: SlidersHorizontal, hint: 'Recording, screenshots, and where things are saved.' },
     { id: 'dictation', group: 'recording' as const, label: 'Dictation', icon: AudioLines, hint: 'How your words are written when Eavesy types them for you.' },
-    { id: 'transcription', group: 'recording' as const, label: 'Transcription', icon: Languages, hint: 'The languages Eavesy listens for.' },
+    { id: 'transcription', group: 'recording' as const, label: 'Transcription', icon: Languages, hint: 'The languages Eavesy listens for, and the AI models it uses.' },
     { id: 'shortcuts', group: 'recording' as const, label: 'Shortcuts', icon: Keyboard, hint: 'Make Eavesy work the way you do.' },
     { id: 'dictionary', group: 'words' as const, label: 'Dictionary', icon: BookOpen, hint: 'Words to spell your way, and words to swap for others.' },
     { id: 'prompts', group: 'words' as const, label: 'Prompts', icon: MessageSquareText, hint: 'Text you send often, ready to paste or to run as a slash command.' },
@@ -635,6 +635,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
         </div>
         <div id="settings-transcription" hidden={section !== 'transcription'}>
           {account ? <LanguagesCard account={accountPrefs} /> : signInFirst('choose the languages Eavesy listens for')}
+          {account ? <ModelsCard account={accountPrefs} /> : null}
         </div>
         <div id="settings-dictionary" hidden={section !== 'dictionary'}>
           {account ? <><WordsCard account={accountPrefs} /><DictionarySettings active={section === 'dictionary'} /></> : signInFirst('keep a dictionary')}

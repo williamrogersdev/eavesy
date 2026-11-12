@@ -9,6 +9,7 @@ import { WebhookSettings } from '@/components/settings/webhook-settings';
 import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
 import { NOTES_LANGUAGES } from '@/lib/transcription/language';
+import { DEFAULT_ASSISTANT_MODEL, DEFAULT_NOTES_MODEL, isModelChoice, modelNote, modelOptions } from '@/lib/ai/model-choice';
 import { dictationStyle, isWritingChoice, WRITING_CHOICES, writingChoice, writingFor, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { SpokenLanguages } from '@/components/settings/spoken-languages';
 import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocabulary';
@@ -28,6 +29,10 @@ interface Me {
   defaultTranscriptionEngine: 'whisper';
   defaultLanguage: string;
   notesLanguage: string | null;
+  /** The Claude model for meeting notes and questions; null is Eavesy's default. */
+  notesModel: string | null;
+  /** The Claude model Eavesy's assistant runs on; null is Eavesy's default. */
+  assistantModel: string | null;
   spokenLanguages: string[];
   customVocabulary: string[];
   dictationStyle: DictationStyle;
@@ -156,7 +161,7 @@ function SettingsPage() {
     }
   };
 
-  const saveLanguage = async (change: Partial<Pick<Me, 'defaultLanguage' | 'notesLanguage' | 'spokenLanguages' | 'dictationStyle' | 'dictationForAgents'>>) => {
+  const saveLanguage = async (change: Partial<Pick<Me, 'defaultLanguage' | 'notesLanguage' | 'notesModel' | 'assistantModel' | 'spokenLanguages' | 'dictationStyle' | 'dictationForAgents'>>) => {
     const previous = me;
     setError(null);
     if (previous) setMe({ ...previous, ...change });
@@ -171,7 +176,7 @@ function SettingsPage() {
       toast.show();
     } catch (cause) {
       setMe(previous);
-      setError(cause instanceof Error ? cause.message : 'Could not save the language.');
+      setError(cause instanceof Error ? cause.message : 'Could not save that setting.');
     }
   };
 
@@ -321,6 +326,41 @@ function SettingsPage() {
               </button>
             ) : null}
           </div>
+        </Row>
+      </AppSection>
+
+      <AppSection title="AI models">
+        <Row
+          label="Meeting notes and questions"
+          hint={`Writes the notes after a meeting and answers what you ask about it. ${modelNote(me.notesModel, DEFAULT_NOTES_MODEL)}`}
+          htmlFor="settings-notes-model"
+        >
+          <select
+            id="settings-notes-model"
+            value={me.notesModel ?? ''}
+            onChange={(e) => void saveLanguage({ notesModel: e.target.value || null })}
+            className={`${input} sm:w-56`}
+          >
+            {modelOptions(DEFAULT_NOTES_MODEL).map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </Row>
+        <Row
+          label="Eavesy assistant"
+          hint={`What you talk to on the Mac. ${modelNote(me.assistantModel, DEFAULT_ASSISTANT_MODEL)}`}
+          htmlFor="settings-assistant-model"
+        >
+          <select
+            id="settings-assistant-model"
+            value={me.assistantModel ?? ''}
+            onChange={(e) => void saveLanguage({ assistantModel: e.target.value || null })}
+            className={`${input} sm:w-56`}
+          >
+            {modelOptions(DEFAULT_ASSISTANT_MODEL).map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
         </Row>
       </AppSection>
 
@@ -717,6 +757,8 @@ function parseMe(value: unknown): Me | null {
     defaultTranscriptionEngine: 'whisper',
     defaultLanguage: value.defaultLanguage,
     notesLanguage: typeof value.notesLanguage === 'string' ? value.notesLanguage : null,
+    notesModel: isModelChoice(value.notesModel) ? value.notesModel : null,
+    assistantModel: isModelChoice(value.assistantModel) ? value.assistantModel : null,
     spokenLanguages: Array.isArray(value.spokenLanguages)
       ? value.spokenLanguages.filter((code): code is string => typeof code === 'string')
       : [],

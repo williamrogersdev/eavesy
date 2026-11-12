@@ -99,6 +99,7 @@ export const Route = createFileRoute('/api/meetings/$id/regenerate')({
             customTemplatePrompt: templatePrompt,
             openRouter: plan.openRouter,
             byoApiKey: plan.summary.apiKey,
+            model: plan.summary.model,
             notesLanguage: user?.notesLanguage,
           });
         } catch (error) {

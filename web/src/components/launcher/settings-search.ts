@@ -7,7 +7,7 @@ import type { SettingsSection } from '@/lib/desktop/bridge';
 const SECTION_KEYWORDS: Record<SettingsSection, string> = {
   capture: 'sounds meetings record automatically auto-record calls zoom teams meet live captions recording appearance live words see-through translucent position pill hud recordings folder screenshots',
   dictation: 'tone style format for agents dictate typing paste',
-  transcription: 'languages language notes translate',
+  transcription: 'languages language notes translate ai models model claude sonnet opus haiku assistant',
   dictionary: 'custom words vocabulary spelling replacements swap',
   shortcuts: 'hotkey keyboard keys fn talk push to talk toggle panel',
   prompts: 'snippets templates slash commands saved text',

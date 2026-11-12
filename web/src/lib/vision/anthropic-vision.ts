@@ -22,7 +22,9 @@ export const anthropicVisionEngine: VisionEngine = {
 
     const response = await client.messages.create({
       model: opts.model,
-      max_tokens: 2048,
+      // Reading a screenshot needs little thought; the limit covers thinking and the text.
+      max_tokens: 8_000,
+      output_config: { effort: 'low' },
       system: VISION_OCR_SYSTEM_PROMPT,
       messages: [
         {

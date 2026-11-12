@@ -1,5 +1,6 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { requireServerEnv } from '@/lib/env';
+import { DEFAULT_ASSISTANT_MODEL, DEFAULT_NOTES_MODEL } from './model-choice';
 
 let client: Anthropic | null = null;
 
@@ -14,8 +15,18 @@ export function anthropicForUser(userKey: string): Anthropic {
   return new Anthropic({ apiKey: userKey });
 }
 
+/**
+ * Sent with requests to models whose safety classifiers can decline one (a
+ * meeting about security work, say): the API then retries on the model's
+ * default fallback inside the same call, so notes are still written. A model
+ * without a fallback runs alone, as it would without this.
+ * Needs `client.beta.messages`.
+ */
+export const REFUSAL_FALLBACK: { betas: Anthropic.Beta.AnthropicBeta[]; fallbacks: 'default' } = { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' };
+
 export const MODELS = {
-  summary: 'claude-sonnet-4-6',
+  /** Meeting notes and questions about a meeting, unless the account chose another (`model-choice.ts`). */
+  summary: DEFAULT_NOTES_MODEL,
   /** Rolling notes while a meeting is live: frequent, short, latency-sensitive. */
   rollingNotes: 'claude-haiku-5-5',
   /** Cleans finished transcripts up for pasting into an agent: many short requests. */
@@ -28,10 +39,10 @@ export const MODELS = {
   promptSuggestions: 'claude-haiku-5-5',
   /** Agents' feedback on a saved prompt merged into one proposed rewrite, on request in Settings. */
   promptFeedbackMerge: 'claude-haiku-5-5',
-  /** Eavesy's conversation: tool use, short replies. */
-  assistant: 'claude-sonnet-5-5',
+  /** Eavesy's conversation: tool use, short replies. The default; the account may choose another. */
+  assistant: DEFAULT_ASSISTANT_MODEL,
   /** The second-model check on each tier 2 or 3 action (assistant.md C7). */
   assistantCheck: 'claude-haiku-5-5',
-  vision: 'claude-sonnet-4-6',
+  vision: 'claude-sonnet-5-5',
   embed: 'voyage-3',
 } as const;

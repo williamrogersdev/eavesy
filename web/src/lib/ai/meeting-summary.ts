@@ -1,7 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { notesLanguageRule } from '@/lib/transcription/language';
 import { CHAPTER_INSTRUCTIONS, CHAPTERS_SCHEMA } from './chapters';
-import { MODELS } from './client';
+import { MODELS, REFUSAL_FALLBACK } from './client';
 import { MEETING_CONTEXT_RULES } from '@/lib/meetings/meeting-context';
 
 export const MEETING_SUMMARY_MODEL = MODELS.summary;
@@ -14,8 +14,8 @@ export const ROLLING_NOTES_MODEL = MODELS.rollingNotes;
 export const ROLLING_NOTES_MAX_TOKENS = 8_000;
 
 /** The model that writes this kind of summary. */
-export function summaryModel(rolling: boolean): string {
-  return rolling ? ROLLING_NOTES_MODEL : MEETING_SUMMARY_MODEL;
+export function summaryModel(rolling: boolean, chosen?: string): string {
+  return rolling ? ROLLING_NOTES_MODEL : chosen ?? MEETING_SUMMARY_MODEL;
 }
 
 const item = {
@@ -76,6 +76,8 @@ export const MEETING_SUMMARY_SCHEMA = {
 } as const;
 
 export interface MeetingSummaryRequest {
+  /** The Claude model for the final notes (`plan.summary.model`); absent is the default. Rolling notes keep their own. */
+  model?: string;
   transcript: string;
   contextBlurb: string | null;
   priorSummary: string;
@@ -149,11 +151,11 @@ export function summaryUserContent(args: Pick<MeetingSummaryRequest, 'transcript
   return `${args.meetingContext}\n\n<transcript>\n${transcript}\n</transcript>`;
 }
 
-export function parseMeetingSummary(message: Pick<Anthropic.Message, 'stop_reason' | 'content'>) {
+export function parseMeetingSummary(message: { stop_reason: string | null; content: readonly { type: string; text?: string }[] }) {
   if (message.stop_reason === 'refusal') throw new Error('summary refused by the model');
   if (message.stop_reason === 'max_tokens') throw new Error('summary truncated at max_tokens');
   const text = message.content
-    .map((block) => (block.type === 'text' ? block.text : ''))
+    .map((block) => (block.type === 'text' ? block.text ?? '' : ''))
     .join('');
   let parsed: unknown;
   try {
@@ -188,8 +190,9 @@ export async function requestMeetingSummary(client: Anthropic, args: MeetingSumm
       .finalMessage();
     return parseMeetingSummary(message);
   }
-  const message = await client.messages.create({
-    model: MEETING_SUMMARY_MODEL,
+  const message = await client.beta.messages.create({
+    ...REFUSAL_FALLBACK,
+    model: args.model ?? MEETING_SUMMARY_MODEL,
     max_tokens: 16_000,
     system: meetingSummarySystemPrompt(args),
     output_config: {

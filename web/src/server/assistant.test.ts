@@ -216,6 +216,12 @@ describe('memory', () => {
     const sent = merged.calls[0].messages[0].content as string;
     expect(sent).toContain('- Ships behind &lt;flags&gt;');
     expect(sent).toContain('- Writes &amp;lt; in HTML');
+    // Thinking can't be turned off on the assistant's models: the request never asks for that.
+    expect(merged.calls[0]).not.toHaveProperty('thinking');
+    expect(merged.calls[0].model).toBe('claude-sonnet-5-5');
+    const chosen = fakeClient([text(JSON.stringify({ notes: ['Uses bun, not npm'] }))]);
+    await runConsolidate(chosen.client, input, 'claude-opus-5-5');
+    expect(chosen.calls[0].model).toBe('claude-opus-5-5');
     const same = fakeClient([text(JSON.stringify({ notes: ['a', 'b', 'c', 'd'] }))]);
     await expect(runConsolidate(same.client, input)).rejects.toThrow();
     const cut = fakeClient([text('{"notes": ["a"')], 'max_tokens');

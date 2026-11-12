@@ -275,6 +275,7 @@ async function writeSummary(
     contextBlurb: combinedContext(meeting.contextBlurb, project),
     priorSummary,
     rolling: !mode.final,
+    model: plan.summary.model,
     recorderName: rendered.recorderName,
     othersName: rendered.othersName,
     labelled: rendered.labelled,
@@ -289,7 +290,7 @@ async function writeSummary(
     : await requestMeetingSummary(anthropicForUser(plan.summary.apiKey ?? env.ANTHROPIC_API_KEY), args);
   const current = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
   if (!current || current.deletedAt || (useCredits && current.status === 'failed')) return;
-  const model = useCredits ? LIBRARY_MODEL : summaryModel(!mode.final);
+  const model = useCredits ? LIBRARY_MODEL : summaryModel(!mode.final, plan.summary.model);
   const generatedByModel = useCredits ? `workers-ai:${model}` : plan.summary.apiKey ? `byo-anthropic:${model}` : model;
   const now = Date.now();
   const values = {
