@@ -6,6 +6,14 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.14] - 2026-11-11 - desktop
+
+### Added
+
+- Mac app: colour by kind in the panel, and grouped Settings ([#368](https://github.com/williamrogersdev/eavesy/pull/368))
+- Mac app: meeting rows show their name and summary, and open the full meeting ([#367](https://github.com/williamrogersdev/eavesy/pull/367))
+- Mac app: notes reach your other Macs the moment they are saved ([#366](https://github.com/williamrogersdev/eavesy/pull/366))
+
 ## [0.9.13] - 2026-11-10 - desktop
 
 ### Added
