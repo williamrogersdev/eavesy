@@ -509,9 +509,6 @@ fn clear_prompt(app: &AppHandle, key: &str) {
     hud::set_state_if(app, HudState::idle(), |now| now.phase == Phase::Prompt && now.session_id.as_deref() == Some(&session));
 }
 
-/// Starts the Meeting recording the prompt was for. It goes through the
-/// `mixed` source, so the cloud links it to the calendar event and names it.
-/// On its own thread: the engine can take a while to start.
 /// A meeting recording is starting. The control only says Recording once the
 /// capture is up, so every way to start one (the prompt, the menu bar) goes
 /// through this: a second start before then is dropped, not raced.
@@ -522,8 +519,9 @@ static STARTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::
 struct Starting;
 
 impl Starting {
-    /// None while another start is under way: that one brings the recording
-    /// this caller asked for, so there is nothing more to do or to say.
+    /// None while another start is under way. There is one capture and one
+    /// recording at a time, not one per meeting, so a second start has
+    /// nothing to add: the caller drops its own.
     fn claim() -> Option<Self> {
         (!STARTING.swap(true, std::sync::atomic::Ordering::SeqCst)).then_some(Self)
     }
@@ -535,11 +533,19 @@ impl Drop for Starting {
     }
 }
 
+/// Starts the Meeting recording the prompt was for. It goes through the
+/// `mixed` source, so the cloud links it to the calendar event and names it.
+/// On its own thread: the engine can take a while to start.
 fn record(app: &AppHandle, prompt: &Prompt) {
-    // Another start is under way: the prompt stays until that one puts
-    // Recording, or its failure, in its place. The answer is never just dropped.
-    let Some(starting) = Starting::claim() else { return };
+    let claim = Starting::claim();
+    // Answered either way: the prompt never stays on screen behind a start.
     clear_prompt(app, &prompt.key);
+    // A start already under way is the one recording there can be. It shows
+    // Recording when it is up and says so itself (not_recording) if it fails.
+    let Some(starting) = claim else {
+        tracing::info!(key = %prompt.key, "meeting watch: a recording is already starting, this start is dropped");
+        return;
+    };
     let handle = app.clone();
     std::thread::spawn(move || {
         let started = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now());

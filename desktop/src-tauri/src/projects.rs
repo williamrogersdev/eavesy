@@ -286,7 +286,10 @@ fn remote_meeting(app: &AppHandle, session_id: &str) -> Result<Option<String>, S
 #[tauri::command]
 pub async fn meeting_overview(app: AppHandle, session_id: String) -> Result<Option<Value>, String> {
     let Some(credential) = settings::device_credential(&app) else { return Ok(None) };
-    let Some(remote_id) = remote_meeting(&app, &session_id)? else { return Ok(None) };
+    // Asked again every so often by the panel: a recording this Mac can't
+    // read right now (logged by remote_meeting) is "nothing yet", not an
+    // error repeated on every poll. A typed question does get the error.
+    let Ok(Some(remote_id)) = remote_meeting(&app, &session_id) else { return Ok(None) };
     let response = client()
         .ok_or("Could not reach eavesy.com")?
         .get(crate::base_url::join(&credential.base, &format!("/api/sessions/{remote_id}/result")))
