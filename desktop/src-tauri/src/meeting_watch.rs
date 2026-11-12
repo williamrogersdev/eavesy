@@ -540,10 +540,11 @@ fn record(app: &AppHandle, prompt: &Prompt) {
     let claim = Starting::claim();
     // Answered either way: the prompt never stays on screen behind a start.
     clear_prompt(app, &prompt.key);
-    // A start already under way is the one recording there can be. It shows
-    // Recording when it is up and says so itself (not_recording) if it fails.
+    // Another start holds the capture. This answer waits for it to settle
+    // and is told if no recording came of it, whatever that start was for.
     let Some(starting) = claim else {
-        tracing::info!(key = %prompt.key, "meeting watch: a recording is already starting, this start is dropped");
+        tracing::info!(key = %prompt.key, "meeting watch: a recording is already starting, waiting on it");
+        after_other_start(app);
         return;
     };
     let handle = app.clone();
@@ -564,6 +565,30 @@ fn record(app: &AppHandle, prompt: &Prompt) {
                     not_recording(&handle);
                 }
             }
+        }
+    });
+}
+
+/// How long a start that lost the claim waits for the one under way.
+const OTHER_START_WAIT: Duration = Duration::from_secs(60);
+
+/// Whether a start that waited on another one still owes the user a notice:
+/// only when that start is over and nothing is recording.
+fn start_came_to_nothing(still_starting: bool, phase: &Phase) -> bool {
+    !still_starting && *phase != Phase::Recording
+}
+
+/// For a start dropped because another was under way: once that one is
+/// over, says so if no recording came of it.
+fn after_other_start(app: &AppHandle) {
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let waited = Instant::now();
+        while STARTING.load(std::sync::atomic::Ordering::SeqCst) && waited.elapsed() < OTHER_START_WAIT {
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        if start_came_to_nothing(STARTING.load(std::sync::atomic::Ordering::SeqCst), &hud::current().phase) {
+            not_recording(&handle);
         }
     });
 }
@@ -657,6 +682,15 @@ pub fn set_auto_record_meetings(app: AppHandle, enabled: bool) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_dropped_start_speaks_up_only_when_no_recording_came() {
+        assert!(start_came_to_nothing(false, &Phase::Idle));
+        assert!(start_came_to_nothing(false, &Phase::Prompt));
+        // The other start brought the recording, or is still at it.
+        assert!(!start_came_to_nothing(false, &Phase::Recording));
+        assert!(!start_came_to_nothing(true, &Phase::Idle));
+    }
 
     #[test]
     fn one_start_at_a_time_and_a_failed_one_frees_the_next() {
