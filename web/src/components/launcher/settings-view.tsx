@@ -502,6 +502,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
   const [clipsBusy, setClipsBusy] = useState(false);
   const [clipsError, setClipsError] = useState<string | null>(null);
   const [clipsNote, setClipsNote] = useState<string | null>(null);
+  const [clipsConfirming, setClipsConfirming] = useState(false);
   const toggleClipboard = (next: boolean) => {
     setClipsBusy(true);
     setClipsError(null);
@@ -517,7 +518,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
     void clearClipboardHistory()
       .then(() => setClipsNote('Cleared.'))
       .catch((error: unknown) => setClipsError(errMsg(error, 'Couldn’t clear it.')))
-      .finally(() => setClipsBusy(false));
+      .finally(() => { setClipsBusy(false); setClipsConfirming(false); });
   };
 
   const typeLive = settings?.type_as_you_talk ?? false;
@@ -888,8 +889,18 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
               hint="What you copy is kept on this Mac for 90 days, so you can paste it again. It never leaves this Mac, and passwords copied from a password manager are skipped."
             />
             <div className="mt-2 flex items-center gap-3">
-              <Button variant="quiet" size="sm" disabled={clipsBusy} onClick={clearClipboard}>Clear clipboard history</Button>
-              {clipsNote ? <p role="status" className="ev-set-hint">{clipsNote}</p> : null}
+              {clipsConfirming ? (
+                <>
+                  <p className="ev-set-hint flex-1">Everything you copied is removed from Eavesy. This can’t be undone.</p>
+                  <Button variant="quiet" size="sm" disabled={clipsBusy} onClick={() => setClipsConfirming(false)}>Cancel</Button>
+                  <Button variant="primary" size="sm" loading={clipsBusy} onClick={clearClipboard}>Clear</Button>
+                </>
+              ) : (
+                <>
+                  <Button variant="quiet" size="sm" disabled={clipsBusy} onClick={() => { setClipsNote(null); setClipsConfirming(true); }}>Clear clipboard history</Button>
+                  {clipsNote ? <p role="status" className="ev-set-hint">{clipsNote}</p> : null}
+                </>
+              )}
             </div>
             {clipsError ? <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{clipsError}</p> : null}
           </Section>

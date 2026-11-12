@@ -337,7 +337,8 @@ mod tests {
 
     #[test]
     fn the_panel_defaults_avoid_macos_other_launchers_and_everyday_commands() {
-        // Stock macOS shortcuts on these keys: none. ⌘⇧V (Paste and Match
+        // A sample of stock macOS shortcuts, not the whole table: none of
+        // them, and no stock shortcut known when this was written, is on these keys. ⌘⇧V (Paste and Match
         // Style) and ⌘V are why the default is not on ⌘.
         let stock = serde_json::json!({"AppleSymbolicHotKeys":{
             "64":{"enabled":true,"value":{"parameters":[32,49,1048576]}},

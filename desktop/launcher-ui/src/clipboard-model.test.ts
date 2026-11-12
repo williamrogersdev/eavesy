@@ -8,7 +8,9 @@ describe('day headings', () => {
   test('today, yesterday, then the date', () => {
     expect(dayLabel(NOON - HOUR, NOON)).toBe('Today');
     expect(dayLabel(NOON - 13 * HOUR, NOON)).toBe('Yesterday');
-    expect(dayLabel(NOON - 72 * HOUR, NOON)).not.toMatch(/Today|Yesterday/);
+    expect(dayLabel(NOON - 72 * HOUR, NOON)).not.toMatch(/Today|Yesterday|2026/);
+    // Another year says which.
+    expect(dayLabel(new Date(2025, 11, 30, 12).getTime(), NOON)).toContain('2025');
   });
 
   test('rows stay in order under one heading per day', () => {
@@ -47,6 +49,8 @@ describe('arrow keys', () => {
 test('the selection survives a refresh, or moves to what took its place', () => {
   expect(keep([1, 2, 3], 2, 1)).toBe(2);
   expect(keep([1, 3], 2, 1)).toBe(3);
+  // Removed from the end: the one before it.
+  expect(keep([1, 2], 3, 2)).toBe(2);
   expect(keep([1], 2, 1)).toBe(1);
   expect(keep([], 2, 1)).toBeNull();
   expect(keep([5, 6], null, -1)).toBe(5);

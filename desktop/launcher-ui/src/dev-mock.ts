@@ -144,7 +144,7 @@ export function installDevMock(): void {
       return { items: items.map(({ id, kind, title, lastMs }) => ({ id, kind, title, lastMs })), total: items.length };
     },
     clipboard_item: ({ id }: Record<string, unknown>) => clips.find((clip) => clip.id === id) ?? null,
-    clipboard_delete: ({ id }: Record<string, unknown>) => { clips.splice(clips.findIndex((clip) => clip.id === id), 1); },
+    clipboard_delete: ({ id }: Record<string, unknown>) => { const at = clips.findIndex((clip) => clip.id === id); if (at >= 0) clips.splice(at, 1); },
     clipboard_clear: () => { clips.length = 0; },
     clipboard_use: ({ id, paste }: Record<string, unknown>) => { copiedText = clips.find((clip) => clip.id === id)?.text ?? ''; return paste ? 'pasted' : 'copied'; },
     clipboard_use_capture: ({ paste }: Record<string, unknown>) => paste ? 'pasted' : 'copied',

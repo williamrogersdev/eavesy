@@ -116,17 +116,25 @@ function ClipboardPanel() {
   }, [clipId, shotId, view]);
 
   const chosen = view === 'clipboard' ? clipId !== null : shotId !== null;
-  const use = useCallback((paste: boolean) => {
-    const { clipId: clip, shotId: shot } = selection.current;
+  // `id` is the item just double-clicked; without it, the selected one.
+  const use = useCallback((paste: boolean, id?: number | string) => {
+    const clip = typeof id === 'number' ? id : selection.current.clipId;
+    const shot = typeof id === 'string' ? id : selection.current.shotId;
     const sent = view === 'clipboard'
       ? clip === null ? null : invoke('clipboard_use', { id: clip, paste })
       : shot === null ? null : invoke('clipboard_use_capture', { id: shot, paste });
     void sent?.catch((error) => setNotice(errMsg(error)));
   }, [view]);
   const remove = useCallback(() => {
-    const { clipId: clip } = selection.current;
+    const { clipId: clip, clips: rows } = selection.current;
     if (view !== 'clipboard' || clip === null) return;
-    void invoke('clipboard_delete', { id: clip }).then(() => load(query)).catch((error) => setNotice(errMsg(error)));
+    // The row goes at once and the selection moves to what took its place, so a second ⌘⌫ never lands on a row that is already going.
+    const left = rows.filter((row) => row.id !== clip);
+    const next = keep(left.map((row) => row.id), null, rows.findIndex((row) => row.id === clip)) as number | null;
+    selection.current = { ...selection.current, clips: left, clipId: next };
+    setClips(left);
+    setClipId(next);
+    void invoke('clipboard_delete', { id: clip }).catch((error) => setNotice(errMsg(error))).then(() => load(query));
   }, [view, load, query]);
 
   useEffect(() => {
@@ -146,9 +154,12 @@ function ClipboardPanel() {
         // ⌘C copies the selected item, unless you selected some of your search to copy.
         const field = input.current;
         if (field && field.selectionStart !== field.selectionEnd) return;
+        if (!window.getSelection()?.isCollapsed) return;
         event.preventDefault();
         use(false);
       } else if (event.key === 'Backspace' && event.metaKey) {
+        // With words in the search field, ⌘⌫ is the field's own: it deletes them, never a row.
+        if (query) return;
         event.preventDefault();
         remove();
       } else if (event.key.startsWith('Arrow') && !event.metaKey && !event.altKey) {
@@ -158,6 +169,8 @@ function ClipboardPanel() {
           const next = step(clipRows.findIndex((row) => row.id === clip), event.key, clipRows.length, 1);
           if (next >= 0) setClipId(clipRows[next].id);
         } else {
+          // Sideways moves the caret while there are words to move it through.
+          if (query && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) return;
           event.preventDefault();
           const next = step(shotRows.findIndex((row) => row.id === shot), event.key, shotRows.length, COLUMNS);
           if (next >= 0) setShotId(shotRows[next].id);
@@ -215,7 +228,7 @@ function ClipboardPanel() {
                           className="ev-clip-row"
                           onMouseDown={stay}
                           onClick={() => setClipId(clip.id)}
-                          onDoubleClick={() => { setClipId(clip.id); selection.current.clipId = clip.id; use(true); }}
+                          onDoubleClick={() => { setClipId(clip.id); use(true, clip.id); }}
                         >
                           <Icon size={16} strokeWidth={1.75} aria-hidden />
                           <span className="ev-clip-row-title">{clip.title}</span>
@@ -261,7 +274,7 @@ function ClipboardPanel() {
                 className="ev-clip-shot"
                 onMouseDown={stay}
                 onClick={() => setShotId(shot.id)}
-                onDoubleClick={() => { setShotId(shot.id); selection.current.shotId = shot.id; use(true); }}
+                onDoubleClick={() => { setShotId(shot.id); use(true, shot.id); }}
               >
                 <span className="ev-clip-thumb"><Thumb id={shot.id} /></span>
                 <span className="ev-clip-shot-when">{dayLabel(shot.atMs, now)} · {clock(shot.atMs)}</span>
@@ -274,9 +287,9 @@ function ClipboardPanel() {
       <footer className="ev-clip-foot">
         {notice ? <span className="ev-clip-notice" role="alert">{notice}</span> : (
           <span className="ev-clip-hints">
-            <span><Kbd keys={view === 'clipboard' ? ['↑', '↓'] : ['←', '↑', '↓', '→']} /> Move</span>
+            <span><Kbd keys={view === 'clipboard' || searching ? ['↑', '↓'] : ['←', '↑', '↓', '→']} /> Move</span>
             <span><Kbd keys={['tab']} /> {view === 'clipboard' ? 'Screenshots' : 'Clipboard'}</span>
-            {view === 'clipboard' && <span><Kbd keys="⌘⌫" /> Remove</span>}
+            {view === 'clipboard' && !searching && <span><Kbd keys="⌘⌫" /> Remove</span>}
           </span>
         )}
         <span className="ev-clip-actions">

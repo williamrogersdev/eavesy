@@ -1016,7 +1016,7 @@ html:has(.ev-clip), html:has(.ev-clip) body, html:has(.ev-clip) #root { margin: 
 .ev-clip-row[aria-selected='true'] { background: var(--ev-coat-soft); }
 .ev-clip-row[aria-selected='true'] > svg { color: var(--ev-ink-2); }
 .ev-clip-preview { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; min-height: 0; }
-.ev-clip-content { padding: 14px 16px; user-select: text; -webkit-user-select: text; cursor: auto; }
+.ev-clip-content { padding: 14px 16px; }
 .ev-clip-content pre { margin: 0; font: 400 12.5px/19px var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .ev-clip-content[data-kind='image'] { display: grid; place-items: center; }
 .ev-clip-content img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--ev-r-media); box-shadow: 0 0 0 1px var(--ev-line); }

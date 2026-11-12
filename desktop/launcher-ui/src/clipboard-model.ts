@@ -65,7 +65,7 @@ export function step(index: number, key: string, count: number, columns: number)
   return next;
 }
 
-/** The item to select after the list changed: the same one if it's still there, else the one that took its place. */
+/** The item to select after the list changed: the same one if it's still there, else the one now at `previousIndex` (where it was in the list before), else the last. */
 export function keep(ids: (string | number)[], selected: string | number | null, previousIndex: number): string | number | null {
   if (ids.length === 0) return null;
   if (selected !== null && ids.includes(selected)) return selected;
