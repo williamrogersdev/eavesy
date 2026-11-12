@@ -177,12 +177,37 @@ pub fn hold_send(session_id: &str, command: bool, pid: i32) -> bool {
     true
 }
 
+/// Dictations being delivered, and since when: their words are still on
+/// their way into a field.
+static DELIVERING: Mutex<Vec<(String, std::time::Instant)>> = Mutex::new(Vec::new());
+
+fn delivering() -> std::sync::MutexGuard<'static, Vec<(String, std::time::Instant)>> {
+    DELIVERING.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Whether a dictation other than `session_id` is being delivered. The next
+/// one starts typing only once it is over: a field read while the finished
+/// words are still replacing the typed ones (or a held Return is about to
+/// send them) changes under the new words, and typing them would stop.
+/// A delivery is over well within `SEND_HOLD`; one that never said so
+/// stops counting then.
+fn another_is_delivering(session_id: &str) -> bool {
+    another_among(&delivering(), session_id, std::time::Instant::now())
+}
+
+fn another_among(delivering: &[(String, std::time::Instant)], session_id: &str, now: std::time::Instant) -> bool {
+    delivering.iter().any(|(id, since)| id != session_id && now.saturating_duration_since(*since) < SEND_HOLD)
+}
+
 /// A dictation's delivery, holding on to the Return pressed to end it (if
 /// one was) until it is over: Return in that app does nothing meanwhile.
 /// Dropping it lets go, however delivery ended.
 pub struct SendHold(String);
 
 pub fn send_hold(session_id: &str) -> SendHold {
+    let mut delivering = delivering();
+    delivering.retain(|(id, since)| id != session_id && since.elapsed() < SEND_HOLD);
+    delivering.push((session_id.to_string(), std::time::Instant::now()));
     SendHold(session_id.to_string())
 }
 
@@ -200,6 +225,7 @@ impl Drop for SendHold {
 }
 
 fn release_send(session_id: &str) {
+    delivering().retain(|(id, _)| id != session_id);
     finishing().retain(|(id, _)| id != session_id);
     {
         let mut slot = send_slot();
@@ -468,6 +494,12 @@ fn type_into(session_id: &str, field: Field, text: &str, shared: &Shared) -> Fie
         Field::Typing(live) => live,
         Field::Unknown(missed) => {
             if missed.is_some_and(|search| search.last.elapsed() < FIELD_RETRY) {
+                return Field::Unknown(missed);
+            }
+            // The dictation before this one is still going into the field:
+            // look for it once that is over. The words heard meanwhile are
+            // kept and typed then.
+            if another_is_delivering(session_id) {
                 return Field::Unknown(missed);
             }
             match crate::dictation::live_typing_target(session_id) {
@@ -753,6 +785,29 @@ mod tests {
         for n in 0..KEEP + 2 {
             cancel(&format!("evict-quiet-{n}"));
         }
+    }
+
+    #[test]
+    fn the_next_dictation_waits_for_the_one_being_delivered() {
+        let now = std::time::Instant::now();
+        let delivering = vec![("first".to_string(), now)];
+        assert!(another_among(&delivering, "next", now));
+        // Its own delivery never holds it up, and neither does one that
+        // never said it was over.
+        assert!(!another_among(&delivering, "first", now));
+        assert!(!another_among(&delivering, "next", now + SEND_HOLD));
+        assert!(!another_among(&[], "next", now));
+
+        // A delivery counts from its start to its end, however it ends.
+        let being_delivered = |id: &str| super::delivering().iter().any(|(other, _)| other == id);
+        let delivery = send_hold("live-typing-test-delivered");
+        assert!(being_delivered("live-typing-test-delivered"));
+        drop(delivery);
+        assert!(!being_delivered("live-typing-test-delivered"));
+        let delivery = send_hold("live-typing-test-cancelled");
+        cancel("live-typing-test-cancelled");
+        assert!(!being_delivered("live-typing-test-cancelled"));
+        drop(delivery);
     }
 
     #[test]
