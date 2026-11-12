@@ -289,10 +289,7 @@ pub async fn meeting_overview(app: AppHandle, session_id: String) -> Result<Opti
     // Asked again every so often by the panel. One failed read of the local
     // recording is "nothing yet"; a read that keeps failing is shown.
     let remote = remote_meeting(&app, &session_id);
-    let failed_before = match &remote {
-        Ok(_) => OVERVIEW_READ_FAILURES.swap(0, std::sync::atomic::Ordering::SeqCst),
-        Err(_) => OVERVIEW_READ_FAILURES.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
-    };
+    let failed_before = count_read(&mut OVERVIEW_READ_FAILURES.lock().unwrap_or_else(|error| error.into_inner()), &session_id, remote.is_err());
     let Some(remote_id) = overview_read(remote, failed_before)? else { return Ok(None) };
     let response = client()
         .ok_or("Could not reach eavesy.com")?
@@ -313,8 +310,21 @@ pub async fn meeting_overview(app: AppHandle, session_id: String) -> Result<Opti
     Ok(overview_from(&body))
 }
 
-/// How many times in a row the overview's read of the local recording has failed.
-static OVERVIEW_READ_FAILURES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// The recording whose overview was last read here, and how many times in a
+/// row that read has failed. One recording has a panel at a time.
+static OVERVIEW_READ_FAILURES: std::sync::Mutex<(String, u32)> = std::sync::Mutex::new((String::new(), 0));
+
+/// Books one read for `session_id` and answers how many had failed in a row
+/// before it. Another recording's count is never carried over.
+fn count_read(count: &mut (String, u32), session_id: &str, failed: bool) -> u32 {
+    if count.0 != session_id {
+        *count = (session_id.to_string(), 0);
+    }
+    let before = count.1;
+    count.1 = if failed { before + 1 } else { 0 };
+    before
+}
+
 /// A read that failed this many times running is no passing hiccup.
 const OVERVIEW_READ_PATIENCE: u32 = 2;
 
@@ -460,6 +470,14 @@ mod tests {
         assert_eq!(overview_read(Err("no".into()), 2), Err("no".into()));
         assert_eq!(overview_read(Ok(Some("m1".into())), 5), Ok(Some("m1".into())));
         assert_eq!(overview_read(Ok(None), 0), Ok(None));
+        // Counted per recording, in a row: a good read or another recording starts over.
+        let mut count = (String::new(), 0);
+        assert_eq!(count_read(&mut count, "a", true), 0);
+        assert_eq!(count_read(&mut count, "a", true), 1);
+        assert_eq!(count_read(&mut count, "a", true), 2);
+        assert_eq!(count_read(&mut count, "b", true), 0);
+        assert_eq!(count_read(&mut count, "b", false), 1);
+        assert_eq!(count_read(&mut count, "b", true), 0);
         assert!(not_written_yet(404) && not_written_yet(409));
         assert!(!not_written_yet(401) && !not_written_yet(500) && !not_written_yet(200));
     }
