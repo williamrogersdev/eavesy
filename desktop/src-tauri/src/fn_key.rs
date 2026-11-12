@@ -165,7 +165,7 @@ fn slot(action: Action) -> usize {
         Action::Toggle => 0,
         Action::Dictation => 1,
         Action::Assistant => 2,
-        Action::Screen => unreachable!("Record screen is never bound to fn"),
+        Action::Screen | Action::Clipboard | Action::Screenshots => unreachable!("press-only shortcuts are never bound to fn"),
     }
 }
 

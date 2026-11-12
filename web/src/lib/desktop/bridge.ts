@@ -941,12 +941,16 @@ export interface Settings {
   assistant_hotkey: string;
   /** Missing from Mac apps older than the Record screen shortcut. */
   screen_hotkey?: string;
+  clipboard_hotkey?: string;
+  screenshots_hotkey?: string;
   device_id: string;
   setup_completed: boolean;
   recordings_root?: string | null;
   launcher_position?: LauncherPosition;
   /** Absent means on. */
   live_captions?: boolean;
+  /** Keep what's copied, on this Mac, for the clipboard panel. Absent means on. */
+  clipboard_history?: boolean;
   /** Copy new macOS screenshots into the history. Absent means on. */
   add_screenshots?: boolean;
   /** Snapshots of shared screens in meetings. Absent means on. */
@@ -1057,7 +1061,7 @@ export async function setupStepShown(step: number): Promise<void> {
   await invoke('setup_step_shown', { step }).catch(() => undefined);
 }
 
-export type HotkeyAction = 'toggle' | 'dictation' | 'assistant' | 'screen';
+export type HotkeyAction = 'toggle' | 'dictation' | 'assistant' | 'screen' | 'clipboard' | 'screenshots';
 /** Every shortcut; "" means unbound, "Fn" the fn / 🌐 key on its own, "Fn+Space" fn held with a key. */
 export type HotkeyBindings = Record<HotkeyAction, string>;
 /** Why the Mac app refused a shortcut (Rust `HotkeyError`). */
@@ -1100,7 +1104,7 @@ export async function checkAllHotkeys(): Promise<Partial<Record<HotkeyAction, Ho
 }
 
 export async function getHotkeyDefaults(): Promise<HotkeyBindings> {
-  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space', screen: 'Alt+Shift+R' };
+  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space', screen: 'Alt+Shift+R', clipboard: 'Alt+Shift+V', screenshots: 'Alt+Shift+S' };
   if (!isDesktop()) return fallback;
   return (await invoke<HotkeyBindings | null>('get_hotkey_defaults').catch(() => null)) ?? fallback;
 }
@@ -1240,6 +1244,20 @@ export async function getScreenshotFolder(): Promise<string | null> {
 
 export async function setAutoImportScreenshots(enabled: boolean): Promise<void> {
   await invoke('set_auto_import_screenshots', { enabled });
+}
+
+/** Starts or stops keeping what's copied (clipboard.rs). What was already kept stays until cleared. */
+export async function setClipboardHistory(enabled: boolean): Promise<void> {
+  await invoke('set_clipboard_history', { enabled });
+}
+
+export async function clearClipboardHistory(): Promise<void> {
+  await invoke('clipboard_clear');
+}
+
+/** Opens the clipboard panel on one of its two views. */
+export async function showClipboard(view: 'clipboard' | 'screenshots'): Promise<void> {
+  await invoke('show_clipboard', { view });
 }
 
 export async function onDragDrop(cb: (payload: DragDropPayload) => void): Promise<UnlistenFn> {

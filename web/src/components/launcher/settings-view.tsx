@@ -30,6 +30,8 @@ import {
   getScreenshotFolder,
   installUpdate,
   setAutoImportScreenshots,
+  setClipboardHistory,
+  clearClipboardHistory,
   type AccountInfo,
   type SettingsSection,
   type HudPreviewLines,
@@ -496,6 +498,28 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
       .finally(() => setShotsBusy(false));
   };
 
+  const clipsOn = settings?.clipboard_history ?? true;
+  const [clipsBusy, setClipsBusy] = useState(false);
+  const [clipsError, setClipsError] = useState<string | null>(null);
+  const [clipsNote, setClipsNote] = useState<string | null>(null);
+  const toggleClipboard = (next: boolean) => {
+    setClipsBusy(true);
+    setClipsError(null);
+    setClipsNote(null);
+    void setClipboardHistory(next)
+      .then(() => setSettings((current) => current ? { ...current, clipboard_history: next } : current))
+      .catch((error: unknown) => setClipsError(errMsg(error, 'Couldn’t change that setting.')))
+      .finally(() => setClipsBusy(false));
+  };
+  const clearClipboard = () => {
+    setClipsBusy(true);
+    setClipsError(null);
+    void clearClipboardHistory()
+      .then(() => setClipsNote('Cleared.'))
+      .catch((error: unknown) => setClipsError(errMsg(error, 'Couldn’t clear it.')))
+      .finally(() => setClipsBusy(false));
+  };
+
   const typeLive = settings?.type_as_you_talk ?? false;
   const [typeLiveBusy, setTypeLiveBusy] = useState(false);
   const [typeLiveError, setTypeLiveError] = useState<string | null>(null);
@@ -732,6 +756,8 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
           <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
           <ShortcutRow shortcuts={shortcuts} action="assistant" hint="Hold and ask Eavesy something, or tap to start and stop. It answers on the pill and out loud; esc stops it talking." />
           <ShortcutRow shortcuts={shortcuts} action="screen" hint="Start a screen recording with your microphone. Press it again to stop." />
+          <ShortcutRow shortcuts={shortcuts} action="clipboard" hint="Open what you copied. Press return to paste it where you were." />
+          <ShortcutRow shortcuts={shortcuts} action="screenshots" hint="Open your screenshots. Press return to paste one where you were." />
           <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Show or hide this panel." />
           {shortcuts.bindings ? <RestoreDefaultShortcuts shortcuts={shortcuts} /> : null}
         </Card>
@@ -849,6 +875,23 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
                 : 'New macOS screenshots are copied into Eavesy. The originals stay where they are.'}
             />
             {shotsError ? <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{shotsError}</p> : null}
+          </Section>
+        )}
+
+        {isDesktop() && (
+          <Section title="Clipboard">
+            <Switch
+              checked={clipsOn}
+              onCheckedChange={toggleClipboard}
+              disabled={!settings || clipsBusy}
+              label="Keep clipboard history"
+              hint="What you copy is kept on this Mac for 90 days, so you can paste it again. It never leaves this Mac, and passwords copied from a password manager are skipped."
+            />
+            <div className="mt-2 flex items-center gap-3">
+              <Button variant="quiet" size="sm" disabled={clipsBusy} onClick={clearClipboard}>Clear clipboard history</Button>
+              {clipsNote ? <p role="status" className="ev-set-hint">{clipsNote}</p> : null}
+            </div>
+            {clipsError ? <p role="alert" className="ev-set-hint mt-2 text-[var(--ev-warn-ink)]">{clipsError}</p> : null}
           </Section>
         )}
 

@@ -11,6 +11,11 @@ pub const DEFAULT_DICTATION_HOTKEY: &str = "Cmd+Shift+D";
 pub const DEFAULT_ASSISTANT_HOTKEY: &str = "Alt+Shift+Space";
 /// Starts a screen recording, and stops the one running.
 pub const DEFAULT_SCREEN_HOTKEY: &str = "Alt+Shift+R";
+/// Clipboard history: V as in paste, in the ⌥⇧ family the other panel
+/// shortcuts use. ⌘⇧V would take Paste and Match Style from every app.
+pub const DEFAULT_CLIPBOARD_HOTKEY: &str = "Alt+Shift+V";
+/// Screenshot history: S, beside it.
+pub const DEFAULT_SCREENSHOTS_HOTKEY: &str = "Alt+Shift+S";
 /// What Talk to Eavesy defaulted to before; `hotkeys::migrate_assistant_default`
 /// moves it when another app also uses it.
 pub const OLD_ASSISTANT_HOTKEY: &str = "Alt+Space";
@@ -55,6 +60,10 @@ pub struct Settings {
     pub assistant_hotkey: String,
     #[serde(default = "default_screen_hotkey")]
     pub screen_hotkey: String,
+    #[serde(default = "default_clipboard_hotkey")]
+    pub clipboard_hotkey: String,
+    #[serde(default = "default_screenshots_hotkey")]
+    pub screenshots_hotkey: String,
     #[serde(default = "new_device_id")]
     pub device_id: String,
     #[serde(default)]
@@ -83,6 +92,10 @@ pub struct Settings {
     /// key: the old `auto_import_screenshots` saved `false` for everyone who never chose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_screenshots: Option<bool>,
+    /// Keep what is copied in the clipboard history, on this Mac only (on
+    /// unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clipboard_history: Option<bool>,
     /// Snapshots of the shared screen while a meeting records (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshots: Option<bool>,
@@ -225,6 +238,10 @@ impl Settings {
         self.fast_live_words.unwrap_or(true)
     }
 
+    pub fn clipboard_history(&self) -> bool {
+        self.clipboard_history.unwrap_or(true)
+    }
+
     pub fn add_screenshots(&self) -> bool {
         self.add_screenshots.unwrap_or(true)
     }
@@ -250,6 +267,14 @@ fn default_screen_hotkey() -> String {
     DEFAULT_SCREEN_HOTKEY.to_string()
 }
 
+fn default_clipboard_hotkey() -> String {
+    DEFAULT_CLIPBOARD_HOTKEY.to_string()
+}
+
+fn default_screenshots_hotkey() -> String {
+    DEFAULT_SCREENSHOTS_HOTKEY.to_string()
+}
+
 fn new_device_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -261,6 +286,8 @@ impl Default for Settings {
             dictation_hotkey: DEFAULT_DICTATION_HOTKEY.to_string(),
             assistant_hotkey: DEFAULT_ASSISTANT_HOTKEY.to_string(),
             screen_hotkey: DEFAULT_SCREEN_HOTKEY.to_string(),
+            clipboard_hotkey: DEFAULT_CLIPBOARD_HOTKEY.to_string(),
+            screenshots_hotkey: DEFAULT_SCREENSHOTS_HOTKEY.to_string(),
             device_id: new_device_id(),
             setup_completed: false,
             recordings_root: None,
@@ -272,6 +299,7 @@ impl Default for Settings {
             segment_sec: None,
             live_captions: None,
             add_screenshots: None,
+            clipboard_history: None,
             snapshots: None,
             capture_sounds: None,
             auto_record_meetings: None,
@@ -843,6 +871,8 @@ mod tests {
         let before: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b"}"#).unwrap();
         assert_eq!(before.assistant_hotkey, DEFAULT_ASSISTANT_HOTKEY);
         assert_eq!(before.screen_hotkey, DEFAULT_SCREEN_HOTKEY, "settings saved before the shortcut existed get it");
+        assert_eq!((before.clipboard_hotkey.as_str(), before.screenshots_hotkey.as_str()), (DEFAULT_CLIPBOARD_HOTKEY, DEFAULT_SCREENSHOTS_HOTKEY));
+        assert!(before.clipboard_history(), "kept unless turned off");
         assert_eq!(before.assistant_hotkey_settled, None);
         // A saved ⌥Space is read as it is; moving it is the migration's call.
         let old: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","assistant_hotkey":"Alt+Space"}"#).unwrap();

@@ -164,11 +164,11 @@ pub fn show_stopping(app: &AppHandle, session_id: &str) {
 /// stands down for the same time (`audio::JUST_STOPPED_FOR`).
 pub(crate) const STOPPING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// The resting pill: Open Eavesy, Talk, Screenshot, Video and close, with
+/// The resting pill: Open Eavesy, Talk, Screenshot, Video, Clipboard and close, with
 /// bare room left between them to drag it by. Talk's shortcut shows only
 /// when it leaves that room (up to about 42pt, "fn" or "Space"); a longer
 /// one is in the tooltip (`.ctl-home ~ .ctl-talk` in styles.css).
-const DEFAULT_SIZE: (f64, f64) = (244.0, 36.0);
+const DEFAULT_SIZE: (f64, f64) = (272.0, 36.0);
 /// Recording and writing it down: controls above a scrollable transcript.
 const WIDE: (f64, f64) = (400.0, 142.0);
 /// Recording with the live words turned off: just the controls, with room
@@ -817,7 +817,7 @@ mod tests {
     #[test]
     fn a_grow_pushed_in_from_the_edge_shrinks_back_to_where_the_pill_rests() {
         // Resting near the right edge; growing gets clamped 50pt to the left.
-        let rest = (886.0, 40.0, 244.0, 36.0);
+        let rest = (872.0, 40.0, 272.0, 36.0);
         let (wide, anchor) = anchored(rest, None, WIDE, false, refit);
         assert_eq!(anchor, rest);
         assert_eq!(wide, (808.0, 40.0, 400.0, 142.0));
@@ -830,10 +830,10 @@ mod tests {
 
     #[test]
     fn a_pill_moved_since_its_last_resize_rests_where_it_was_moved() {
-        let placed = Some(Placement { anchor: (886.0, 40.0, 244.0, 36.0), set: (758.0, 40.0, 400.0, 142.0) });
+        let placed = Some(Placement { anchor: (872.0, 40.0, 272.0, 36.0), set: (758.0, 40.0, 400.0, 142.0) });
         let dragged = (300.0, 200.0, 400.0, 142.0);
         let (back, anchor) = anchored(dragged, placed, DEFAULT_SIZE, false, refit);
-        assert_eq!(anchor, (378.0, 200.0, 244.0, 36.0));
+        assert_eq!(anchor, (364.0, 200.0, 272.0, 36.0));
         assert_eq!(back, anchor);
     }
 
@@ -934,7 +934,7 @@ mod tests {
     #[test]
     fn low_on_the_screen_refitting_keeps_the_bottom_edge() {
         assert_eq!(refit((486.0, 800.0, 244.0, 36.0), WIDE, true), (408.0, 694.0, 400.0, 142.0));
-        assert_eq!(refit((408.0, 694.0, 400.0, 142.0), DEFAULT_SIZE, true), (486.0, 800.0, 244.0, 36.0));
+        assert_eq!(refit((408.0, 694.0, 400.0, 142.0), DEFAULT_SIZE, true), (472.0, 800.0, 272.0, 36.0));
     }
 
     #[test]
@@ -945,8 +945,8 @@ mod tests {
 
     #[test]
     fn only_the_resting_pill_is_ever_saved() {
-        assert_eq!(resting((408.0, 24.0, 400.0, 142.0), false), HudFrame { x: 486.0, y: 24.0, width: 244.0, height: 36.0 });
-        assert_eq!(resting((408.0, 694.0, 400.0, 142.0), true), HudFrame { x: 486.0, y: 800.0, width: 244.0, height: 36.0 });
-        assert_eq!(resting((488.0, 24.0, 240.0, 40.0), false), HudFrame { x: 486.0, y: 24.0, width: 244.0, height: 36.0 });
+        assert_eq!(resting((408.0, 24.0, 400.0, 142.0), false), HudFrame { x: 472.0, y: 24.0, width: 272.0, height: 36.0 });
+        assert_eq!(resting((408.0, 694.0, 400.0, 142.0), true), HudFrame { x: 472.0, y: 800.0, width: 272.0, height: 36.0 });
+        assert_eq!(resting((488.0, 24.0, 240.0, 40.0), false), HudFrame { x: 472.0, y: 24.0, width: 272.0, height: 36.0 });
     }
 }

@@ -589,7 +589,7 @@ the pill can't jitter or flip while words arrive.
 
 | Size | Px | Used for |
 |---|---|---|
-| pill | 244 × 36 | idle, saved, video recording, a plain "Saved" |
+| pill | 272 × 36 | idle, saved, video recording, a plain "Saved" |
 | bar | 400 × 40 | recording and writing with live words off (the default) |
 | wide | 400 × 62 + 20 per line | recording and writing with 1, 2 or 4 lines of live words, failed, a save that wasn't typed (**Not typed** and why) |
 | receipt | 248 × 36 | a finished dictation with "Show the words when it's done" off, or **Not pasted** |
@@ -597,7 +597,7 @@ the pill can't jitter or flip while words arrive.
 | shot | 360 × 172 | a screenshot, with its thumbnail |
 
 **The idle pill** reads, left to right: **Open Eavesy** (a house, then a
-hairline), **Talk** with its shortcut, Screenshot, Video, bare room, and
+hairline), **Talk** with its shortcut, Screenshot, Video, Clipboard, bare room, and
 **×**. Open Eavesy is the sure way into the panel; a click on the bare room
 opens it too, and a drag there moves the control. It leads the pill so a
 near miss never lands on ×. The other states at this size (Saved, a video
@@ -719,6 +719,31 @@ the app the words were pasted into), the control says which word for 4s with
 a leaf stamp, **✓ Added "Kubernetes"** (+N for more): in place of Pasted on
 the result, or as the whole pill when idle. A correction that could not be
 saved stamps **Not saved to dictionary** in warn.
+
+### Clipboard and screenshot history
+
+One panel, two views: what you copied, and your screenshots. It opens from
+the pill's Clipboard button, the menu bar, or a shortcut for each view
+(`⌥⇧V` clipboard, `⌥⇧S` screenshots; both change in Settings → Shortcuts).
+760 × 500, on the display the pointer is on, a little above the middle.
+Paper, like the launcher; no coral. Source: `desktop/launcher-ui/src/clipboard.tsx`,
+`desktop/src-tauri/src/clipboard.rs`.
+
+- **Top**: a search field that always has the keyboard, and a Clipboard |
+  Screenshots segmented control. `tab` switches views.
+- **Clipboard**: on the left, one row per thing copied (kind icon, first
+  line), under day headings, newest first. On the right, the whole thing, then
+  where it was copied from, when and how often, and its size.
+- **Screenshots**: a three-column grid of thumbnails with their time.
+- **Footer**: what the keys do on the left, then **Copy** (`⌘↵`) and the main
+  action, **Paste to <app>** (`↵`), naming the app the panel opened over.
+
+Arrows move, `↵` pastes into the app you were in, `⌘↵` or `⌘C` only copies,
+`⌘⌫` removes a clipboard row, `esc` clears the search and then closes. A click
+selects, a double click pastes, and a click outside closes it. The shortcut
+again closes it; the other view's shortcut switches to that view. Clipboard
+history never leaves the Mac: 1,000 items, 90 days, and nothing a password
+manager marks as private.
 
 ### Next meeting in the menu bar
 

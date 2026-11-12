@@ -47,6 +47,12 @@ pub fn cancel_clipboard_restore() {
     restore().cancel();
 }
 
+/// Whether a paste has put its words on the clipboard and the user's own
+/// contents are still to come back: what is there now was not copied by them.
+pub fn paste_in_flight() -> bool {
+    restore().pending.is_some()
+}
+
 #[tauri::command]
 pub async fn paste_to_frontmost(app: AppHandle, text: String, learn: Option<bool>) -> Result<(), String> {
     hide_panel_on_main_thread(&app).await?;

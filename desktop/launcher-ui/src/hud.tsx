@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, Camera, Check, ChevronsUpDown, Clapperboard, Copy, History, House, Languages, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Volume2, X } from 'lucide-react';
+import { AudioLines, Camera, Check, ChevronsUpDown, Clapperboard, ClipboardList, Copy, History, House, Languages, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Volume2, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { clock } from '@/components/launcher/history-model';
 import { DISCARD_ASKS_AFTER_SEC, DISCARD_CONFIRM_MS } from '@/components/launcher/discard';
@@ -168,7 +168,7 @@ function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [244, 36], receipt: [248, 36], bar: [400, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [272, 36], receipt: [248, 36], bar: [400, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -293,9 +293,10 @@ function useMicSignal(sessionId: string | null, active: boolean, now: number): {
  * change made in Settings meanwhile. The shortcut is read again when the look
  * or the hotkeys change, never on hover.
  */
-function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: string; look: Look; typeLive: boolean; setTypeLive: (on: boolean) => void } {
+function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: string; clipShortcut: string; look: Look; typeLive: boolean; setTypeLive: (on: boolean) => void } {
   const [shortcut, setShortcut] = useState('');
   const [talkShortcut, setTalkShortcut] = useState('');
+  const [clipShortcut, setClipShortcut] = useState('');
   const [look, setLook] = useState<Look>(() => {
     const params = new URLSearchParams(window.location.search);
     return tauri() ? DEFAULT_LOOK : lookFrom({ lines: params.has('lines') ? Number(params.get('lines')) : undefined, translucent: !params.has('solid') });
@@ -304,9 +305,10 @@ function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: s
   // "Type as I talk" (Settings → Dictation), shown and changed on the recording control.
   const [typeLive, setTypeLive] = useState(() => !tauri() && new URLSearchParams(window.location.search).has('typelive'));
   const shortcutFrom = (settings: unknown) => {
-    const { dictation_hotkey: accel, assistant_hotkey: talk, type_as_you_talk: live } = (settings ?? {}) as { dictation_hotkey?: string; assistant_hotkey?: string; type_as_you_talk?: boolean };
+    const { dictation_hotkey: accel, assistant_hotkey: talk, clipboard_hotkey: clip, type_as_you_talk: live } = (settings ?? {}) as { dictation_hotkey?: string; assistant_hotkey?: string; clipboard_hotkey?: string; type_as_you_talk?: boolean };
     setShortcut(accel ? prettyAccel(accel) : '');
     setTalkShortcut(talk ? prettyAccel(talk) : '');
+    setClipShortcut(clip ? prettyAccel(clip) : '');
     setTypeLive(live === true);
   };
   const reloadShortcut = () => { void invoke('get_settings').then(shortcutFrom).catch(() => {}); };
@@ -328,7 +330,7 @@ function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: s
   }, []);
   // Settings may have changed it since: each recording starts from what is saved.
   useEffect(() => { if (recording && tauri()) reloadShortcut(); }, [recording]);
-  return { shortcut, talkShortcut, look, typeLive, setTypeLive };
+  return { shortcut, talkShortcut, clipShortcut, look, typeLive, setTypeLive };
 }
 
 /**
@@ -392,7 +394,7 @@ function Hud() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const { shortcut, talkShortcut, look: settingsLook, typeLive, setTypeLive } = useHudSettings(state?.phase === 'recording');
+  const { shortcut, talkShortcut, clipShortcut, look: settingsLook, typeLive, setTypeLive } = useHudSettings(state?.phase === 'recording');
   // How lively the voice is right now, 0–1: a caption arriving lifts it, quiet lets it settle.
   const [voice, setVoice] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -1472,6 +1474,7 @@ function Hud() {
         </button>
         <button type="button" disabled={busy} onClick={() => void startRecording('image')} aria-label="Take screenshot" title="Take screenshot" className="ctl-btn ctl-icon"><Camera className="h-3.5 w-3.5" /></button>
         <button type="button" disabled={busy} onClick={() => void startRecording('video')} aria-label="Record screen video" title="Record your screen and mic" className="ctl-btn ctl-icon"><Clapperboard className="h-3.5 w-3.5" /></button>
+        <button type="button" onClick={() => act('show_clipboard', { view: 'clipboard' })} aria-label="Clipboard and screenshot history" title={`Clipboard and screenshot history${clipShortcut ? ` (${clipShortcut})` : ''}`} className="ctl-btn ctl-icon"><ClipboardList className="h-3.5 w-3.5" /></button>
         <span className="ctl-fill" />
         {close}
       </>

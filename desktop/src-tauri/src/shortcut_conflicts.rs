@@ -85,6 +85,8 @@ pub fn check_saved(current: &Bindings) -> SavedConflicts {
         dictation: lookup(current.get(Action::Dictation), false),
         assistant: lookup(current.get(Action::Assistant), false),
         screen: lookup(current.get(Action::Screen), false),
+        clipboard: lookup(current.get(Action::Clipboard), false),
+        screenshots: lookup(current.get(Action::Screenshots), false),
     }
 }
 
@@ -94,6 +96,8 @@ pub struct SavedConflicts {
     pub dictation: Option<Conflict>,
     pub assistant: Option<Conflict>,
     pub screen: Option<Conflict>,
+    pub clipboard: Option<Conflict>,
+    pub screenshots: Option<Conflict>,
 }
 
 /// Sentences for the startup notice about saved shortcuts another app also
@@ -105,8 +109,7 @@ pub fn new_app_conflicts(current: &Bindings, noted: &mut Vec<String>, holder: im
         let accelerator = current.get(action);
         if accelerator.is_empty() { continue; }
         let Some(app) = holder(accelerator) else { continue };
-        let name = match action { Action::Toggle => "toggle", Action::Dictation => "dictation", Action::Assistant => "assistant", Action::Screen => "screen" };
-        let key = format!("{name}:{accelerator}:{app}");
+        let key = format!("{}:{accelerator}:{app}", action.key());
         if noted.contains(&key) { continue; }
         noted.push(key);
         lines.push(format!(
@@ -333,8 +336,28 @@ mod tests {
     }
 
     #[test]
+    fn the_panel_defaults_avoid_macos_other_launchers_and_everyday_commands() {
+        // Stock macOS shortcuts on these keys: none. ⌘⇧V (Paste and Match
+        // Style) and ⌘V are why the default is not on ⌘.
+        let stock = serde_json::json!({"AppleSymbolicHotKeys":{
+            "64":{"enabled":true,"value":{"parameters":[32,49,1048576]}},
+            "28":{"enabled":true,"value":{"parameters":[51,20,1179648]}},
+            "184":{"enabled":true,"value":{"parameters":[53,23,1179648]}}
+        }});
+        for action in [Action::Clipboard, Action::Screenshots] {
+            let Ok(Some(Keys::Plain { mods, key })) = keys(action.default_accelerator()) else { panic!("default parses") };
+            assert_eq!(mods, Modifiers::ALT | Modifiers::SHIFT);
+            assert_eq!(symbolic_match(&stock, keycode(key).unwrap(), flags(mods)), None);
+            assert!(KNOWN_APPS.iter().all(|app| app.default != (keycode(key).unwrap(), flags(mods))));
+            assert_eq!(common_name(mods, key), None);
+            assert_eq!(globe_name(mods, key), None);
+        }
+        assert_eq!(common_name(Modifiers::SUPER, Code::KeyV), Some("Paste"));
+    }
+
+    #[test]
     fn fn_is_never_a_conflict_and_common_combos_are_named() {
-        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Cmd+Shift+D".into(), assistant: "Alt+Shift+Space".into(), screen: String::new() };
+        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Cmd+Shift+D".into(), assistant: "Alt+Shift+Space".into(), screen: String::new(), ..Bindings::defaults() };
         assert_eq!(check(&now, Action::Dictation, "Fn"), Ok(None));
         assert_eq!(check(&now, Action::Dictation, ""), Ok(None));
         assert_eq!(common_name(Modifiers::SUPER, Code::KeyC), Some("Copy"));
@@ -345,7 +368,7 @@ mod tests {
 
     #[test]
     fn fn_chords_on_macos_globe_shortcuts_are_named() {
-        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Fn".into(), assistant: "Alt+Shift+Space".into(), screen: String::new() };
+        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Fn".into(), assistant: "Alt+Shift+Space".into(), screen: String::new(), ..Bindings::defaults() };
         assert_eq!(check(&now, Action::Assistant, "Fn+E"), Ok(Some(Conflict::Globe { name: "Emoji & Symbols".into() })));
         assert_eq!(check(&now, Action::Assistant, "Fn+Space"), Ok(None));
         assert_eq!(check(&now, Action::Assistant, "Fn+Shift+E"), Ok(None));
@@ -368,7 +391,7 @@ mod tests {
 
     #[test]
     fn startup_says_once_which_saved_shortcut_another_app_uses() {
-        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "".into(), assistant: "Alt+Space".into(), screen: String::new() };
+        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "".into(), assistant: "Alt+Space".into(), screen: String::new(), clipboard: String::new(), screenshots: String::new() };
         let raycast = |accelerator: &str| (accelerator == "Alt+Space").then(|| "Raycast".to_string());
         let mut noted = Vec::new();
         let first = new_app_conflicts(&now, &mut noted, raycast);

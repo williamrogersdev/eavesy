@@ -37,6 +37,7 @@ export default defineConfig({
         settings: path.resolve(dir, 'settings.html'),
         agents: path.resolve(dir, 'agents.html'),
         meeting: path.resolve(dir, 'meeting.html'),
+        clipboard: path.resolve(dir, 'clipboard.html'),
       },
     },
   },
