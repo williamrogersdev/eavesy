@@ -319,7 +319,7 @@ body {
 .eavesy-control[data-size="result"] .ctl-write { height: 26px; line-height: 26px; }
 .eavesy-control[data-size="result"] .ctl-write-hint { display: none; }
 /* Under the recording controls: the menu, a hairline, then "Type as I talk". */
-.eavesy-control[data-options] .ctl-below { margin: 2px 6px 6px; padding: 0; overflow: hidden; user-select: none; -webkit-user-select: none; }
+.eavesy-control[data-options] .ctl-below { margin: 2px 6px 6px; padding: 0; overflow-x: hidden; overflow-y: auto; user-select: none; -webkit-user-select: none; }
 .ctl-options { display: flex; flex-direction: column; gap: 5px; }
 .ctl-option-switch { justify-content: space-between; height: 30px; padding: 0 8px; border-radius: 8px; box-shadow: 0 -1px 0 var(--ctl-line); margin-top: 1px; }
 /* The voice bars keep their width beside them: they say the mic hears you. */
@@ -600,8 +600,8 @@ body {
 /* Live words sit back while you talk and while they're written down: a
    glance, not the thing to read. Clicking in to fix one brings full ink. */
 .eavesy-control[data-phase="recording"] .ctl-words:not(:focus),
-.eavesy-control[data-phase="transcribing"] .ctl-words:not(:focus) { color: rgb(247 241 232 / 0.62); }
-.eavesy-control[data-translucent][data-size="wide"]:is([data-phase="recording"], [data-phase="transcribing"]) { background: rgb(var(--ctl-bg) / calc(var(--ctl-alpha, 0.64) + 0.08)); }
+.eavesy-control[data-phase="transcribing"] .ctl-words:not(:focus) { color: rgb(var(--ctl-fg) / 0.62); }
+.eavesy-control[data-translucent][data-size="wide"]:is([data-phase="recording"], [data-phase="transcribing"]):not([data-options]) { background: rgb(var(--ctl-bg) / calc(var(--ctl-alpha, 0.64) + 0.08)); }
 /* A menu is read, not glanced at: nearly solid while it is open, however see-through the pill is. */
 .eavesy-control[data-translucent][data-options] { background: rgb(var(--ctl-bg) / 0.94); }
 .ctl-hint { color: var(--ctl-ink-2); }

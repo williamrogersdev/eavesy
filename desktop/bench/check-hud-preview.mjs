@@ -91,7 +91,7 @@ try {
   const original = 'Original first sentence. Original last sentence.';
   // The chip names the tone in force and opens the menu, drawn in the drawer.
   const toneChip = page.locator('.ctl-write-chip');
-  const tone = (name) => ({ click: async () => { await toneChip.click(); await page.getByRole('radio', { name: new RegExp(`^${name}`) }).click(); } });
+  const tone = (name) => ({ click: async () => { await toneChip.click(); await page.getByRole('radio', { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`) }).click(); } });
   const forAi = page.getByRole('switch', { name: 'For AI' });
   await tone('Friendly').click();
   await page.waitForFunction(() => document.querySelector('textarea')?.value === 'friendly: Original first sentence. Original last sentence.');

@@ -1334,8 +1334,11 @@ function Hud() {
     // The options open under the controls: the window takes their size first, and gives it back after.
     const showOptions = async (open: boolean) => {
       if (!open) setChoosing(false);
-      if (tauri()) await invoke('hud_options', { open }).catch(() => {});
-      if (open) setChoosing(true);
+      // Rust says whether the window has room for them: not when the recording ended first.
+      const opened = tauri() ? await invoke('hud_options', { open }).then((ok) => ok === true, () => false) : open;
+      if (!open) return;
+      if (opened) setChoosing(true);
+      else setActionError('Couldn’t open the options. Try again?');
     };
     const elapsedSec = Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000));
     const cancelDisabled = opening || !state.sessionId || stopping === state.sessionId;

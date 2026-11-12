@@ -6,7 +6,7 @@ import type { SettingsSection } from '@/lib/desktop/bridge';
  */
 const SECTION_KEYWORDS: Record<SettingsSection, string> = {
   capture: 'sounds meetings record automatically auto-record calls zoom teams meet live captions recordings folder screenshots',
-  pill: 'recording control capture control hud bar appearance look colour color theme tint see-through translucent transparent transparency opacity hide hidden show visible never position place live words lines transcript captions type as i talk result preview',
+  pill: 'recording control capture control hud bar appearance look colour color theme tint see-through translucent transparent transparency opacity hide hidden show visible never position place live words lines type as i talk result preview',
   dictation: 'tone style format for agents dictate typing paste',
   transcription: 'languages language notes translate',
   dictionary: 'custom words vocabulary spelling replacements swap',

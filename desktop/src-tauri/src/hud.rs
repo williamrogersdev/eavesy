@@ -330,19 +330,33 @@ fn options_open() -> bool {
 }
 
 /// Opens or closes the dictation options under the recording controls, and
-/// gives the control their size. Returns once it has it.
-pub fn set_options(app: &AppHandle, open: bool) {
-    let recording = current().phase == Phase::Recording;
-    OPTIONS.store(open && recording, std::sync::atomic::Ordering::SeqCst);
+/// gives the control their size. Returns whether they are open and the
+/// window has room for them: false when the recording ended first, or the
+/// window could not be reached in time.
+pub fn set_options(app: &AppHandle, open: bool) -> bool {
     let handle = app.clone();
-    let (done, fitted) = std::sync::mpsc::channel::<()>();
+    let (done, fitted) = std::sync::mpsc::channel::<bool>();
+    // The flag and the window change together, on the thread that sizes the
+    // window and in line with `set_state_if`, so a recording that ends
+    // meanwhile can't leave one saying open and the other closed.
     let dispatched = app.run_on_main_thread(move || {
+        let opened = {
+            let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
+            let opened = open && current().phase == Phase::Recording;
+            OPTIONS.store(opened, std::sync::atomic::Ordering::SeqCst);
+            opened
+        };
         fit_on_main(&handle);
-        let _ = done.send(());
+        let _ = done.send(opened);
     });
-    if dispatched.is_ok() {
-        let _ = fitted.recv_timeout(std::time::Duration::from_millis(500));
+    let opened = dispatched.is_ok() && fitted.recv_timeout(std::time::Duration::from_millis(500)).unwrap_or(false);
+    if !opened && open {
+        // Never reached, or too late to trust: closed, and sized to match when the main thread gets to it.
+        OPTIONS.store(false, std::sync::atomic::Ordering::SeqCst);
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || fit_on_main(&handle));
     }
+    opened
 }
 
 /// The finished dictation whose transcript drawer is open under the pointer.

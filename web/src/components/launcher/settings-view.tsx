@@ -493,7 +493,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
       .catch(() => setMessagesNote('Couldn’t copy the instructions.'));
   };
   const savedLines = settings?.hud_preview_lines;
-  const previewLines: HudPreviewLines = savedLines === 1 || savedLines === 2 || savedLines === 4 ? savedLines : 0;
+  const previewLines: HudPreviewLines = savedLines === 1 || savedLines === 2 || savedLines === 4 || savedLines === 8 ? savedLines : 0;
   const opacity = settings?.hud_opacity ?? (settings?.hud_translucent === false ? 100 : 64);
   const translucent = opacity < 100;
   const tint: HudTint = HUD_TINTS.find((known) => known === settings?.hud_tint) ?? 'charcoal';

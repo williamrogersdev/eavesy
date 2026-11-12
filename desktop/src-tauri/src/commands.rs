@@ -461,10 +461,10 @@ pub fn set_hud_visibility(app: AppHandle, show: String) -> Result<(), String> {
 }
 
 /// Opens or closes the dictation options under the recording controls;
-/// returns once the control has their size.
+/// returns once the control has their size, with whether they are open.
 #[tauri::command]
-pub async fn hud_options(app: AppHandle, open: bool) {
-    let _ = tauri::async_runtime::spawn_blocking(move || crate::hud::set_options(&app, open)).await;
+pub async fn hud_options(app: AppHandle, open: bool) -> bool {
+    tauri::async_runtime::spawn_blocking(move || crate::hud::set_options(&app, open)).await.unwrap_or(false)
 }
 
 #[derive(Debug, Clone, Serialize)]
