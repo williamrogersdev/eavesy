@@ -198,7 +198,6 @@ async fn run(
     let mut recording_since: Option<Instant> = None;
     let mut announced = false;
     let mut assistants_only = false;
-    let mut assistants_since: Option<u64> = None;
     let mut last_heartbeat = Instant::now();
     let mut blocks: u64 = 0;
     let mut tick = interval(Duration::from_secs(1));
@@ -226,26 +225,14 @@ async fn run(
                 // them is over, like one left to this bot alone.
                 if seen.phase == Phase::InCall && !seen.alone {
                     let count = seen.detail.get("count").and_then(Value::as_u64);
-                    let now_ms = recording_since.map_or(0, |since| since.elapsed().as_millis() as u64);
-                    let recent = now_ms.saturating_sub(assistants::SPOKE_RECENTLY_MS);
-                    let empty = assistants::only_assistants(&seen.participants, &cfg.bot_name, count, |n| speakers.spoke_since(n, recent), |n| speakers.spoke_since(n, 0));
-                    let since = match empty {
-                        Some(_) => *assistants_since.get_or_insert(now_ms),
-                        None => {
-                            assistants_since = None;
-                            now_ms
-                        }
-                    };
-                    let grace = if empty == Some(assistants::Empty::IfQuiet) { assistants::AMBIGUOUS_GRACE_MS } else { 0 };
-                    if empty.is_some() && now_ms - since >= grace {
+                    let recent = recording_since.map_or(0, |since| (since.elapsed().as_millis() as u64).saturating_sub(assistants::SPOKE_RECENTLY_MS));
+                    if assistants::only_assistants(&seen.participants, &cfg.bot_name, count, |n| speakers.spoke_since(n, recent)) {
                         if !assistants_only {
                             log(json!({ "msg": "only assistants left", "participants": seen.participants }));
                         }
                         seen.alone = true;
                     }
                     assistants_only = seen.alone;
-                } else {
-                    assistants_since = None;
                 }
                 let step = rules.step(&seen, started.elapsed());
                 status.set(format!("{:?}", rules.phase()));

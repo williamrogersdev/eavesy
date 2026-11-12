@@ -16,6 +16,8 @@ Sources: <https://support.claude.com/en/articles/18325154-use-claude-meetings>,
 
 ## What works together
 
+Unconfirmed, as Anthropic describes it:
+
 | Eavesy | With Claude in the call |
 | --- | --- |
 | Mac app recording | Works. Eavesy adds nobody to the call, so Claude's guest rules don't apply. Anything Claude says aloud lands in the "Them" track; a doc it presents is caught as snapshots. |
@@ -37,18 +39,17 @@ record with the Mac app instead of sending the bot.
 
 ## What Eavesy does about Claude
 
-- **Leaving.** Claude stays up to eight hours. The bot counts a call that
-  holds only itself and other notetakers as empty and leaves after the usual
-  minute (`workers/meeting-bot/bot/src/assistants.rs`). A tile named exactly
-  "Claude" could be a person, so it counts as software only if it has never
-  spoken in the call and the call has held nobody else for ten minutes. The
-  bot also stays whenever Meet's head count is larger than the tiles it reads.
+- **Leaving.** The bot counts a call that holds only itself and other
+  notetakers as empty and leaves after the usual minute
+  (`workers/meeting-bot/bot/src/assistants.rs`). It stays whenever the app's
+  head count is larger than the tiles it reads, or one of them spoke in the
+  last five minutes. **Not handled yet:** a tile named just "Claude". That is
+  probably what Claude Meetings shows, but it isn't documented and it is a
+  person's name, so the bot treats it as a person and stays (as it did
+  before). Add the name to `CLAUDE_NAMES` once it has been seen in a call.
 - **Notes.** The summary prompt treats an assistant on the call as software:
   what it reported is kept, but it never owns an action item or a decision
   (`web/src/lib/ai/meeting-summary.ts`).
-
-Claude's display name in a call isn't documented. The names matched are in
-`CLAUDE_NAMES`; correct them once seen in a real call.
 
 ## Ideas worth taking
 
