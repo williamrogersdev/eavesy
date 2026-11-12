@@ -13,6 +13,7 @@ export async function registerDevice(
     deviceId: string;
     name: string;
     rootFolderPath: string;
+    platform?: 'macos' | 'ios';
     allowTransfer?: boolean;
   },
 ): Promise<string> {
@@ -37,14 +38,14 @@ export async function registerDevice(
       id: args.deviceId,
       userId: args.userId,
       name: args.name,
-      platform: 'macos',
+      platform: args.platform ?? 'macos',
       rootFolderPath: args.rootFolderPath,
       lastSeenAt: now,
       createdAt: existing?.createdAt ?? now,
     })
     .onConflictDoUpdate({
       target: devices.id,
-      set: { name: args.name, rootFolderPath: args.rootFolderPath, lastSeenAt: now },
+      set: { name: args.name, platform: args.platform ?? 'macos', rootFolderPath: args.rootFolderPath, lastSeenAt: now },
     });
 
   await db

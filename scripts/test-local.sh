@@ -6,6 +6,7 @@
 #   scripts/test-local.sh            web + workers + desktop (what CI runs)
 #   scripts/test-local.sh web        just web + workers
 #   scripts/test-local.sh desktop    just Rust + Swift
+#   scripts/test-local.sh mobile     iPhone app: sync core tests + simulator build
 #   scripts/test-local.sh ux hud     opt-in browser checks (headless Chromium)
 #   scripts/test-local.sh all        everything above
 set -uo pipefail
@@ -73,6 +74,12 @@ run_desktop() {
   step "clippy" in_dir desktop/src-tauri cargo clippy --locked -- -D warnings
 }
 
+run_mobile() {
+  step "mobile sync core tests" in_dir mobile/EavesyKit swift test
+  step "mobile app build (simulator)" in_dir mobile xcodebuild -project Eavesy.xcodeproj -scheme Eavesy \
+    -destination 'generic/platform=iOS Simulator' -derivedDataPath "$TMP/mobile" CODE_SIGNING_ALLOWED=NO build
+}
+
 run_ux() {
   # Playwright starts (or reuses) the local test server on :4173 itself.
   step "web UX (Playwright)" in_dir web bun run test:ux
@@ -90,8 +97,8 @@ run_hud() {
 
 for area in "${AREAS[@]}"; do
   case "$area" in
-    web|desktop|ux|hud) "run_$area" ;;
-    *) echo "Unknown area: $area (web, desktop, ux, hud, all)" >&2; exit 2 ;;
+    web|desktop|mobile|ux|hud) "run_$area" ;;
+    *) echo "Unknown area: $area (web, desktop, mobile, ux, hud, all)" >&2; exit 2 ;;
   esac
 done
 
