@@ -190,7 +190,8 @@ fn delivering() -> std::sync::MutexGuard<'static, Vec<(String, std::time::Instan
 /// together they stay well under it: the polish (`transcribe::polish_timeout`,
 /// at most 8s), the launcher getting out of the way (under 1s), up to
 /// `FINISH_TRIES` passes over the typed words (each `LANDED_BY_END` plus
-/// `TYPED_LANDING` for every changed run of words, a few seconds), and
+/// `TYPED_LANDING` for each changed run of words, of which `edit_hunks`
+/// gives at most 8), and
 /// `dictation::SEND_CONFIRM` before a held Return.
 const DELIVERY_GIVEN_UP: Duration = Duration::from_secs(120);
 

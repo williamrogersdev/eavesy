@@ -1282,10 +1282,10 @@ pub enum Followed {
 /// empty and there is nothing to replace.
 pub fn followed(value: &str, prefix: &str, words: &str, suffix: &str, ending: bool) -> Option<Followed> {
     let value = normalize(value);
-    // Spaces (non-breaking ones too, after `normalize`) and tabs are text
-    // someone typed: only nothing, or the line breaks an empty rich text
-    // field reads as, is an empty field.
-    if value.chars().all(|c| c == '\n' || c == '\r') {
+    // Only nothing, or the one line break an empty rich text field reads
+    // as, is an empty field. Spaces (non-breaking ones too, after
+    // `normalize`), tabs and blank lines are text someone typed.
+    if matches!(value.as_str(), "" | "\n" | "\r\n") {
         return Some(Followed::Gone { suffix: value });
     }
     let (prefix, found, suffix) = reanchored(&value, prefix, words, suffix);
@@ -1557,6 +1557,9 @@ mod tests {
         assert_eq!(followed("   ", "Hello ", "so far", " tail", false), words("", "   ", ""));
         assert_eq!(followed("   ", "Hello ", "so far", " tail", true), None);
         assert_eq!(followed("\u{a0}\t", "Hello ", "so far", " tail", true), None);
+        // So are blank lines, and a line break that isn't a field's own.
+        assert_eq!(followed("\n\n", "Hello ", "so far", " tail", true), None);
+        assert_eq!(followed("\r", "Hello ", "so far", " tail", true), None);
         // An emptied field: go on at the caret, at the end too.
         for ending in [false, true] {
             assert_eq!(followed("", "Hello ", "so far", " tail", ending), Some(Followed::Gone { suffix: String::new() }));
