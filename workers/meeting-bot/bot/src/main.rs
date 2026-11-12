@@ -10,6 +10,7 @@
 //!   CHROME_PATH  (default chromium), CONTROL_PORT (default 8080).
 //! SIGTERM (how the Durable Object stops it) makes it leave and deliver.
 
+mod assistants;
 mod audio;
 mod cdp;
 mod control;
@@ -92,6 +93,10 @@ struct Speakers {
 }
 
 impl Speakers {
+    fn has_spoken(&self, name: &str) -> bool {
+        self.spans.iter().any(|(n, _, _)| n == name)
+    }
+
     fn note(&mut self, names: &[String], at_ms: u64, tick_ms: u64) {
         for name in names {
             match self.spans.iter_mut().rev().find(|(n, _, end)| n == name && *end + tick_ms * 2 >= at_ms) {
@@ -191,6 +196,7 @@ async fn run(
     let mut speakers = Speakers::default();
     let mut recording_since: Option<Instant> = None;
     let mut announced = false;
+    let mut assistants_only = false;
     let mut last_heartbeat = Instant::now();
     let mut blocks: u64 = 0;
     let mut tick = interval(Duration::from_secs(1));
@@ -213,7 +219,19 @@ async fn run(
             }
             why = session.closed() => return Err(why),
             _ = tick.tick() => {
-                let seen = session.observe().await;
+                let mut seen = session.observe().await;
+                // Claude and other notetakers stay for hours: a call left to
+                // them is over, like one left to this bot alone.
+                if seen.phase == Phase::InCall && !seen.alone {
+                    let count = seen.detail.get("count").and_then(Value::as_u64);
+                    if assistants::only_assistants(&seen.participants, &cfg.bot_name, count, |n| speakers.has_spoken(n)) {
+                        if !assistants_only {
+                            log(json!({ "msg": "only assistants left", "participants": seen.participants }));
+                        }
+                        seen.alone = true;
+                    }
+                    assistants_only = seen.alone;
+                }
                 let step = rules.step(&seen, started.elapsed());
                 status.set(format!("{:?}", rules.phase()));
                 match step {
