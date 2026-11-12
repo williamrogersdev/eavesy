@@ -179,6 +179,9 @@ export function parseMeetingSummary(message: { stop_reason: string | null; conte
 export async function requestMeetingSummary(client: Anthropic, args: MeetingSummaryRequest) {
   if (args.rolling) {
     // Streamed so a slow reply never runs into the SDK's non-streaming timeout.
+    // No refusal fallback here, on purpose: these notes run on Haiku, which
+    // has no server-side fallback, and a window that fails is simply written
+    // again with the next one. The final notes are the ones that ask for it.
     const message = await client.messages
       .stream({
         model: ROLLING_NOTES_MODEL,
