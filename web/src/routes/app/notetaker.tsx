@@ -1,9 +1,11 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { Bot } from 'lucide-react';
+import { Bot, CalendarDays } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useId, useState } from 'react';
 import { z } from 'zod';
 import { Link } from '@/components/ui/app-link';
 import { AppAlert, AppEmptyState, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
+import { getMeetingCapture, getUpcomingMeetings, setCaptureMode, type UpcomingMeeting } from '@/lib/api/calendar';
+import { wantsNotetaker, type CaptureDefault } from '@/lib/meetings/capture-plan';
 
 export const Route = createFileRoute('/app/notetaker')({ component: NotetakerPage });
 
@@ -94,6 +96,40 @@ function NotetakerPage() {
     }
   }, []);
 
+  // Null until loaded; `false` when no calendar is connected.
+  const [upcoming, setUpcoming] = useState<UpcomingMeeting[] | false | null>(null);
+  const [captureDefault, setCaptureDefault] = useState<CaptureDefault>('mac');
+  const [changing, setChanging] = useState<string | null>(null);
+
+  const loadUpcoming = useCallback(async () => {
+    try {
+      const [meetings, prefs] = await Promise.all([getUpcomingMeetings(), getMeetingCapture()]);
+      setUpcoming(meetings ?? false);
+      setCaptureDefault(prefs.captureDefault);
+    } catch {
+      // The calendar is an extra here: the link form below still works without it.
+      setUpcoming([]);
+    }
+  }, []);
+  useEffect(() => {
+    void loadUpcoming();
+  }, [loadUpcoming]);
+
+  /** Sends the Notetaker to one calendar meeting, or takes it back off. */
+  async function toggle(meeting: UpcomingMeeting) {
+    setChanging(meeting.id);
+    setError('');
+    try {
+      const off = wantsNotetaker(captureDefault) ? 'mac' : null;
+      await setCaptureMode(meeting.id, wantsNotetaker(meeting.mode) ? off : 'notetaker');
+      await loadUpcoming();
+    } catch {
+      setError('Could not change that meeting. Please retry.');
+    } finally {
+      setChanging(null);
+    }
+  }
+
   const anyActive = bots.some((bot) => ACTIVE.has(bot.status));
   useEffect(() => {
     void load();
@@ -149,7 +185,7 @@ function NotetakerPage() {
     <AppPage width="compact">
       <AppPageHeader
         title="Notetaker"
-        description="Send a notetaker to a Google Meet or Teams call you can't record from your Mac. It joins as a participant, the transcript fills in as the call goes, and the brief lands in your library when it ends."
+        description="A bot that joins a Google Meet or Teams call for you and takes the notes."
       />
       {error ? <AppAlert>{error}</AppAlert> : null}
       {notice ? <AppAlert tone="success">{notice}</AppAlert> : null}
@@ -161,6 +197,52 @@ function NotetakerPage() {
           description="This Eavesy server doesn't run the meeting bot. Record calls with the Mac app instead."
         />
       ) : (
+        <>
+        <AppSection title="Your next meetings">
+          {upcoming === null ? (
+            <p role="status" className="text-sm text-ev-ink-2">Loading your calendar…</p>
+          ) : upcoming === false ? (
+            <div className="flex items-center justify-between gap-3 rounded-[var(--ev-r-panel)] bg-ev-well px-4 py-3">
+              <p className="flex min-w-0 items-center gap-2.5 text-sm text-ev-ink-2">
+                <CalendarDays className="h-4 w-4 shrink-0" strokeWidth={1.75} />
+                Connect your calendar to send the notetaker with one click.
+              </p>
+              <Link href="/app/integrations" className={appButton('primary', 'sm')}>Connect</Link>
+            </div>
+          ) : upcoming.length === 0 ? (
+            <p className="text-sm text-ev-ink-2">Nothing on your calendar in the next day.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {upcoming.map((meeting) => {
+                const going = wantsNotetaker(meeting.mode);
+                return (
+                  <li key={meeting.id} className="flex items-center justify-between gap-3 rounded-[var(--ev-r-panel)] bg-ev-well px-4 py-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-round text-sm font-bold text-ev-ink">{meeting.title}</p>
+                      <p className="text-[13px] text-ev-ink-2">
+                        {new Date(meeting.startsAt).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })}
+                        {meeting.notetakerCanJoin ? (going ? ' · Notetaker will join' : '') : ' · Not a Meet or Teams call'}
+                      </p>
+                    </div>
+                    {meeting.notetakerCanJoin ? (
+                      <button
+                        type="button"
+                        disabled={changing === meeting.id}
+                        aria-pressed={going}
+                        onClick={() => void toggle(meeting)}
+                        className={appButton(going ? 'ghost' : 'secondary', 'sm')}
+                      >
+                        {going ? 'Don’t send' : 'Send notetaker'}
+                      </button>
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </AppSection>
+
+        <AppSection title="Or paste a meeting link">
         <form onSubmit={(event) => void send(event)} className="flex flex-col gap-3">
           <label className="flex flex-col gap-1.5" htmlFor={`${ids}-url`}>
             <span className={label}>Meeting link</span>
@@ -203,7 +285,7 @@ function NotetakerPage() {
             </label>
           </div>
           <p className="text-[13px] text-ev-ink-2">
-            Everyone in the call sees “Eavesy Notetaker” join. Let them know it records, and follow the recording-consent rules where you and they are.
+            Everyone in the call sees the notetaker join. Let them know it records.
           </p>
           <div>
             <button type="submit" disabled={busy || available === null} className={appButton('primary')}>
@@ -212,10 +294,12 @@ function NotetakerPage() {
             </button>
           </div>
         </form>
+        </AppSection>
+        </>
       )}
 
       {bots.length > 0 ? (
-        <AppSection title="Your notetakers">
+        <AppSection title="Sent">
           <ul className="flex flex-col gap-2">
             {bots.map((bot) => (
               <li key={bot.id} className="flex flex-col gap-1 rounded-[var(--ev-r-panel)] bg-ev-well px-4 py-3 sm:flex-row sm:items-center sm:justify-between">

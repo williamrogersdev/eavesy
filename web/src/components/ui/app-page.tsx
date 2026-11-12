@@ -138,3 +138,32 @@ export function AppSection({
     </section>
   );
 }
+
+/** One setting: its label and an optional short hint on the left, the control on the right. */
+export function AppRow({
+  label,
+  hint,
+  htmlFor,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  htmlFor?: string;
+  children: ReactNode;
+}) {
+  const Label = htmlFor ? 'label' : 'span';
+  return (
+    <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-6">
+      <div className="min-w-0 sm:w-56 sm:shrink-0">
+        <Label {...(htmlFor ? { htmlFor } : {})} className="text-sm text-ev-ink">
+          {label}
+        </Label>
+        {hint ? <p className="text-xs text-ev-ink-2">{hint}</p> : null}
+      </div>
+      <div className="flex min-w-0 flex-1 justify-start sm:justify-end">{children}</div>
+    </div>
+  );
+}
+
+export const appInput =
+  'h-9 w-full rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 text-sm text-ev-ink outline-none placeholder:text-ev-ink-3 focus:border-ev-coat';
