@@ -83,6 +83,8 @@ final class AppModel {
     private var recorder: Recorder?
     private let pendingRevoke = Credentials(account: "pending-revoke")
     private var revoking = false
+    private var revokeFailures = 0
+    private var revokeRetryAt = Date.distantPast
     private var startingRecording = false
     private(set) var recordingSince: Date?
     private(set) var level = 0.0
@@ -132,7 +134,10 @@ final class AppModel {
         }
         path.pathUpdateHandler = { [weak self] update in
             guard update.status == .satisfied else { return }
-            Task { @MainActor in self?.sync() }
+            Task { @MainActor in
+                self?.revokePending()
+                self?.sync()
+            }
         }
         path.start(queue: .global(qos: .utility))
         QuickActions.shared.attach { [weak self] in self?.run($0) }
@@ -246,8 +251,11 @@ final class AppModel {
             notice = kept
                 ? "Recording stopped: this iPhone couldn't save more audio. What it had so far is kept."
                 : "Couldn't save that recording: this iPhone is out of space."
+        } else if !kept {
+            // Stopped before any audio reached disk: say so rather than signal a save.
+            notice = "Nothing was recorded. Hold on a moment longer before stopping."
         }
-        UINotificationFeedbackGenerator().notificationOccurred(writeFailed ? .error : .success)
+        UINotificationFeedbackGenerator().notificationOccurred(writeFailed ? .error : kept ? .success : .warning)
         sync()
     }
 
@@ -314,7 +322,6 @@ final class AppModel {
     /// check. A run already under way is never cut short: the engine folds this
     /// call into it.
     func sync() {
-        revokePending()
         guard signedIn else { return }
         wake?.cancel()
         Task { [engine] in
@@ -344,6 +351,7 @@ final class AppModel {
     }
 
     func becameActive() {
+        revokePending()
         importShared()
         sync()
         Task { await refresh() }
@@ -398,13 +406,16 @@ final class AppModel {
                 }
                 signIn = .waiting(start.verificationUrl)
                 let deadline = Date().addingTimeInterval(Double(start.expiresInSec))
+                var ending = "That sign-in link expired."
                 while Date() < deadline {
                     try await Task.sleep(for: .seconds(2))
                     let token: String?
                     do {
                         token = try await api.pairingToken(code: start.code, deviceId: deviceId)
                     } catch let error as APIError where error.isPermanent {
-                        // The code expired or was refused: waiting longer won't help.
+                        // Waiting longer won't help. The server answers 404 for a code that
+                        // expired or was already used; anything else is a refusal.
+                        if case .http(404, _) = error {} else { ending = "Eavesy didn't accept that sign-in. Try again." }
                         break
                     } catch {
                         continue
@@ -417,7 +428,7 @@ final class AppModel {
                     becameActive()
                     return
                 }
-                signIn = .failed("That sign-in link expired.")
+                signIn = .failed(ending)
             } catch is CancellationError {
                 signIn = .idle
             } catch {
@@ -433,31 +444,43 @@ final class AppModel {
     }
 
     func signOut() {
-        // The token is set aside before the account is forgotten, so the revoke
-        // survives being offline or the app closing: it is retried until it lands.
-        if let token = tokenBox.value { pendingRevoke.save(token: token, for: base) }
+        // The token joins the ones waiting to be revoked before the account is
+        // forgotten, so the revoke survives being offline or the app closing.
+        var unsaved: [String] = []
+        if let token = tokenBox.value {
+            let waiting = pendingRevoke.tokens(for: base).filter { $0 != token } + [token]
+            // If the Keychain won't take it, the one chance left is to revoke it now.
+            if !pendingRevoke.save(tokens: waiting, for: base) { unsaved = [token] }
+        }
         forgetAccount()
-        revokePending()
+        revokeRetryAt = .distantPast
+        revokePending(also: unsaved)
     }
 
-    /// Revokes a signed-out token on the server. Kept until the server takes it
-    /// (or no longer knows it); a failure that might pass is tried again on the
-    /// next launch, return to the app, or change of network.
-    private func revokePending() {
-        guard !revoking, let token = pendingRevoke.token(for: base) else { return }
+    /// Revokes signed-out tokens on the server. Each stays in the Keychain
+    /// until the server takes it or no longer knows it. A failure that might
+    /// pass is tried again, with a growing wait, when the app opens, comes
+    /// back to the front or finds a network.
+    private func revokePending(also unsaved: [String] = []) {
+        let tokens = pendingRevoke.tokens(for: base) + unsaved
+        guard !revoking, !tokens.isEmpty, Date() >= revokeRetryAt else { return }
         revoking = true
-        let revoke = EavesyAPI(base: base) { token }
         Task {
             defer { revoking = false }
-            do {
-                try await revoke.signOut()
-            } catch let error as APIError where error.isPermanent || error == .unauthorized {
-                // Already gone, or never going to be accepted: nothing left to retry.
-            } catch {
-                return
+            for token in tokens {
+                do {
+                    try await EavesyAPI(base: base) { token }.signOut()
+                } catch let error as APIError where error.isPermanent || error == .unauthorized {
+                    // Already gone, or never going to be accepted: nothing left to retry.
+                } catch {
+                    revokeFailures += 1
+                    revokeRetryAt = Date().addingTimeInterval(min(30 * pow(2, Double(revokeFailures - 1)), 900))
+                    return
+                }
+                // Read again: a sign-out since may have added one.
+                pendingRevoke.save(tokens: pendingRevoke.tokens(for: base).filter { $0 != token }, for: base)
             }
-            // Only if it is still the one we sent: a newer sign-out may have replaced it.
-            if pendingRevoke.token(for: base) == token { pendingRevoke.clear() }
+            revokeFailures = 0
         }
     }
 

@@ -281,4 +281,12 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(body?["platform"], "ios")
         XCTAssertNil(server.calls[0].headers["authorization"])
     }
+
+    func testStoredTokensAreReadBackOnlyForTheServerTheyWereSavedWith() {
+        let home = URL(string: "https://eavesy.com")!
+        let stored = Credentials.encode(["eavesy_device_a", "eavesy_device_b"], for: home)
+        XCTAssertEqual(Credentials.decode(stored, for: home), ["eavesy_device_a", "eavesy_device_b"])
+        XCTAssertEqual(Credentials.decode(stored, for: URL(string: "https://elsewhere.example")!), [])
+        XCTAssertEqual(Credentials.decode("", for: home), [])
+    }
 }
