@@ -91,7 +91,7 @@ export function permissionSpecs(fnInUse: boolean, speechRequired = false): Permi
       hint: 'Needed to record meetings: it is how Eavesy hears the other people on a call. Also for screenshots and screen videos.',
       settingsHint: 'Turn on Eavesy under Screen & System Audio Recording, then reopen Eavesy.',
       pane: 'screen',
-      need: 'optional',
+      need: 'recommended',
       relaunch: true,
     },
   ];
