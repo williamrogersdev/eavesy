@@ -95,14 +95,23 @@ describe('recap content', () => {
       tldr: 'Ship & tell',
       decisions: [{ text: 'Use "Resend"' }],
       actionItems: [{ text: 'Notes', owner: 'Maya', due: 'Thu', completed: false }],
+      openQuestions: [{ text: 'Who owns <billing>?' }],
       link: 'https://app.example.com/app/meetings/m1',
     });
+    expect(recap.text).toContain('Open questions\n- Who owns <billing>?');
+    expect(recap.html).toContain('Who owns &lt;billing&gt;?');
     expect(recap.subject).toBe('Recap: Q3 <script>');
     expect(recap.html).not.toContain('<script>');
     expect(recap.html).toContain('Q3 &lt;script&gt;');
     expect(recap.html).toContain('Use &quot;Resend&quot;');
     expect(recap.text).toContain('- Notes (Maya, due Thu)');
     expect(recap.text).toContain('Transcript: https://app.example.com/app/meetings/m1');
+  });
+
+  test('leaves out the open questions heading when the meeting left none', () => {
+    const recap = renderRecap({ title: 'Standup', startedAt: null, tldr: 'Fine.', decisions: [], actionItems: [], link: 'https://app.example.com/app/meetings/m2' });
+    expect(recap.text).not.toContain('Open questions');
+    expect(recap.html).not.toContain('Open questions');
   });
 
   test('accepts only plain addresses', () => {
