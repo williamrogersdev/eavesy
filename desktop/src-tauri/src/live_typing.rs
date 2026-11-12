@@ -185,18 +185,31 @@ fn delivering() -> std::sync::MutexGuard<'static, Vec<(String, std::time::Instan
     DELIVERING.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// A delivery still not over after this never will be (each step of one is
+/// bounded, and together they stay well under it): it stops holding up the
+/// next dictation's live typing.
+const DELIVERY_GIVEN_UP: Duration = Duration::from_secs(120);
+
 /// Whether a dictation other than `session_id` is being delivered. The next
 /// one starts typing only once it is over: a field read while the finished
 /// words are still replacing the typed ones (or a held Return is about to
-/// send them) changes under the new words, and typing them would stop.
-/// A delivery is over well within `SEND_HOLD`; one that never said so
-/// stops counting then.
+/// send them) changes under the new words.
 fn another_is_delivering(session_id: &str) -> bool {
-    another_among(&delivering(), session_id, std::time::Instant::now())
+    let mut delivering = delivering();
+    let now = std::time::Instant::now();
+    for (id, _) in delivering.iter().filter(|(_, since)| given_up(*since, now)) {
+        tracing::warn!(session_id = %id, "a dictation's delivery never ended; live typing no longer waits for it");
+    }
+    delivering.retain(|(_, since)| !given_up(*since, now));
+    another_among(&delivering, session_id, now)
+}
+
+fn given_up(since: std::time::Instant, now: std::time::Instant) -> bool {
+    now.saturating_duration_since(since) >= DELIVERY_GIVEN_UP
 }
 
 fn another_among(delivering: &[(String, std::time::Instant)], session_id: &str, now: std::time::Instant) -> bool {
-    delivering.iter().any(|(id, since)| id != session_id && now.saturating_duration_since(*since) < SEND_HOLD)
+    delivering.iter().any(|(id, since)| id != session_id && !given_up(*since, now))
 }
 
 /// A dictation's delivery, holding on to the Return pressed to end it (if
@@ -206,8 +219,9 @@ pub struct SendHold(String);
 
 pub fn send_hold(session_id: &str) -> SendHold {
     let mut delivering = delivering();
-    delivering.retain(|(id, since)| id != session_id && since.elapsed() < SEND_HOLD);
-    delivering.push((session_id.to_string(), std::time::Instant::now()));
+    let now = std::time::Instant::now();
+    delivering.retain(|(id, since)| id != session_id && !given_up(*since, now));
+    delivering.push((session_id.to_string(), now));
     SendHold(session_id.to_string())
 }
 
@@ -795,7 +809,8 @@ mod tests {
         // Its own delivery never holds it up, and neither does one that
         // never said it was over.
         assert!(!another_among(&delivering, "first", now));
-        assert!(!another_among(&delivering, "next", now + SEND_HOLD));
+        assert!(another_among(&delivering, "next", now + SEND_HOLD));
+        assert!(!another_among(&delivering, "next", now + DELIVERY_GIVEN_UP));
         assert!(!another_among(&[], "next", now));
 
         // A delivery counts from its start to its end, however it ends.
