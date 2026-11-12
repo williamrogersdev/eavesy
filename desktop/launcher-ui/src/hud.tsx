@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, Camera, Check, ChevronsUpDown, Clapperboard, Copy, History, House, Languages, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Volume2, X } from 'lucide-react';
+import { AudioLines, Camera, Check, ChevronsUpDown, Clapperboard, Copy, History, House, Languages, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Users, Volume2, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import { clock } from '@/components/launcher/history-model';
 import { DISCARD_ASKS_AFTER_SEC, DISCARD_CONFIRM_MS } from '@/components/launcher/discard';
@@ -168,13 +168,13 @@ function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [244, 36], receipt: [248, 36], bar: [400, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [272, 36], receipt: [248, 36], bar: [400, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
   const params = new URLSearchParams(window.location.search);
   const phase = (params.get('hud') ?? 'idle') as Phase;
-  const mode = params.has('image') ? 'image' : params.has('video') ? 'video' : params.has('eavesy') ? EAVESY_MODE : 'audio';
+  const mode = params.has('image') ? 'image' : params.has('video') ? 'video' : params.has('eavesy') ? EAVESY_MODE : params.has('meeting') ? 'meeting' : 'audio';
   return {
     phase,
     sessionId: params.has('opening') ? null : 'preview',
@@ -625,7 +625,7 @@ function Hud() {
       .finally(() => setCopying(false));
   };
 
-  const readyToCapture = async (mode: 'audio' | 'video' | 'image'): Promise<boolean> => {
+  const readyToCapture = async (mode: 'audio' | 'meeting' | 'video' | 'image'): Promise<boolean> => {
     const setup = (await invoke('get_setup_status')) as { completed?: boolean } | undefined;
     if (setup && !setup.completed) {
       await invoke('show_setup');
@@ -644,15 +644,16 @@ function Hud() {
     return true;
   };
 
-  const startRecording = async (mode: 'audio' | 'video' | 'image' = 'audio') => {
+  const startRecording = async (mode: 'audio' | 'meeting' | 'video' | 'image' = 'audio') => {
     if (starting) return;
     setStarting(true);
     setActionError(null);
     try {
-      // The HUD's Talk is microphone only. Meetings start from the panel.
+      // Talk is microphone only; Meeting records both sides of a call, which needs Screen Recording.
       if (!(await readyToCapture(mode))) return;
       if (mode === 'image') await invoke('capture_screenshot');
       else if (mode === 'video') await invoke('start_screen_capture', { mic: true });
+      else if (mode === 'meeting') await invoke('start_capture', { source: 'mixed' });
       else await invoke('start_capture', { source: 'mic', dictation: true });
     }
     catch (error) {
@@ -1296,6 +1297,8 @@ function Hud() {
     // A dictation (not a screen recording, not talking to Eavesy): how it is
     // written and whether it is typed live are always in reach.
     const dictating = !video && !eavesy && state.mode === 'audio';
+    // Both sides of a call: nothing is pasted, it is saved as a meeting.
+    const meeting = state.mode === 'meeting';
     const toggleTypeLive = async () => {
       if (typeLiveBusy.current || stoppingRef.current === state.sessionId) return;
       const next = !typeLive;
@@ -1324,6 +1327,7 @@ function Hud() {
         )}
         {video && !opening && <Marking state={marking} act={act} />}
         {eavesy && !opening && <Stamp tone="manila" fit>Eavesy’s listening</Stamp>}
+        {meeting && !opening && <span className="ctl-say" role="status">Recording meeting</span>}
         <span className="ctl-fill" />
         {dictating && !opening && (
           <span className="ctl-live-opts" onMouseDown={(event) => event.stopPropagation()}>
@@ -1338,11 +1342,11 @@ function Hud() {
         {discarding === state.sessionId
           ? <button type="button" disabled={cancelDisabled} onClick={() => cancelRecording(state.sessionId, elapsedSec)} aria-label="Discard this recording" title="Click again to throw this recording away" className="ctl-btn ctl-discard">Discard</button>
           : <button type="button" disabled={cancelDisabled} onClick={() => cancelRecording(state.sessionId, elapsedSec)} aria-label="Cancel recording" title="Cancel: throw this recording away without saving" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>}
-        <button type="button" disabled={opening || !state.sessionId || stopping === state.sessionId} onClick={() => stopRecording(state.sessionId)} aria-label={`Stop${kbd}`} title={`Stop${video ? ' and save recording' : eavesy ? ' and send to Eavesy' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>
+        <button type="button" disabled={opening || !state.sessionId || stopping === state.sessionId} onClick={() => stopRecording(state.sessionId)} aria-label={`Stop${kbd}`} title={`Stop${video ? ' and save recording' : meeting ? ' and save the meeting' : eavesy ? ' and send to Eavesy' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>
       </>
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
-    const doneHint = eavesy ? (talkShortcut ? `tap ${talkShortcut} to send` : 'press Stop to send') : shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
+    const doneHint = meeting ? 'press Stop when the call ends' : eavesy ? (talkShortcut ? `tap ${talkShortcut} to send` : 'press Stop to send') : shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
     if (video) below = <div className="ctl-video-help">
       {!opening && !marking.tool && !actionError && <span className="ctl-video-count" title="Clicks are saved automatically. Highlights are tags you added."><MousePointerClick className="h-3 w-3" />{clicksLabel(marking.clicks)}{marking.marks.length > 0 ? ` · ${marking.marks.length} tags` : ''}</span>}
       <span role={actionError ? 'alert' : 'status'} className={actionError ? 'ctl-warn' : undefined} title={actionError ?? undefined}>
@@ -1350,7 +1354,7 @@ function Hud() {
       </span>
       {actionError ? <button className="ctl-btn" onClick={() => setActionError(null)}>Dismiss</button> : marking.tool && <button className="ctl-btn" onClick={() => act('stop_marking')}>Done · esc</button>}
     </div>;
-    if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `${eavesy ? 'Eavesy’s listening' : 'Listening'}… ${doneHint}`);
+    if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : meeting ? `Recording both sides of the call… ${doneHint}` : `${eavesy ? 'Eavesy’s listening' : 'Listening'}… ${doneHint}`);
   } else if (state.phase === 'transcribing') {
     top = <>{errorSay ?? <span className="ctl-say">{video ? 'Saving' : eavesy ? 'Eavesy’s thinking' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>}<span className="ctl-fill" /></>;
     if (!video && look.lines) below = transcriptEditor(eavesy ? 'Sending what you said…' : 'Turning your words into text…');
@@ -1470,6 +1474,7 @@ function Hud() {
         <button type="button" disabled={busy} onClick={() => void startRecording()} aria-label={`Talk${kbd}`} title={`Talk, then paste where your cursor is${kbd}`} className="ctl-btn ctl-talk">
           <AudioLines className="h-3.5 w-3.5" />Talk{shortcut && <kbd className="ctl-kbd">{shortcut}</kbd>}
         </button>
+        <button type="button" disabled={busy} onClick={() => void startRecording('meeting')} aria-label="Record a meeting" title="Record a meeting: both sides of the call" className="ctl-btn ctl-icon"><Users className="h-3.5 w-3.5" /></button>
         <button type="button" disabled={busy} onClick={() => void startRecording('image')} aria-label="Take screenshot" title="Take screenshot" className="ctl-btn ctl-icon"><Camera className="h-3.5 w-3.5" /></button>
         <button type="button" disabled={busy} onClick={() => void startRecording('video')} aria-label="Record screen video" title="Record your screen and mic" className="ctl-btn ctl-icon"><Clapperboard className="h-3.5 w-3.5" /></button>
         <span className="ctl-fill" />

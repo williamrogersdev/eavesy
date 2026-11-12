@@ -748,6 +748,8 @@ fn spawn_capture(
             mode: Some(match mode {
                 "screen" => "video",
                 "audio" if source == "mic" && crate::assistant::voice::starting() => crate::assistant::voice::MODE,
+                // Both sides of a call: the control says it is a meeting, not a dictation to paste.
+                "audio" if source != "mic" => crate::hud::MEETING_MODE,
                 other => other,
             }.to_string()),
             // The timer counts from the mic going live, not from the key press.

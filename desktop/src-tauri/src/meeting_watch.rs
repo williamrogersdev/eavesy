@@ -524,8 +524,35 @@ fn record(app: &AppHandle, prompt: &Prompt) {
                 watch.auto = Some(AutoRecording { session_id: session.session_id, bundle, precise: watch.precise, event_ends_at });
                 watch.gone_since = None;
             }),
-            // The capture start already shows why (a permission, say); the prompt won't repeat.
-            Err(error) => tracing::warn!("meeting watch: could not start recording: {error}"),
+            // The countdown said it would record: never fail without a word.
+            Err(error) => {
+                tracing::warn!("meeting watch: could not start recording: {error}");
+                not_recording(&handle);
+            }
+        }
+    });
+}
+
+/// Tells the user a meeting they expect to be recorded is not.
+fn not_recording(app: &AppHandle) {
+    crate::commands::show_notice(
+        app.clone(),
+        "Eavesy isn’t recording this call".into(),
+        "It couldn’t start. Check Microphone and Screen Recording access in Eavesy’s setup, then choose Record a Meeting.".into(),
+    );
+}
+
+/// Records a meeting (both sides of the call) now, from the menu bar. Not an
+/// auto-recording: it runs until the user stops it.
+pub fn record_now(app: &AppHandle) {
+    if hud::current().is_live() {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        if let Err(error) = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now()) {
+            tracing::warn!("tray: could not start a meeting recording: {error}");
+            not_recording(&handle);
         }
     });
 }
