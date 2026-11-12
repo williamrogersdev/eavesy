@@ -174,7 +174,7 @@ function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [244, 36], receipt: [248, 36], bar: [320, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [244, 36], receipt: [248, 36], bar: [340, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;

@@ -522,7 +522,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
       setLookError(errMsg(error, 'Couldn’t change the pill.'));
       void getSettings().then((saved) => setSettings((current) => current && saved
         ? { ...current, hud_tint: saved.hud_tint, hud_opacity: saved.hud_opacity, hud_translucent: saved.hud_translucent, hud_hidden: saved.hud_hidden, hud_quiet: saved.hud_quiet }
-        : current)).catch(() => {});
+        : current)).catch(() => setLookError('Couldn’t change the pill, or read back what is saved. What you see here may not be saved.'));
     });
   };
   const [shotFolder, setShotFolder] = useState<string | null>(null);

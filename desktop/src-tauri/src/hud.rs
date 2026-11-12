@@ -176,9 +176,10 @@ const DEFAULT_SIZE: (f64, f64) = (244.0, 36.0);
 /// Recording and writing it down: controls above a scrollable transcript.
 const WIDE: (f64, f64) = (400.0, 142.0);
 /// Recording with the live words turned off: the light, the time, the voice
-/// bars, how the words are written, Cancel and Stop. Nothing is cut off at
-/// this width with the longest tone name.
-const BAR: (f64, f64) = (320.0, 40.0);
+/// bars, how the words are written, Cancel and Stop. The fixed parts take about
+/// 205pt; the rest is the write chip's, which shortens its own name with an
+/// ellipsis before anything else in the row gives way.
+const BAR: (f64, f64) = (340.0, 40.0);
 /// The controls with the dictation options open under them: the six ways the
 /// words are written, then "Type as I talk". They take the live words' place.
 const OPTIONS_HEIGHT: f64 = 256.0;
@@ -329,11 +330,18 @@ fn options_open() -> bool {
     OPTIONS.load(std::sync::atomic::Ordering::SeqCst)
 }
 
+/// Counts requests to open or close the options. A main-thread task acts
+/// only while its request is still the latest, so one that timed out, or
+/// that a newer request overtook, can't change the flag behind its back.
+static OPTIONS_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Opens or closes the dictation options under the recording controls, and
 /// gives the control their size. Returns whether they are open and the
 /// window has room for them: false when the recording ended first, or the
 /// window could not be reached in time.
 pub fn set_options(app: &AppHandle, open: bool) -> bool {
+    use std::sync::atomic::Ordering::SeqCst;
+    let request = OPTIONS_REQUEST.fetch_add(1, SeqCst) + 1;
     let handle = app.clone();
     let (done, fitted) = std::sync::mpsc::channel::<bool>();
     // The flag and the window change together, on the thread that sizes the
@@ -342,8 +350,13 @@ pub fn set_options(app: &AppHandle, open: bool) -> bool {
     let dispatched = app.run_on_main_thread(move || {
         let opened = {
             let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
+            if OPTIONS_REQUEST.load(SeqCst) != request {
+                // Given up on, or overtaken: the newer request has the say.
+                let _ = done.send(false);
+                return;
+            }
             let opened = open && current().phase == Phase::Recording;
-            OPTIONS.store(opened, std::sync::atomic::Ordering::SeqCst);
+            OPTIONS.store(opened, SeqCst);
             opened
         };
         fit_on_main(&handle);
@@ -351,14 +364,18 @@ pub fn set_options(app: &AppHandle, open: bool) -> bool {
     });
     let opened = dispatched.is_ok() && fitted.recv_timeout(std::time::Duration::from_millis(500)).unwrap_or(false);
     if !opened && open {
-        // Too late to trust: the task above may still run and open them
-        // after the caller was told no. This one runs after it, on the same
-        // thread, and closes them and sizes the window to match.
+        // Too late to trust. Giving the request up stops the task above if it
+        // has not run; if it ran just now, this one closes what it opened,
+        // unless a newer request has taken over since.
+        let abandoned = OPTIONS_REQUEST.fetch_add(1, SeqCst) + 1;
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
             {
                 let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
-                OPTIONS.store(false, std::sync::atomic::Ordering::SeqCst);
+                if OPTIONS_REQUEST.load(SeqCst) != abandoned {
+                    return;
+                }
+                OPTIONS.store(false, SeqCst);
             }
             fit_on_main(&handle);
         });

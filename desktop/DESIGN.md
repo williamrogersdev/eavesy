@@ -590,7 +590,7 @@ the pill can't jitter or flip while words arrive.
 | Size | Px | Used for |
 |---|---|---|
 | pill | 244 × 36 | idle, saved, video recording, a plain "Saved" |
-| bar | 320 × 40 | recording and writing with live words off (the default): the light, the time, the voice bars, the write chip, Cancel and Stop. Nothing may be cut off at this width |
+| bar | 340 × 40 | recording and writing with live words off (the default): the light, the time, the voice bars, the write chip, Cancel and Stop. The light and Stop are never cut off: the chip shortens its own name first |
 | options | bar or wide width × 256 | a dictation being recorded with its options open: the six ways it is written, then **Type as I talk** |
 | wide | 400 × 62 + 20 per line | recording and writing with 1, 2 or 4 lines of live words, failed, a save that wasn't typed (**Not typed** and why) |
 | receipt | 248 × 36 | a finished dictation with "Show the words when it's done" off, or **Not pasted** |
