@@ -450,30 +450,29 @@ mod mac {
                         // which is only ever added to.
                         let expected = format!("{}{}{}", self.prefix, self.posted, self.suffix);
                         let differs = super::where_it_differs(&value, &expected);
-                        let (prefix, found, suffix) = super::reanchored(&value, &self.prefix, &self.posted, &self.suffix);
-                        // At the end the finished words replace what is found:
-                        // never text that isn't the dictation's own.
-                        if ending && found != self.posted && !found.trim().is_empty() {
-                            return Err(format!("the text around the typed words was changed ({differs})"));
-                        }
-                        tracing::info!("live typing: the text around the typed words changed ({differs}); following it");
-                        self.prefix = prefix;
-                        if found.trim().is_empty() && found != self.posted {
-                            // Gone with the text around them: nothing of the
-                            // dictation is left to replace or take back, and
-                            // words heard from now on go in at the caret. An
-                            // empty rich text field reads as a lone newline,
-                            // which is no word of anyone's.
-                            self.suffix = format!("{found}{suffix}");
-                            self.typed = String::new();
-                            self.posted = String::new();
-                            self.original = String::new();
-                            self.edit = Some((String::new(), self.consumed));
-                            self.user_at = Some(std::time::Instant::now());
-                            String::new()
-                        } else {
-                            self.suffix = suffix;
-                            found
+                        match super::followed(&value, &self.prefix, &self.posted, &self.suffix, ending) {
+                            None => return Err(format!("the text around the typed words was changed ({differs})")),
+                            Some(super::Followed::Words { prefix, found, suffix }) => {
+                                tracing::info!("live typing: the text around the typed words changed ({differs}); following it");
+                                self.prefix = prefix;
+                                self.suffix = suffix;
+                                found
+                            }
+                            // Nothing of the dictation is left to replace or
+                            // take back: words heard from now on go in at
+                            // the caret. `suffix` is the field's own
+                            // placeholder, read back and never typed.
+                            Some(super::Followed::Gone { suffix }) => {
+                                tracing::info!("live typing: the field was emptied ({differs}); going on at the caret");
+                                self.prefix = String::new();
+                                self.suffix = suffix;
+                                self.typed = String::new();
+                                self.posted = String::new();
+                                self.original = String::new();
+                                self.edit = Some((String::new(), self.consumed));
+                                self.user_at = Some(std::time::Instant::now());
+                                String::new()
+                            }
                         }
                     }
                 }
@@ -559,16 +558,19 @@ mod mac {
                 if !unsafe { select_surely(field, from, length, &self.typed[keep..])? } {
                     // Never leave words selected: the user's next key would replace them.
                     unsafe { put_caret(field, start + super::units(&self.typed)) };
-                    // A busy app drops a selection now and then: the next
-                    // update tries again, a few times.
+                    // A busy app drops a selection now and then. No key was
+                    // posted, so nothing changed: Ok(false) has the typist
+                    // try again with the next words heard (every update
+                    // carries all of them), a few times in a row.
                     self.refused += 1;
                     if self.refused >= SELECT_TRIES {
                         return Err("the app didn't select the words to retype".into());
                     }
                     return Ok(false);
                 }
-                self.refused = 0;
             }
+            // Only refusals in a row count.
+            self.refused = 0;
             if self.typed.is_empty() && self.edit.is_none() {
                 // The previous dictation's paste, which paste learning may
                 // still be watching in this field, is as the user left it:
@@ -1263,6 +1265,36 @@ pub fn reanchored(value: &str, prefix: &str, words: &str, suffix: &str) -> (Stri
     (value[..keep_start].into(), value[keep_start..end].into(), value[end..].into())
 }
 
+/// What live typing makes of a field whose text around the typed words changed.
+#[derive(Debug, PartialEq)]
+pub enum Followed {
+    /// The words, or what now reads in their place, between new anchors.
+    Words { prefix: String, found: String, suffix: String },
+    /// The field holds no text at all any more, not even spaces (sent or
+    /// cleared). `suffix` is what an empty field reads as: nothing, or a
+    /// rich text field's lone newline.
+    Gone { suffix: String },
+}
+
+/// Follows live-typed `words` into `value` (see `reanchored`). When
+/// `ending`, the finished words are about to replace what is found, so
+/// anything but the words themselves is refused (None), unless the field is
+/// empty and there is nothing to replace.
+pub fn followed(value: &str, prefix: &str, words: &str, suffix: &str, ending: bool) -> Option<Followed> {
+    let value = normalize(value);
+    // Only nothing, or the one line break an empty rich text field reads
+    // as, is an empty field. Spaces (non-breaking ones too, after
+    // `normalize`), tabs and blank lines are text someone typed.
+    if matches!(value.as_str(), "" | "\n" | "\r\n") {
+        return Some(Followed::Gone { suffix: value });
+    }
+    let (prefix, found, suffix) = reanchored(&value, prefix, words, suffix);
+    if ending && found != words {
+        return None;
+    }
+    Some(Followed::Words { prefix, found, suffix })
+}
+
 /// Where a field's text first parts from what was expected, for the log:
 /// UTF-16 offsets and the kind of character on each side there, never the
 /// text itself.
@@ -1494,6 +1526,51 @@ mod tests {
         // Never split inside a character.
         assert_eq!(reanchored("né so far", "nà ", "so far", ""), own(("né ", "so far", "")));
         assert_eq!(reanchored("é", "è", "x", ""), own(("", "é", "")));
+    }
+
+    #[test]
+    fn a_changed_field_is_followed_but_never_overwritten_at_the_end() {
+        let words = |prefix: &str, found: &str, suffix: &str| {
+            Some(Followed::Words { prefix: prefix.into(), found: found.into(), suffix: suffix.into() })
+        };
+        // The text around the words changed: followed, during and at the end.
+        for ending in [false, true] {
+            assert_eq!(followed("Hi so far tail", "Hello ", "so far", " tail", ending), words("Hi ", "so far", " tail"));
+        }
+        // The words changed too: the user's version while they talk, but
+        // nothing the finished words may replace.
+        assert_eq!(followed("Hello. So fur tail", "Hello ", "so far", " tail", false), words("Hello", ". So fur", " tail"));
+        assert_eq!(followed("Hello. So fur tail", "Hello ", "so far", " tail", true), None);
+        // Blanked out between text that is still there: the same.
+        assert_eq!(followed("Hi   tail", "Hello ", "so far", " tail", false), words("H", "i  ", " tail"));
+        assert_eq!(followed("Hi   tail", "Hello ", "so far", " tail", true), None);
+        // Only the words blanked, the text around them as it was. The field
+        // reads that as the user's edit and never asks `followed`: the
+        // anchors still match.
+        assert_eq!(typed_passage("Hello    tail", "Hello ", " tail").as_deref(), Some("  "));
+        assert_eq!(typed_passage("Hello  tail", "Hello ", " tail").as_deref(), Some(""));
+        // Asked all the same, it is refused at the end like any other
+        // change to the words.
+        assert_eq!(followed("Hello    tail", "Hello ", "so far", " tail", false), words("Hello ", "  ", " tail"));
+        assert_eq!(followed("Hello    tail", "Hello ", "so far", " tail", true), None);
+        // Spaces are text: a field of them is not an emptied one.
+        assert_eq!(followed("   ", "Hello ", "so far", " tail", false), words("", "   ", ""));
+        assert_eq!(followed("   ", "Hello ", "so far", " tail", true), None);
+        assert_eq!(followed("\u{a0}\t", "Hello ", "so far", " tail", true), None);
+        // So are blank lines, and a line break that isn't a field's own.
+        assert_eq!(followed("\n\n", "Hello ", "so far", " tail", true), None);
+        assert_eq!(followed("\r", "Hello ", "so far", " tail", true), None);
+        // An emptied field: go on at the caret, at the end too.
+        for ending in [false, true] {
+            assert_eq!(followed("", "Hello ", "so far", " tail", ending), Some(Followed::Gone { suffix: String::new() }));
+            assert_eq!(followed("\n", "Hello ", "so far", "", ending), Some(Followed::Gone { suffix: "\n".into() }));
+            assert_eq!(followed("\r\n", "Hello ", "so far", "", ending), Some(Followed::Gone { suffix: "\r\n".into() }));
+        }
+        // An empty rich text field's newline is the field's, never typed:
+        // words that go in after it read back without it.
+        assert_eq!(typed_passage("\n", "", "\n").as_deref(), Some(""));
+        assert_eq!(typed_passage("new words", "", "\n").as_deref(), Some("new words"));
+        assert_eq!(typed_passage("new words\n", "", "\n").as_deref(), Some("new words"));
     }
 
     #[test]

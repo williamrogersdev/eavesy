@@ -76,6 +76,8 @@ export const Route = createFileRoute('/api/sessions/')({
         // With afterId, (changedSince, afterId) is the last meeting the client handled: meetings
         // changed at that same moment with a later id still come, so ties across pages are not lost.
         const afterId = search.get('afterId')?.slice(0, 100) || null;
+        // A phone keeps no copies of its own, so it asks for its own recordings too.
+        const everyDevice = search.get('all') === '1';
         if (offset > MAX_LIST_OFFSET) return Response.json({ items: [] });
         const query = getDb()
           .select({
@@ -103,7 +105,7 @@ export const Route = createFileRoute('/api/sessions/')({
                 ? afterId
                   ? or(gt(changedAt, since), and(eq(changedAt, since), gt(meetings.id, afterId)))
                   : gt(changedAt, since)
-                : actor.deviceId
+                : actor.deviceId && !everyDevice
                   ? or(isNull(meetings.deviceId), ne(meetings.deviceId, actor.deviceId))
                   : undefined,
             ),
@@ -174,7 +176,7 @@ export const Route = createFileRoute('/api/sessions/')({
         const named = parsed.data.title && parsed.data.title !== UNNAMED_MEETING_TITLE;
         const meetingId = await meetingsRepo.start(db, {
           userId: actor.userId,
-          source: actor.deviceId ? 'desktop' : 'web',
+          source: actor.deviceId ? ((await devicePlatform(db, actor.deviceId)) === 'ios' ? 'ios' : 'desktop') : 'web',
           title: eventName && !named ? eventName : parsed.data.title,
           language: parsed.data.language,
           contextBlurb: event ? [parsed.data.contextBlurb, eventBrief(event)].filter(Boolean).join('\n\n') : parsed.data.contextBlurb,
@@ -242,4 +244,8 @@ async function calendarEventFor(db: AppDb, userId: string, startedAt: number | u
   if (!startedAt || startedAt > now + 5 * 60 * 1000 || startedAt < now - STARTED_AT_TRUST_MS) return null;
   const events = await calendarRepo.eventsAround(db, userId, startedAt, startedAt + EARLY_JOIN_MS);
   return matchEvent(events, startedAt);
+}
+
+async function devicePlatform(db: ReturnType<typeof getDb>, deviceId: string): Promise<string | undefined> {
+  return (await db.select({ platform: devices.platform }).from(devices).where(eq(devices.id, deviceId)).limit(1))[0]?.platform;
 }

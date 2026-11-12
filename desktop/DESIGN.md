@@ -589,12 +589,21 @@ the pill can't jitter or flip while words arrive.
 
 | Size | Px | Used for |
 |---|---|---|
-| pill | 216 × 36 | idle, saved, video recording, a plain "Saved" |
-| bar | 264 × 40 | recording and writing with live words off (the default) |
+| pill | 244 × 36 | idle, saved, video recording, a plain "Saved" |
+| bar | 400 × 40 | recording and writing with live words off (the default) |
 | wide | 400 × 62 + 20 per line | recording and writing with 1, 2 or 4 lines of live words, failed, a save that wasn't typed (**Not typed** and why) |
 | receipt | 248 × 36 | a finished dictation with "Show the words when it's done" off, or **Not pasted** |
 | result | 400 × 176 | a finished dictation's drawer: the words that went out, editable, and the tone row (the dictation setting: a Tone pop-up and a For AI switch, then Translate). Opens by itself unless that switch is off; then hovering the receipt opens it |
 | shot | 360 × 172 | a screenshot, with its thumbnail |
+
+**The idle pill** reads, left to right: **Open Eavesy** (a house, then a
+hairline), **Talk** with its shortcut, Screenshot, Video, bare room, and
+**×**. Open Eavesy is the sure way into the panel; a click on the bare room
+opens it too, and a drag there moves the control. It leads the pill so a
+near miss never lands on ×. The other states at this size (Saved, a video
+being written) show their status and × only. The pill is one width whatever
+the Talk shortcut is: a shortcut that would leave under 12px of bare room
+is left off the pill and named in Talk's tooltip instead.
 
 **How it looks while recording** is the user's call (Settings → General → Recording
 control, `set_hud_look`): live words Off (the bar, the default), 1, 2 or 4
