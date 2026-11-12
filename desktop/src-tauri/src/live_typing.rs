@@ -185,9 +185,13 @@ fn delivering() -> std::sync::MutexGuard<'static, Vec<(String, std::time::Instan
     DELIVERING.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// A delivery still not over after this never will be (each step of one is
-/// bounded, and together they stay well under it): it stops holding up the
-/// next dictation's live typing.
+/// A delivery still not over after this never will be: it stops holding up
+/// the next dictation's live typing. Each step of one is bounded, and
+/// together they stay well under it: the polish (`transcribe::polish_timeout`,
+/// at most 8s), the launcher getting out of the way (under 1s), up to
+/// `FINISH_TRIES` passes over the typed words (each `LANDED_BY_END` plus
+/// `TYPED_LANDING` for every changed run of words, a few seconds), and
+/// `dictation::SEND_CONFIRM` before a held Return.
 const DELIVERY_GIVEN_UP: Duration = Duration::from_secs(120);
 
 /// Whether a dictation other than `session_id` is being delivered. The next
@@ -806,8 +810,8 @@ mod tests {
         let now = std::time::Instant::now();
         let delivering = vec![("first".to_string(), now)];
         assert!(another_among(&delivering, "next", now));
-        // Its own delivery never holds it up, and neither does one that
-        // never said it was over.
+        // Its own delivery never holds it up. Another's does until it
+        // ends, or until it is given up on.
         assert!(!another_among(&delivering, "first", now));
         assert!(another_among(&delivering, "next", now + SEND_HOLD));
         assert!(!another_among(&delivering, "next", now + DELIVERY_GIVEN_UP));
