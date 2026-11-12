@@ -190,6 +190,18 @@ describe('teams', () => {
     expect(await row('SELECT email FROM users WHERE id = ?', ADA)).toEqual({ email: null });
   });
 
+  it('an account delete that cannot leave its team changes nothing', async () => {
+    await teamWithInvite();
+    await testEnv.DB.exec(`CREATE TRIGGER stuck BEFORE DELETE ON team_members BEGIN SELECT RAISE(ABORT, 'stuck'); END`);
+    try {
+      await expect(as(ADA, AccountRoute, 'DELETE', '/api/account', { confirm: 'ada@example.com' })).rejects.toThrow();
+    } finally {
+      await testEnv.DB.exec(`DROP TRIGGER stuck`);
+    }
+    expect(await row('SELECT email FROM users WHERE id = ?', ADA)).toEqual({ email: 'ada@example.com' });
+    expect(await roleOf(ADA)).toBe('owner');
+  });
+
   it('refuses an invitation for someone already in the team', async () => {
     const id = await teamWithInvite();
     await as(BO, AnswerRoute, 'POST', '/api/team/invites/answer', { id, accept: true });

@@ -446,6 +446,20 @@ function seedRow(sqlite: Database, table: string, parents: Record<string, string
 }
 
 describe('deleting an account', () => {
+  test('hands a sole owner’s team to its admin before the membership goes', async () => {
+    const t = setup();
+    for (const id of ['u2', 'u3']) t.sqlite.run(`INSERT INTO users (id, created_at, updated_at) VALUES (?, 1, 1)`, [id]);
+    t.sqlite.run(`INSERT INTO teams (id, name, created_by, created_at, updated_at) VALUES ('team1', 'Team', 'u1', 1, 1)`);
+    for (const [user, role, at] of [['u1', 'owner', 1], ['u2', 'member', 2], ['u3', 'admin', 3]] as const) {
+      t.sqlite.run(`INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('team1', ?, ?, ?)`, [user, role, at]);
+    }
+    expect(await deliver(t.env, { kind: 'purge-account', userId: 'u1' })).toMatchObject({ acked: true });
+    expect(t.sqlite.query(`SELECT user_id, role FROM team_members ORDER BY user_id`).all()).toEqual([
+      { user_id: 'u2', role: 'member' },
+      { user_id: 'u3', role: 'owner' },
+    ]);
+  });
+
   test('clears a row in every table that references users, with foreign keys on', async () => {
     const t = setup();
     expect(t.sqlite.query('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });

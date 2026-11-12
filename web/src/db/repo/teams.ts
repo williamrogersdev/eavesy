@@ -122,8 +122,6 @@ export async function invite(
     .limit(1);
   if (member[0]) throw new TeamError('already_member');
 
-  // Lapsed invitations are only ever cleared here; they are hidden everywhere else.
-  await purgeExpiredInvites(db, args.teamId, now);
   const rows = await db
     .insert(teamInvites)
     .select(sql`
@@ -225,50 +223,42 @@ export async function removeMember(db: AppDb, args: { teamId: string; actorRole:
       ),
     )
     .returning({ userId: teamMembers.userId });
-  if (!removed[0]) throw new TeamError(target === 'owner' ? 'last_owner' : 'not_found');
+  if (removed[0]) return;
+  // Nothing went: they left, their role changed under us, or they are the last owner.
+  const current = await roleIn(db, args.teamId, args.userId);
+  if (!current) throw new TeamError('not_found');
+  throw new TeamError(current === 'owner' && target === 'owner' ? 'last_owner' : 'forbidden');
 }
 
 /**
- * What runs, in order, when `?1` leaves their team or their account is deleted.
+ * The writes, in order, for `userId` leaving their team or having their account deleted.
  * A team keeps an owner: if they were the only one, the longest-standing admin
  * (else member) becomes it. A team left with nobody is deleted with its invitations.
- * Plain SQL so the account purge, which has only the D1 binding, runs the same steps.
+ * Run them in one batch, alone (`depart`) or with other writes that must land together.
  */
-const NEXT_OWNER = `rowid = (
+export function departQueries(db: AppDb, userId: string) {
+  const noMembersLeft = sql.raw(`NOT IN (SELECT team_id FROM team_members)`);
+  return [
+    db.update(teamMembers).set({ role: 'owner' }).where(sql`rowid = (
       SELECT next.rowid FROM team_members next
-      WHERE next.team_id = (SELECT team_id FROM team_members WHERE user_id = ?1 AND role = 'owner')
-        AND next.user_id <> ?1
+      WHERE next.team_id = (SELECT team_id FROM team_members WHERE user_id = ${userId} AND role = 'owner')
+        AND next.user_id <> ${userId}
         AND NOT EXISTS (
           SELECT 1 FROM team_members other
-          WHERE other.team_id = next.team_id AND other.role = 'owner' AND other.user_id <> ?1
+          WHERE other.team_id = next.team_id AND other.role = 'owner' AND other.user_id <> ${userId}
         )
       ORDER BY (next.role = 'admin') DESC, next.created_at ASC, next.user_id ASC
       LIMIT 1
-    )`;
-const NO_MEMBERS_LEFT = `NOT IN (SELECT team_id FROM team_members)`;
-
-export const DEPART_STATEMENTS = [
-  `UPDATE team_members SET role = 'owner' WHERE ${NEXT_OWNER}`,
-  `DELETE FROM team_members WHERE user_id = ?1`,
-  // `?1 IS NOT NULL` only so every statement takes the same one binding.
-  `DELETE FROM team_invites WHERE ?1 IS NOT NULL AND team_id ${NO_MEMBERS_LEFT}`,
-  `DELETE FROM teams WHERE ?1 IS NOT NULL AND id ${NO_MEMBERS_LEFT}`,
-] as const;
-
-/** Leaves the team (see `DEPART_STATEMENTS`), as one transaction. */
-export async function depart(d1: D1Database, userId: string) {
-  await d1.batch(DEPART_STATEMENTS.map((statement) => d1.prepare(statement).bind(userId)));
+    )`),
+    db.delete(teamMembers).where(eq(teamMembers.userId, userId)),
+    db.delete(teamInvites).where(sql`team_id ${noMembersLeft}`),
+    db.delete(teams).where(sql`id ${noMembersLeft}`),
+  ] as const;
 }
 
-/** The same four steps as drizzle queries, to share one batch (one transaction) with other writes. */
-export function departQueries(db: AppDb, userId: string) {
-  const nextOwner = sql.join(NEXT_OWNER.split('?1').map((part) => sql.raw(part)), sql`${userId}`);
-  return [
-    db.update(teamMembers).set({ role: 'owner' }).where(nextOwner),
-    db.delete(teamMembers).where(eq(teamMembers.userId, userId)),
-    db.delete(teamInvites).where(sql.raw(`team_id ${NO_MEMBERS_LEFT}`)),
-    db.delete(teams).where(sql.raw(`id ${NO_MEMBERS_LEFT}`)),
-  ] as const;
+/** Leaves the team (see `departQueries`), as one transaction. */
+export async function depart(db: AppDb, userId: string) {
+  await db.batch(departQueries(db, userId));
 }
 
 /** Deletes the team for everyone. Only an owner does this. */
@@ -281,7 +271,7 @@ export async function removeTeam(db: AppDb, args: { teamId: string; actorRole: T
   ]);
 }
 
-/** Drops a team's invitations nobody accepted in time. */
-export async function purgeExpiredInvites(db: AppDb, teamId: string, now = Date.now()) {
-  await db.delete(teamInvites).where(and(eq(teamInvites.teamId, teamId), lte(teamInvites.expiresAt, now)));
+/** Drops every invitation nobody accepted in time. They are already hidden and hold no seat; the scheduled run clears the rows. */
+export async function purgeExpiredInvites(db: AppDb, now = Date.now()) {
+  await db.delete(teamInvites).where(lte(teamInvites.expiresAt, now));
 }

@@ -1,6 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
-import { getD1 } from '@/db/client';
 import * as teamsRepo from '@/db/repo/teams';
 import { asCaller, callerEmail, requireManager, requireMembership } from '@/server/team-api';
 
@@ -55,7 +54,7 @@ export const Route = createFileRoute('/api/team')({
           if (new URL(request.url).searchParams.get('everyone') === '1') {
             await teamsRepo.removeTeam(db, { teamId: membership.teamId, actorRole: membership.role });
           } else {
-            await teamsRepo.depart(getD1(), userId);
+            await teamsRepo.depart(db, userId);
           }
           return Response.json({ ok: true });
         }),
