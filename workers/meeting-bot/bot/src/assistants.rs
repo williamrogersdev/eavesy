@@ -34,7 +34,11 @@ pub fn is_assistant(name: &str) -> bool {
 ///   whose name reads like a notetaker's is a person once they have spoken;
 /// - the app's own head count has to equal the tiles read plus the bot,
 ///   since a layout can hide people's tiles (a shared screen, a large call).
-///   Tiles are counted as they are, two under one name as two.
+///   Tiles are counted as they are, two under one name as two: `count` is the
+///   number on the app's People button (`count` in platform/js/meet.js and
+///   teams.js), which counts every connection, so someone joined from two
+///   devices is two there as well. If an app ever counted distinct people
+///   instead, the numbers would disagree and the bot would stay.
 pub fn only_assistants(participants: &[String], bot_name: &str, count: Option<u64>, spoke: impl Fn(&str) -> bool) -> bool {
     let bot = normal(bot_name);
     let others: Vec<&String> = participants.iter().filter(|n| normal(n) != bot).collect();

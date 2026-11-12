@@ -49,6 +49,16 @@ record with the Mac app instead of sending the bot.
   and a tile named "Claude", the bot therefore stays until the call ends or
   its own time limit is reached. Add the name to `CLAUDE_NAMES` once it has
   been seen in a call.
+
+  Two costs of these rules, both accepted:
+  - The name is the only evidence that a silent tile is software. A person
+    whose display name reads like a notetaker's ("Ana's Notetaker") and who
+    never speaks is taken for one, so if everyone else leaves, the bot leaves
+    a minute later and the recording ends with that person still connected.
+  - Speaking once, at any point, marks a tile as a person for the rest of the
+    call. A notetaker that makes a sound even once (a spoken announcement on
+    joining) keeps the bot in the call until it ends or the bot's time limit
+    is reached, as it did before this rule existed.
 - **Notes.** The summary prompt treats an assistant on the call as software:
   what it reported is kept, but it never owns an action item or a decision
   (`web/src/lib/ai/meeting-summary.ts`).
