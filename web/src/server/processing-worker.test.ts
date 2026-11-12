@@ -438,6 +438,20 @@ describe('rolling summary', () => {
     expect(t.sqlite.query(`SELECT generated_by_model AS m FROM summaries WHERE meeting_id = 'm1'`).get()).toEqual({ m: 'claude-opus-5-5' });
   });
 
+  test('notes a fallback model wrote after a decline are recorded under that model', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete');
+    t.addLine(0, 'We ship Friday.');
+    const api = stubAnthropic(() => {
+      const reply = summaryReply(SUMMARY);
+      return { json: { ...reply.json, model: 'claude-sonnet-5' } };
+    });
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(api.calls[0]).toMatchObject({ model: 'claude-sonnet-5-5', fallbacks: 'default' });
+    expect(t.sqlite.query(`SELECT generated_by_model AS m FROM summaries WHERE meeting_id = 'm1'`).get()).toEqual({ m: 'claude-sonnet-5' });
+  });
+
   test('a choice that is no longer offered falls back to the default', async () => {
     const t = setup();
     t.sqlite.run(`UPDATE users SET notes_model = 'claude-sonnet-4-6'`);

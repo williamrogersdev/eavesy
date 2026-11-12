@@ -14,7 +14,7 @@ import { encode } from '@/db/codec';
 import * as projectsRepo from '@/db/repo/projects';
 import { ulid } from '@/db/ids';
 import { clock, MIN_CHAPTER_MEETING_MS, validateChapters } from '@/lib/ai/chapters';
-import { anthropicForUser } from '@/lib/ai/client';
+import { answeredBy, anthropicForUser } from '@/lib/ai/client';
 import { requestMeetingSummary, summaryModel } from '@/lib/ai/meeting-summary';
 import { combinedContext } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
@@ -270,12 +270,14 @@ async function writeSummary(
   // The calendar's view of the meeting; the last one with the same people only for the final notes.
   const calendar = await loadMeetingContext(db, meeting, { previous: mode.final });
   const useCredits = env.AI_SUMMARY_PROVIDER === 'workers-ai' && meeting.source === 'import';
+  let answered: string | undefined;
   const args = {
     transcript,
     contextBlurb: combinedContext(meeting.contextBlurb, project),
     priorSummary,
     rolling: !mode.final,
     model: plan.summary.model,
+    onAnswered: (model: string) => { answered = model; },
     recorderName: rendered.recorderName,
     othersName: rendered.othersName,
     labelled: rendered.labelled,
@@ -290,7 +292,7 @@ async function writeSummary(
     : await requestMeetingSummary(anthropicForUser(plan.summary.apiKey ?? env.ANTHROPIC_API_KEY), args);
   const current = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
   if (!current || current.deletedAt || (useCredits && current.status === 'failed')) return;
-  const model = useCredits ? LIBRARY_MODEL : summaryModel(!mode.final, plan.summary.model);
+  const model = useCredits ? LIBRARY_MODEL : answeredBy(summaryModel(!mode.final, plan.summary.model), answered);
   const generatedByModel = useCredits ? `workers-ai:${model}` : plan.summary.apiKey ? `byo-anthropic:${model}` : model;
   const now = Date.now();
   const values = {

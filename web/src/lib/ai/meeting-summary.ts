@@ -1,7 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { notesLanguageRule } from '@/lib/transcription/language';
 import { CHAPTER_INSTRUCTIONS, CHAPTERS_SCHEMA } from './chapters';
-import { MODELS, REFUSAL_FALLBACK } from './client';
+import { MODELS, refusalFallback } from './client';
 import { MEETING_CONTEXT_RULES } from '@/lib/meetings/meeting-context';
 
 export const MEETING_SUMMARY_MODEL = MODELS.summary;
@@ -76,6 +76,8 @@ export const MEETING_SUMMARY_SCHEMA = {
 } as const;
 
 export interface MeetingSummaryRequest {
+  /** Told which model the API says wrote the final notes: another one after a decline. */
+  onAnswered?: (model: string) => void;
   /** The Claude model for the final notes (`plan.summary.model`); absent is the default. Rolling notes keep their own. */
   model?: string;
   transcript: string;
@@ -191,9 +193,10 @@ export async function requestMeetingSummary(client: Anthropic, args: MeetingSumm
       .finalMessage();
     return parseMeetingSummary(message);
   }
+  const model = args.model ?? MEETING_SUMMARY_MODEL;
   const message = await client.beta.messages.create({
-    ...REFUSAL_FALLBACK,
-    model: args.model ?? MEETING_SUMMARY_MODEL,
+    ...refusalFallback(model),
+    model,
     max_tokens: 16_000,
     system: meetingSummarySystemPrompt(args),
     output_config: {
@@ -201,5 +204,6 @@ export async function requestMeetingSummary(client: Anthropic, args: MeetingSumm
     },
     messages: [{ role: 'user', content: summaryUserContent(args) }],
   });
+  args.onAnswered?.(message.model);
   return parseMeetingSummary(message);
 }

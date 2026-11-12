@@ -1,5 +1,5 @@
 import { OPENROUTER_MODELS, openRouterChat } from '@/lib/providers/openrouter-chat';
-import { anthropic, anthropicForUser, MODELS, REFUSAL_FALLBACK } from './client';
+import { anthropic, anthropicForUser, MODELS, refusalFallback, replyText } from './client';
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -48,17 +48,14 @@ export async function chatWithMeeting(input: ChatMeetingInput): Promise<string> 
   const client = input.byoApiKey ? anthropicForUser(input.byoApiKey) : anthropic();
   // Low effort: an answer someone is waiting for, read from a transcript.
   // The limit leaves room for the model's thinking as well as the answer.
+  const model = input.model ?? MODELS.summary;
   const response = await client.beta.messages.create({
-    ...REFUSAL_FALLBACK,
-    model: input.model ?? MODELS.summary,
+    ...refusalFallback(model),
+    model,
     max_tokens: 8_000,
     output_config: { effort: 'low' },
     system,
     messages: history.map((t) => ({ role: t.role, content: t.content })),
   });
-  if (response.stop_reason === 'refusal') throw new Error('chat refused by the model');
-  return response.content
-    .map((c) => (c.type === 'text' ? c.text : ''))
-    .join('')
-    .trim();
+  return replyText(response, 'chat').trim();
 }

@@ -18,11 +18,36 @@ export function anthropicForUser(userKey: string): Anthropic {
 /**
  * Sent with requests to models whose safety classifiers can decline one (a
  * meeting about security work, say): the API then retries on the model's
- * default fallback inside the same call, so notes are still written. A model
- * without a fallback runs alone, as it would without this.
- * Needs `client.beta.messages`.
+ * default fallback inside the same call, so notes are still written.
  */
-export const REFUSAL_FALLBACK: { betas: Anthropic.Beta.AnthropicBeta[]; fallbacks: 'default' } = { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' };
+const REFUSAL_FALLBACK: { betas: Anthropic.Beta.AnthropicBeta[]; fallbacks: 'default' } = { betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' };
+
+/**
+ * What to add to a request to `model` so a declined one is retried on
+ * another model. Haiku has no server-side fallback, so its requests go
+ * without the parameter.
+ */
+export function refusalFallback(model: string): Partial<typeof REFUSAL_FALLBACK> {
+  return model.startsWith('claude-haiku') ? {} : REFUSAL_FALLBACK;
+}
+
+/**
+ * The text of a finished reply. A declined or cut-off one throws: half an
+ * answer, or half of some notes, is never passed on as the whole.
+ */
+export function replyText(response: { stop_reason: string | null; content: { type: string; text?: string }[] }, what: string): string {
+  if (response.stop_reason === 'refusal') throw new Error(`${what} refused by the model`);
+  if (response.stop_reason === 'max_tokens') throw new Error(`${what} truncated at max_tokens`);
+  return response.content.map((block) => (block.type === 'text' ? block.text ?? '' : '')).join('');
+}
+
+/**
+ * The model to record as the author: the one asked for, unless the API says
+ * another Claude model answered (a fallback after a decline).
+ */
+export function answeredBy(requested: string, reported: string | null | undefined): string {
+  return reported && reported !== requested && reported.startsWith('claude-') ? reported : requested;
+}
 
 export const MODELS = {
   /** Meeting notes and questions about a meeting, unless the account chose another (`model-choice.ts`). */

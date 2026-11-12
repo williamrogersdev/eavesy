@@ -1,6 +1,6 @@
 import { OPENROUTER_MODELS, openRouterChat } from '@/lib/providers/openrouter-chat';
 import { notesLanguageRule } from '@/lib/transcription/language';
-import { anthropic, anthropicForUser, MODELS, REFUSAL_FALLBACK } from './client';
+import { anthropic, anthropicForUser, MODELS, refusalFallback, replyText } from './client';
 import { isRecord } from '@/lib/json';
 
 export interface SummaryDecision {
@@ -130,16 +130,15 @@ export async function summarizeMeeting(input: SummarizeInput): Promise<MeetingSu
     const client = input.byoApiKey ? anthropicForUser(input.byoApiKey) : anthropic();
     // Room for the model's thinking as well as the notes: these models think
     // before they write, and both count towards the limit.
+    const model = input.model ?? MODELS.summary;
     const response = await client.beta.messages.create({
-      ...REFUSAL_FALLBACK,
-      model: input.model ?? MODELS.summary,
+      ...refusalFallback(model),
+      model,
       max_tokens: 16_000,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }],
     });
-    if (response.stop_reason === 'refusal') throw new Error('summary refused by the model');
-    if (response.stop_reason === 'max_tokens') throw new Error('summary truncated at max_tokens');
-    text = response.content.map((c) => (c.type === 'text' ? c.text : '')).join('');
+    text = replyText(response, 'summary');
   }
 
   return parseMeetingSummary(text);
