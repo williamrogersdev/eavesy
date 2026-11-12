@@ -1375,7 +1375,7 @@ function Hud() {
       </>
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
-    const doneHint = meeting ? 'press Stop to save the meeting' : eavesy ? (talkShortcut ? `tap ${talkShortcut} to send` : 'press Stop to send') : shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
+    const doneHint = eavesy ? (talkShortcut ? `tap ${talkShortcut} to send` : 'press Stop to send') : shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
     if (video) below = <div className="ctl-video-help">
       {!opening && !marking.tool && !actionError && <span className="ctl-video-count" title="Clicks are saved automatically. Highlights are tags you added."><MousePointerClick className="h-3 w-3" />{clicksLabel(marking.clicks)}{marking.marks.length > 0 ? ` · ${marking.marks.length} tags` : ''}</span>}
       <span role={actionError ? 'alert' : 'status'} className={actionError ? 'ctl-warn' : undefined} title={actionError ?? undefined}>
@@ -1384,7 +1384,7 @@ function Hud() {
       {actionError ? <button className="ctl-btn" onClick={() => setActionError(null)}>Dismiss</button> : marking.tool && <button className="ctl-btn" onClick={() => act('stop_marking')}>Done · esc</button>}
     </div>;
     if (meeting) below = <MeetingTranscript rows={lines.length ? lines : PREVIEW_MEETING} startedAtMs={state.startedAtMs ?? null} empty={actionError ?? (opening ? 'Opening the mic…' : noLiveWords ? 'Live words are off on this Mac. The meeting is still recording, and its transcript is written when you press Stop.' : 'Recording both sides of the call. What is said shows up here.')} />;
-    else if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : meeting ? `Recording both sides of the call… ${doneHint}` : `${eavesy ? 'Eavesy’s listening' : 'Listening'}… ${doneHint}`);
+    else if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `${eavesy ? 'Eavesy’s listening' : 'Listening'}… ${doneHint}`);
   } else if (state.phase === 'transcribing') {
     top = <>{errorSay ?? <span className="ctl-say">{video ? 'Saving' : state.mode === 'meeting' ? 'Saving the meeting' : eavesy ? 'Eavesy’s thinking' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>}<span className="ctl-fill" /></>;
     if (!video && look.lines) below = transcriptEditor(eavesy ? 'Sending what you said…' : 'Turning your words into text…');
@@ -1589,7 +1589,7 @@ function MeetingTranscript({ rows, startedAtMs, empty }: { rows: LiveRow[]; star
       <div ref={box} className="ctl-meeting" role="log" aria-label="Meeting transcript" tabIndex={0}
         onScroll={(event) => { const el = event.currentTarget; setFollowing(el.scrollHeight - el.scrollTop - el.clientHeight < 24); }}>
         {turns.map((turn, index) => (
-          <p key={`${turn.startMs}:${turn.label ?? ''}:${index}`} className="ctl-turn" data-who={turn.label === 'You' ? 'you' : 'others'} data-live={turn.provisional || undefined}>
+          <p key={`${turn.startMs}:${turn.label ?? ''}:${index}`} className="ctl-turn" data-who={turn.label === 'You' ? 'you' : turn.label ? 'others' : undefined} data-live={turn.provisional || undefined}>
             <span className="ctl-turn-head"><b>{turn.label ?? 'Speaker'}</b><time title={startedAtMs ? new Date(startedAtMs + turn.startMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : undefined}>{stamp(turn.startMs)}</time></span>
             {turn.text}
           </p>
