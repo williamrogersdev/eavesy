@@ -46,7 +46,7 @@
         "label": "hud",
         "acceptFirstMouse": true,
         "url": "hud.html",
-        "width": 248,
+        "width": 276,
         "height": 40,
         "resizable": false,
         "decorations": false,

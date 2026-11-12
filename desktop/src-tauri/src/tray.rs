@@ -46,6 +46,21 @@ pub(crate) fn glyphs(accelerator: &str) -> String {
         .collect()
 }
 
+/// What hovering the glyph says. While a capture records it says so, and
+/// which kind: the glyph's red dot alone doesn't tell a meeting from a dictation.
+fn tooltip_now(settings: &crate::settings::Settings, recording: bool, meeting: bool) -> String {
+    match (recording, meeting) {
+        (true, true) => "Eavesy is recording this meeting".into(),
+        (true, false) => "Eavesy is recording".into(),
+        (false, _) => tooltip(settings),
+    }
+}
+
+fn tooltip_for(app: &AppHandle, recording: bool) -> String {
+    let meeting = crate::hud::current().mode.as_deref() == Some(crate::hud::MEETING_MODE);
+    tooltip_now(&crate::settings::load(app), recording, meeting)
+}
+
 fn tooltip(settings: &crate::settings::Settings) -> String {
     if settings.dictation_hotkey.is_empty() { return "Eavesy".into(); }
     format!("Eavesy · {} to record", glyphs(&settings.dictation_hotkey))
@@ -54,6 +69,7 @@ fn tooltip(settings: &crate::settings::Settings) -> String {
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let settings = crate::settings::load(app);
     let record_item = MenuItem::with_id(app, "record", "Start or Stop Recording", true, menu_accel(&settings.dictation_hotkey))?;
+    let meeting_item = MenuItem::with_id(app, "record_meeting", "Record a Meeting", true, None::<&str>)?;
     let open_item = MenuItem::with_id(app, "open", "Open Eavesy", true, menu_accel(&settings.toggle_hotkey))?;
     let control_item = MenuItem::with_id(app, "show_control", "Show Capture Control", true, None::<&str>)?;
     // No key equivalents: the shortcuts are global hotkeys that close the
@@ -73,6 +89,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
         app,
         &[
             &record_item,
+            &meeting_item,
             &open_item,
             &control_item,
             &separator()?,
@@ -94,7 +111,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
 pub fn refresh(app: &AppHandle) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
-    let _ = tray.set_tooltip(Some(tooltip(&crate::settings::load(app))));
+    let _ = tray.set_tooltip(Some(tooltip_for(app, WANT_RECORDING.load(Ordering::SeqCst))));
     if let Ok(menu) = build_menu(app) {
         let _ = tray.set_menu(Some(menu));
     }
@@ -118,10 +135,13 @@ pub fn set_recording(app: &AppHandle, recording: bool) {
 /// failed swap is retried by the next call (and by `install`).
 fn apply_recording_glyph(app: &AppHandle) {
     let want = WANT_RECORDING.load(Ordering::SeqCst);
+    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    // On every state change, not only when the glyph swaps: the capture's
+    // kind is known by now (the control's state is written before this runs).
+    let _ = tray.set_tooltip(Some(tooltip_for(app, want)));
     if SHOWING_RECORDING.load(Ordering::SeqCst) == want {
         return;
     }
-    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
     let icon = if want {
         tauri::include_image!("icons/tray-recording.png")
     } else {
@@ -140,6 +160,7 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "record" => hotkeys::trigger_dictation(app),
+            "record_meeting" => crate::meeting_watch::record_now(app),
             "open" => hotkeys::show_launcher(app),
             "show_control" => crate::hud::set_hidden_on_main(app, false),
             "clipboard" => crate::clipboard::open(app, crate::clipboard::View::Clipboard),
@@ -191,5 +212,13 @@ mod tests {
         assert_eq!(glyphs("Fn+Space"), "fn Space");
         assert_eq!(glyphs("Fn+Shift+K"), "fn ⇧K");
         assert!(menu_accel("Fn+Space").is_none());
+    }
+
+    #[test]
+    fn the_tooltip_says_when_a_meeting_is_recording() {
+        let settings = crate::settings::Settings::default();
+        assert_eq!(tooltip_now(&settings, true, true), "Eavesy is recording this meeting");
+        assert_eq!(tooltip_now(&settings, true, false), "Eavesy is recording");
+        assert_eq!(tooltip_now(&settings, false, true), tooltip(&settings));
     }
 }

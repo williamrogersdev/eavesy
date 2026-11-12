@@ -41,6 +41,7 @@ export default defineConfig({
       },
     },
   },
-  server: { port: 1420, strictPort: true },
+  // Tauri's dev URL is 1420. A preview started beside another one is handed its own port in PORT.
+  server: { port: Number(process.env.PORT) || 1420, strictPort: true },
   clearScreen: false,
 });

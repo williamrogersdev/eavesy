@@ -773,7 +773,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
               disabled={!settings || autoRecordBusy}
               label="Record my meetings automatically"
               hint={autoRecordOn
-                ? 'When a call starts, Eavesy counts down 10 seconds and records unless you choose Don’t record. It stops when the call ends.'
+                ? 'When a call starts, Eavesy counts down 10 seconds and records unless you choose Don’t record. It stops about a minute and a half after the call ends, or when you press Stop.'
                 : 'When a call starts, Eavesy asks before recording.'}
             />
             <Switch
