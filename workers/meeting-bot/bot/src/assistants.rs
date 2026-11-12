@@ -3,9 +3,10 @@
 //! their own account, Claude for up to eight hours, so a call left to them and
 //! this bot is an empty call. Pure, so it is tested without a browser.
 
-/// Words only a notetaker's display name carries. Matched anywhere in the
-/// name, so nothing here may also be (part of) a person's name: no "gong",
-/// "fellow" or "fathom", whose bots say "notetaker" in their names anyway.
+/// Words only a notetaker's display name carries. Matched as whole words
+/// anywhere in the name ("read.ai" is not in "bread.ai"), so nothing here may
+/// also be a person's name: no "gong", "fellow" or "fathom", whose bots say
+/// "notetaker" in their names anyway.
 const NOTETAKER_WORDS: &[&str] =
     &["notetaker", "note taker", "note-taker", "fireflies.ai", "otter.ai", "otterpilot", "read.ai", "tl;dv", "tldv", "meetgeek", "circleback"];
 
@@ -23,7 +24,16 @@ pub fn normal(name: &str) -> String {
 /// Whether a display name is an assistant's rather than a person's.
 pub fn is_assistant(name: &str) -> bool {
     let name = normal(name);
-    CLAUDE_NAMES.contains(&name.as_str()) || NOTETAKER_WORDS.iter().any(|w| name.contains(w))
+    CLAUDE_NAMES.contains(&name.as_str()) || NOTETAKER_WORDS.iter().any(|w| has_word(&name, w))
+}
+
+/// Whether `word` stands in `name` with no letter or digit against either end.
+fn has_word(name: &str, word: &str) -> bool {
+    name.match_indices(word).any(|(at, found)| {
+        let before = name[..at].chars().next_back();
+        let after = name[at + found.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
 }
 
 /// Whether the call holds this bot and assistants, and nobody else.
@@ -63,6 +73,13 @@ mod tests {
         // A bare "Claude" is a person until its tile name is confirmed.
         for name in ["Claude", "Claude Dupont", "Claudette", "Ana", "Ana Gongora", "Sam Fellowes", "Krispin Fathom", "Granola Smith"] {
             assert!(!is_assistant(name), "{name}");
+        }
+        // A notetaker's word inside a longer word is not that notetaker.
+        for name in ["bread.ai", "Spread.ai Team", "Potter.ai", "Notetakerson", "Ana Tldvik", "otter.aid"] {
+            assert!(!is_assistant(name), "{name}");
+        }
+        for name in ["(read.ai)", "Otter.ai's notes", "tl;dv - Ana", "Ana’s Note-Taker"] {
+            assert!(is_assistant(name), "{name}");
         }
     }
 

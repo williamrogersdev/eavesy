@@ -41,9 +41,10 @@ record with the Mac app instead of sending the bot.
 
 - **Leaving.** The bot counts a call that holds only itself and other
   notetakers as empty and leaves after the usual minute
-  (`workers/meeting-bot/bot/src/assistants.rs`). It stays whenever the app's
-  head count differs from the tiles it reads, or one of them has spoken at
-  any point in the call. **Not handled yet:** a tile named just "Claude". That
+  (`workers/meeting-bot/bot/src/assistants.rs`). It stays whenever any tile
+  other than its own is not a recognised assistant's name, no other tile can
+  be read, the app's head count differs from the tiles it reads, or one of
+  them has spoken at any point in the call. **Not handled yet:** a tile named just "Claude". That
   is probably what Claude Meetings shows, but it isn't documented and it is a
   person's name, so the bot treats it as a person. In a call left to the bot
   and a tile named "Claude", the bot therefore stays until the call ends or
