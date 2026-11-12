@@ -38,17 +38,17 @@ export function GoogleCalendarCards({ onError }: { onError: (message: string) =>
   useEffect(load, [load]);
 
   const icon = <CalendarDays />;
-  if (!status) {
-    return (
-      <IntegrationCard
-        icon={icon}
-        name="Google Calendar"
-        blurb={failed ? 'Could not load your calendar connections' : 'Checking…'}
-        status={failed ? { text: 'Error', tone: 'warn' } : undefined}
-        action={failed ? <button type="button" onClick={load} className={appButton('secondary', 'sm')}>Try again</button> : null}
-      />
-    );
-  }
+  // Also shown above the cards when a later reload fails, since those may then be out of date.
+  const loadFailed = failed ? (
+    <IntegrationCard
+      icon={icon}
+      name="Google Calendar"
+      blurb={status ? 'Could not refresh, so this may be out of date' : 'Could not load your calendar connections'}
+      status={{ text: 'Error', tone: 'warn' }}
+      action={<button type="button" onClick={load} className={appButton('secondary', 'sm')}>Try again</button>}
+    />
+  ) : null;
+  if (!status) return loadFailed ?? <IntegrationCard icon={icon} name="Google Calendar" blurb="Checking…" />;
 
   const google = status.connections.filter((connection) => connection.provider === 'google');
   const disconnect = (id: string, force = false) => {
@@ -62,6 +62,7 @@ export function GoogleCalendarCards({ onError }: { onError: (message: string) =>
 
   return (
     <>
+      {loadFailed}
       {google.map((connection) => (
         <IntegrationCard
           key={connection.id}

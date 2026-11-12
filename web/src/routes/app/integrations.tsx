@@ -223,7 +223,15 @@ function CopyButton({ text, label }: { text: string; label: string }) {
     <button
       type="button"
       onClick={() => {
-        void navigator.clipboard.writeText(text).then(() => settle('copied'), () => settle('failed'));
+        // `navigator.clipboard` is missing on plain http, where the call itself throws.
+        void (async () => {
+          try {
+            await navigator.clipboard.writeText(text);
+            settle('copied');
+          } catch {
+            settle('failed');
+          }
+        })();
       }}
       className={appButton('secondary', 'sm')}
     >
