@@ -7,6 +7,7 @@ import {
   FolderOpen,
   LayoutGrid,
   LogOut,
+  Plug,
   Menu,
   Mic,
   Search,
@@ -34,7 +35,7 @@ const NAV_ITEMS = [
   { href: '/app', label: 'Library', icon: LayoutGrid },
   { href: '/app/projects', label: 'Projects', icon: FolderOpen },
   { href: '/app/notetaker', label: 'Notetaker', icon: Bot },
-  { href: '/app/search', label: 'Search', icon: Search },
+  { href: '/app/integrations', label: 'Integrations', icon: Plug },
   { href: '/app/settings', label: 'Settings', icon: Settings },
 ] as const;
 
@@ -330,6 +331,21 @@ function TopSearch() {
   const [active, setActive] = useState(0);
   const [navigationError, setNavigationError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [shortcut, setShortcut] = useState('');
+
+  // ⌘K (Ctrl+K off the Mac) puts the cursor in search from anywhere in the app.
+  useEffect(() => {
+    setShortcut(/Mac|iPhone|iPad/.test(navigator.platform) ? '⌘K' : 'Ctrl K');
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key.toLowerCase() !== 'k' || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      inputRef.current?.focus();
+      inputRef.current?.select();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   const results = useMemo(() => {
     const normalized = query.trim().toLowerCase();
@@ -363,25 +379,28 @@ function TopSearch() {
       setOpen(false);
       return;
     }
-    if (!results.length) return;
+    if (!query.trim()) return;
+    // The row after the title matches searches inside transcripts.
     if (event.key === 'ArrowDown') {
       event.preventDefault();
-      setActive((current) => Math.min(current + 1, results.length - 1));
+      setActive((current) => Math.min(current + 1, results.length));
     } else if (event.key === 'ArrowUp') {
       event.preventDefault();
       setActive((current) => Math.max(current - 1, 0));
     } else if (event.key === 'Enter') {
       event.preventDefault();
-      go(results[active].href);
+      go(results[active]?.href ?? transcriptSearch);
     }
   }
 
   const listId = 'workspace-search-results';
+  const transcriptSearch = `/app/search?q=${encodeURIComponent(query.trim())}`;
   return (
     <div className="min-w-0 flex-1">
       <div ref={ref} className="relative w-full max-w-xl">
         <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ev-ink-3" strokeWidth={1.75} />
         <input
+          ref={inputRef}
           role="combobox"
           aria-autocomplete="list"
           aria-haspopup="listbox"
@@ -395,13 +414,18 @@ function TopSearch() {
           }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
-          placeholder="Search"
+          placeholder="Search meetings, notes and transcripts"
           aria-label="Search your library"
           aria-expanded={open && Boolean(query.trim())}
           aria-controls={listId}
-          aria-activedescendant={open && results[active] ? `${listId}-${active}` : undefined}
-          className="h-9 w-full rounded-[var(--ev-r-ctl)] bg-ev-well pl-9 pr-3 font-round text-[13.5px] text-ev-ink outline-none transition placeholder:text-ev-ink-3 focus:bg-ev-raised focus:shadow-[var(--ev-focus)]"
+          aria-activedescendant={open && query.trim() ? `${listId}-${Math.min(active, results.length)}` : undefined}
+          className="h-9 w-full rounded-[var(--ev-r-ctl)] bg-ev-well pl-9 pr-12 font-round text-[13.5px] text-ev-ink outline-none transition placeholder:text-ev-ink-3 focus:bg-ev-raised focus:shadow-[var(--ev-focus)]"
         />
+        {shortcut && !query ? (
+          <kbd aria-hidden className="pointer-events-none absolute right-2.5 top-1/2 hidden -translate-y-1/2 rounded-[6px] bg-ev-paper px-1.5 py-0.5 font-round text-[11px] font-bold text-ev-ink-3 sm:block">
+            {shortcut}
+          </kbd>
+        ) : null}
 
         {open && query.trim() ? (
           <div
@@ -414,9 +438,7 @@ function TopSearch() {
                 {navigationError}
               </p>
             ) : null}
-            {results.length === 0 ? (
-              <p className="px-3 py-3 text-sm text-ev-ink-2">No title matches yet.</p>
-            ) : (
+            {results.length === 0 ? null : (
               results.map((item, index) => (
                 <button
                   id={`${listId}-${index}`}
@@ -439,14 +461,21 @@ function TopSearch() {
                 </button>
               ))
             )}
-            <Link
-              href={`/app/search?q=${encodeURIComponent(query.trim())}`}
-              onClick={() => setOpen(false)}
-              className="mt-1 flex h-9 items-center gap-2 rounded-[var(--ev-r-ctl)] border-t border-ev-line px-2.5 font-round text-xs font-semibold text-ev-ink-2 hover:bg-[var(--ev-hover)] hover:text-ev-ink"
+            <button
+              id={`${listId}-${results.length}`}
+              type="button"
+              role="option"
+              aria-selected={active === results.length}
+              onMouseEnter={() => setActive(results.length)}
+              onClick={() => go(transcriptSearch)}
+              className={cn(
+                'flex h-9 w-full items-center gap-2.5 rounded-[var(--ev-r-ctl)] px-2.5 text-left text-sm',
+                active === results.length ? 'bg-ev-coat-soft text-ev-coat' : 'text-ev-ink-2 hover:bg-[var(--ev-hover)]',
+              )}
             >
-              <Search className="h-3.5 w-3.5" />
-              Search inside transcripts for “{query.trim()}”
-            </Link>
+              <Search className="h-3.5 w-3.5 shrink-0" />
+              <span className="min-w-0 flex-1 truncate">Search everything said for “{query.trim()}”</span>
+            </button>
           </div>
         ) : null}
       </div>
