@@ -517,15 +517,31 @@ fn clear_prompt(app: &AppHandle, key: &str) {
 /// through this: a second start before then is dropped, not raced.
 static STARTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Holds [`STARTING`] for one start and gives it back when dropped, so a
+/// start that panics doesn't block every later one.
+struct Starting;
+
+impl Starting {
+    /// None while another start is under way: that one brings the recording
+    /// this caller asked for, so there is nothing more to do or to say.
+    fn claim() -> Option<Self> {
+        (!STARTING.swap(true, std::sync::atomic::Ordering::SeqCst)).then_some(Self)
+    }
+}
+
+impl Drop for Starting {
+    fn drop(&mut self) {
+        STARTING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 fn record(app: &AppHandle, prompt: &Prompt) {
     clear_prompt(app, &prompt.key);
-    if STARTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return;
-    }
+    let Some(starting) = Starting::claim() else { return };
     let handle = app.clone();
     std::thread::spawn(move || {
         let started = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now());
-        STARTING.store(false, std::sync::atomic::Ordering::SeqCst);
+        drop(starting);
         match started {
             Ok(session) => with_watch(|watch| {
                 let bundle = watch.call.as_ref().map(|(signal, _)| signal.bundle().to_string()).unwrap_or_default();
@@ -575,13 +591,11 @@ pub fn record_now(app: &AppHandle) {
         record(app, &prompt);
         return;
     }
-    if STARTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return;
-    }
+    let Some(starting) = Starting::claim() else { return };
     let handle = app.clone();
     std::thread::spawn(move || {
         let started = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now());
-        STARTING.store(false, std::sync::atomic::Ordering::SeqCst);
+        drop(starting);
         if let Err(error) = started {
             tracing::warn!("tray: could not start a meeting recording: {error}");
             // A second click loses to the first one's start: that is not a failure.
@@ -635,6 +649,20 @@ pub fn set_auto_record_meetings(app: AppHandle, enabled: bool) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_start_at_a_time_and_a_failed_one_frees_the_next() {
+        let first = Starting::claim().expect("nothing is starting");
+        assert!(Starting::claim().is_none(), "a second start is dropped while the first is under way");
+        // A start that panics gives the claim back as it unwinds.
+        let panicked = std::thread::spawn(move || {
+            let _held = first;
+            panic!("the capture failed to start");
+        })
+        .join();
+        assert!(panicked.is_err());
+        assert!(Starting::claim().is_some());
+    }
 
     const T: i64 = 1_800_000_000_000;
 
