@@ -319,7 +319,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
             (Some(kept), _) => (kept, None),
             (None, Some(corrected)) => (crate::vocabulary::fix_built_in_terms(&crate::transcribe::drop_fillers(&corrected)), None),
             (None, None) => {
-                let polished = crate::transcribe::polish_dictation(&app, &text, project.as_deref());
+                let polished = crate::transcribe::polish_dictation(&app, &text, project.as_deref(), || send.command().is_some());
                 // The server spells the app's name too, but not when it couldn't help.
                 (crate::vocabulary::fix_built_in_terms(&polished.text), polished.written)
             }

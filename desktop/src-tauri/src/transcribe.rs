@@ -66,12 +66,41 @@ fn polish_timeout(text: &str) -> std::time::Duration {
     std::time::Duration::from_millis((4_000 + text.chars().count() as u64 * 2).min(8_000))
 }
 
+/// How long a dictation whose Return is being held back waits for the
+/// tidied words. Most polishes are back within 1.5s, and the rest take 3s
+/// to 6s: someone who pressed Return to send should not sit through those,
+/// so past this the words go out as heard, fillers dropped.
+const SENDING_POLISH_BUDGET: std::time::Duration = std::time::Duration::from_millis(2_000);
+
+/// Waits for `answer` up to `budget`, or only up to `hurried_budget` from
+/// the moment `hurried` says so (it is asked throughout: Return may be
+/// pressed while the wait is already on). None when time ran out.
+fn wait_within<T>(
+    answer: &std::sync::mpsc::Receiver<T>,
+    budget: std::time::Duration,
+    hurried_budget: std::time::Duration,
+    hurried: impl Fn() -> bool,
+) -> Option<T> {
+    const TICK: std::time::Duration = std::time::Duration::from_millis(25);
+    let started = std::time::Instant::now();
+    loop {
+        let allowed = if hurried() { budget.min(hurried_budget) } else { budget };
+        let left = allowed.checked_sub(started.elapsed())?;
+        match answer.recv_timeout(left.min(TICK)) {
+            Ok(value) => return Some(value),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return None,
+        }
+    }
+}
+
 /// A dictation's words as the user would have typed them: fillers, stutters
 /// and false starts gone, punctuated, their own words spelled their way. The
 /// words as heard, with the dictionary's fixes, when the Mac isn't signed in or the
-/// server can't help in time.
+/// server can't help in time. `sending` says whether a Return is being held
+/// back for these words, which then get less time (`SENDING_POLISH_BUDGET`).
 /// `project` picks that project's tone and words over the account's.
-pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> Polished {
+pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>, sending: impl Fn() -> bool) -> Polished {
     let as_heard = || Polished {
         text: crate::vocabulary::apply_corrections(&strip_fillers(text), &crate::vocabulary::cached_corrections(app)),
         written: None,
@@ -80,7 +109,18 @@ pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> P
         return as_heard();
     };
     let started = std::time::Instant::now();
-    let result = polish_with(&credential, text, project, polish_timeout(text));
+    let timeout = polish_timeout(text);
+    let (reply, answer) = std::sync::mpsc::channel();
+    {
+        let (text, project) = (text.to_string(), project.map(str::to_string));
+        // On its own thread so the wait can be cut short; a reply nobody
+        // waits for any more is dropped.
+        std::thread::spawn(move || {
+            let _ = reply.send(polish_with(&credential, &text, project.as_deref(), timeout));
+        });
+    }
+    let result = wait_within(&answer, timeout, SENDING_POLISH_BUDGET, sending)
+        .unwrap_or_else(|| Err("not back in time for the held Return".to_string()));
     let polish_ms = started.elapsed().as_millis() as u64;
     match result {
         Ok(polished) => {
@@ -528,6 +568,40 @@ mod tests {
         // One mark where the filler ended a sentence.
         assert_eq!(strip_fillers("Ship it. You know. Next"), "Ship it. Next");
         assert_eq!(strip_fillers("It works. Like."), "It works.");
+    }
+
+    #[test]
+    fn a_held_return_cuts_the_wait_for_the_polish_short() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::{Duration, Instant};
+        let (long, short) = (Duration::from_secs(5), Duration::from_millis(100));
+        // Back in time: taken, hurried or not.
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send("tidied").unwrap();
+        assert_eq!(super::wait_within(&rx, long, short, || true), Some("tidied"));
+        // Not back, Return held from the start: the short budget.
+        let started = Instant::now();
+        assert_eq!(super::wait_within(&rx, long, short, || true), None);
+        assert!(started.elapsed() < Duration::from_secs(1));
+        // Return pressed part way through the wait: given up on from then.
+        let pressed = AtomicBool::new(false);
+        let started = Instant::now();
+        let waited = std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(200));
+                pressed.store(true, Ordering::SeqCst);
+            });
+            super::wait_within(&rx, long, short, || pressed.load(Ordering::SeqCst))
+        });
+        assert_eq!(waited, None);
+        assert!(started.elapsed() >= Duration::from_millis(200) && started.elapsed() < Duration::from_secs(2));
+        // Nobody sending: the whole budget.
+        let started = Instant::now();
+        assert_eq!(super::wait_within(&rx, Duration::from_millis(300), short, || false), None);
+        assert!(started.elapsed() >= Duration::from_millis(300));
+        // An answer that will never come ends the wait at once.
+        drop(tx);
+        assert_eq!(super::wait_within(&rx, long, short, || false), None);
     }
 
     #[test]
