@@ -26,6 +26,7 @@ jobs:
     outputs:
       web: ${{ steps.filter.outputs.web }}
       desktop: ${{ steps.filter.outputs.desktop }}
+      mobile: ${{ steps.filter.outputs.mobile }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -39,18 +40,21 @@ jobs:
           if [[ "$EVENT" != "pull_request" ]]; then
             echo "web=true" >> "$GITHUB_OUTPUT"
             echo "desktop=true" >> "$GITHUB_OUTPUT"
+            echo "mobile=true" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           files="$(git diff --name-only "$BASE...$HEAD")"
           printf '%s\n' "$files"
           web=false
           desktop=false
+          mobile=false
           while IFS= read -r f; do
             [[ -z "$f" ]] && continue
             [[ "$f" != */* && "$f" == *.md ]] && continue
             case "$f" in
-              .github/workflows/ci.yml) web=true; desktop=true ;;
+              .github/workflows/ci.yml) web=true; desktop=true; mobile=true ;;
               desktop/*) desktop=true ;;
+              mobile/*) mobile=true ;;
               docs/*|packaging/*|plugins/*|LICENSE|NOTICE) ;;
               .github/ISSUE_TEMPLATE/*|.github/CODEOWNERS|.github/dependabot.yml) ;;
               .github/workflows/macos-release.yml|.github/workflows/release-desktop.yml|.github/workflows/tag-desktop-release.yml) ;;
@@ -59,6 +63,7 @@ jobs:
           done <<< "$files"
           echo "web=$web" | tee -a "$GITHUB_OUTPUT"
           echo "desktop=$desktop" | tee -a "$GITHUB_OUTPUT"
+          echo "mobile=$mobile" | tee -a "$GITHUB_OUTPUT"
 
   web:
     name: Web + Workers
@@ -187,6 +192,23 @@ jobs:
       - name: Audit dependencies
         working-directory: desktop/src-tauri
         run: cargo audit
+
+  mobile:
+    name: Mobile (iOS)
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.mobile == 'true') }}
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Sync core tests
+        working-directory: mobile/EavesyKit
+        run: swift test
+      - name: Build the app
+        run: |
+          xcodebuild -project mobile/Eavesy.xcodeproj -scheme Eavesy \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO build
 
   desktop-windows:
     name: Desktop (Windows build check)

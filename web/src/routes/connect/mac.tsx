@@ -40,7 +40,7 @@ function ConnectMacPage() {
   const { code } = Route.useSearch();
   const signOut = useSignOut();
   const [email, setEmail] = useState<string | null>(null);
-  const [request, setRequest] = useState<{ requestedAt: number; sameNetwork: boolean | null } | null>(null);
+  const [request, setRequest] = useState<{ requestedAt: number; sameNetwork: boolean | null; phone: boolean } | null>(null);
   const [phase, setPhase] = useState<Phase>(code ? 'ready' : 'error');
   const [error, setError] = useState<string | null>(code ? null : 'This link is missing its code. Click Sign in in the Eavesy app again.');
 
@@ -58,10 +58,18 @@ function ConnectMacPage() {
       .then((value) => {
         const requestedAt = isRecord(value) ? optionalNumber(value.requestedAt) : undefined;
         if (!isRecord(value) || requestedAt === undefined) return;
-        setRequest({ requestedAt, sameNetwork: typeof value.sameNetwork === 'boolean' ? value.sameNetwork : null });
+        setRequest({
+          requestedAt,
+          sameNetwork: typeof value.sameNetwork === 'boolean' ? value.sameNetwork : null,
+          phone: value.platform === 'ios',
+        });
       })
       .catch(() => {});
   }, [code]);
+
+  // The same page signs a phone in; only the names change.
+  const app = request?.phone ? 'Eavesy for iPhone' : 'Eavesy for Mac';
+  const device = request?.phone ? 'iPhone' : 'Mac';
 
   const connect = async () => {
     setPhase('connecting');
@@ -73,7 +81,7 @@ function ConnectMacPage() {
         body: JSON.stringify({ code }),
       });
       if (response.status === 404) throw new Error('This sign-in link expired. Click Sign in in the Eavesy app to get a new one.');
-      if (response.status === 409) throw new Error('This Mac is still signed in to another Eavesy account. Sign out in the Eavesy app\'s settings, then click Sign in again.');
+      if (response.status === 409) throw new Error(`This ${device} is still signed in to another Eavesy account. Sign out in the Eavesy app's settings, then click Sign in again.`);
       if (!response.ok) throw new Error('Something went wrong. Please try again.');
       setPhase('done');
     } catch (cause) {
@@ -95,14 +103,16 @@ function ConnectMacPage() {
             <CheckCircle2 className="mx-auto mt-6 h-8 w-8 text-emerald-500" />
             <h1 className="mt-3 text-lg font-semibold">You&apos;re signed in</h1>
             <p className="mt-2 text-sm text-ev-ink-2">
-              Eavesy for Mac is connected{email ? ` to ${email}` : ''}. Head back to the app; you can close this tab.
+              {app} is connected{email ? ` to ${email}` : ''}. Head back to the app; you can close this tab.
             </p>
           </>
         ) : (
           <>
-            <h1 className="mt-5 text-lg font-semibold">Sign in to Eavesy for Mac</h1>
+            <h1 className="mt-5 text-lg font-semibold">Sign in to {app}</h1>
             <p className="mt-2 text-sm text-ev-ink-2">
-              Your recordings will get transcripts and sync to your account.
+              {request?.phone
+                ? 'What you record and save on this iPhone will sync to your account.'
+                : 'Your recordings will get transcripts and sync to your account.'}
             </p>
             {email ? (
               <p className="mt-5 text-sm">
@@ -114,7 +124,7 @@ function ConnectMacPage() {
                 <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
                 <span>
                   This request came from a different network than this browser. Only continue if you just clicked
-                  Sign in in Eavesy for Mac yourself. Otherwise someone else&apos;s Mac would get access to your account.
+                  Sign in in {app} yourself. Otherwise someone else&apos;s {device} would get access to your account.
                 </span>
               </p>
             ) : null}

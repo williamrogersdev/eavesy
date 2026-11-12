@@ -123,3 +123,17 @@ it('atomically admits one of two competing dictionary inserts at capacity in D1'
   expect(counts.reduce((a, b) => a+b, 0)).toBe(1);
   expect(await dictionary.list(db(), 'owner')).toHaveLength(500);
 });
+
+describe('pairing a phone', () => {
+  it('records the platform it paired as', async () => {
+    await registerDevice(db(), { userId: 'owner', deviceId: DEVICE, name: 'Eavesy for iPhone', rootFolderPath: 'On this iPhone', platform: 'ios' });
+    const row = await testEnv.DB.prepare('SELECT platform FROM devices WHERE id = ?').bind(DEVICE).first<{ platform: string }>();
+    expect(row?.platform).toBe('ios');
+  });
+
+  it('keeps calling a device a Mac when it does not say', async () => {
+    await pair('owner');
+    const row = await testEnv.DB.prepare('SELECT platform FROM devices WHERE id = ?').bind(DEVICE).first<{ platform: string }>();
+    expect(row?.platform).toBe('macos');
+  });
+});
