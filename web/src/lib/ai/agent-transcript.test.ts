@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type Anthropic from '@anthropic-ai/sdk';
-import { polishDictation, restyledIsValid } from './agent-transcript';
+import { hedged, hedgeAfterMs, polishDictation, restyledIsValid } from './agent-transcript';
 
 function fakeClient(reply: string | Error) {
   const calls: { system: string; content: string }[] = [];
@@ -162,5 +162,76 @@ describe('restyledIsValid', () => {
   test('rejects empty, padded or unrelated output', () => {
     expect(restyledIsValid(said, '')).toBe(false);
     expect(restyledIsValid(said, 'Sure, rescheduled everything already, nothing further needed from anyone here.')).toBe(false);
+  });
+});
+
+describe('hedged', () => {
+  const after = (ms: number, value: string, signal?: AbortSignal) =>
+    new Promise<string>((resolve, reject) => {
+      const timer = setTimeout(() => resolve(value), ms);
+      signal?.addEventListener('abort', () => { clearTimeout(timer); reject(new Error('aborted')); });
+    });
+
+  test('a quick answer is the only request made', async () => {
+    let calls = 0;
+    expect(await hedged(() => { calls += 1; return after(5, 'tidied'); }, 200)).toBe('tidied');
+    await after(250, '');
+    expect(calls).toBe(1);
+  });
+
+  test('a slow answer is asked for again, and the first one in wins', async () => {
+    const aborted: number[] = [];
+    let calls = 0;
+    const started = Date.now();
+    const result = await hedged((signal) => {
+      const call = (calls += 1);
+      signal.addEventListener('abort', () => aborted.push(call));
+      return after(call === 1 ? 2_000 : 10, `answer ${call}`, signal);
+    }, 50);
+    expect(result).toBe('answer 2');
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(aborted).toEqual([1]);
+  });
+
+  test('a slow first answer still wins when it lands before the second', async () => {
+    let calls = 0;
+    const result = await hedged(() => { const call = (calls += 1); return after(call === 1 ? 80 : 2_000, `answer ${call}`); }, 30);
+    expect(result).toBe('answer 1');
+  });
+
+  test('a failure before the second request is due ends it there', async () => {
+    let calls = 0;
+    const started = Date.now();
+    await expect(hedged(() => { calls += 1; return Promise.reject(new Error('overloaded')); }, 300)).rejects.toThrow('overloaded');
+    expect(Date.now() - started).toBeLessThan(250);
+    await after(400, '');
+    expect(calls).toBe(1);
+  });
+
+  test('once both are out, one failing leaves the other to answer, and both failing fails', async () => {
+    let calls = 0;
+    const slowThenFails = (ms: number) => new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timed out')), ms));
+    expect(await hedged(() => { calls += 1; return calls === 1 ? slowThenFails(80) : after(150, 'tidied'); }, 30)).toBe('tidied');
+    calls = 0;
+    await expect(hedged(() => { calls += 1; return slowThenFails(calls === 1 ? 80 : 20); }, 30)).rejects.toThrow('timed out');
+    expect(calls).toBe(2);
+  });
+
+  test('an answer that is not accepted does not win over one still to come', async () => {
+    const aborted: number[] = [];
+    let calls = 0;
+    const result = await hedged((signal) => {
+      const call = (calls += 1);
+      signal.addEventListener('abort', () => aborted.push(call));
+      return after(call === 1 ? 80 : 120, call === 1 ? 'Sure! Done.' : 'tidied', signal);
+    }, 30, (value) => value === 'tidied');
+    expect(result).toBe('tidied');
+    expect(aborted).toEqual([]);
+    await expect(hedged(() => after(5, 'Sure! Done.'), 300, () => false)).rejects.toThrow('not accepted');
+  });
+
+  test('a longer dictation is given longer before the second request', () => {
+    expect(hedgeAfterMs(0)).toBe(1_200);
+    expect(hedgeAfterMs(1_000)).toBe(3_200);
   });
 });

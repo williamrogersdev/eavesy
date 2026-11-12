@@ -66,12 +66,64 @@ fn polish_timeout(text: &str) -> std::time::Duration {
     std::time::Duration::from_millis((4_000 + text.chars().count() as u64 * 2).min(8_000))
 }
 
+/// How long a dictation whose Return is being held back waits for the
+/// tidied words. Most polishes are back within 1.5s, and the rest take 3s
+/// to 6s: someone who pressed Return to send should not sit through those,
+/// so past this the words go out as heard, fillers dropped.
+const SENDING_POLISH_BUDGET: std::time::Duration = std::time::Duration::from_millis(2_000);
+
+/// Why a wait for an answer ended without one.
+#[derive(Debug, PartialEq)]
+enum NoAnswer {
+    /// The whole budget ran out.
+    Slow,
+    /// The shorter budget of a hurried wait ran out.
+    Hurried,
+    /// Whoever was to answer went away without one.
+    Gone,
+}
+
+/// Waits for `answer` up to `budget`, or, once `hurried` has said so, only
+/// until `hurried_budget` after the wait began: a wait already longer than
+/// that ends at once. `hurried` is asked throughout (Return may be pressed
+/// while the wait is on), and once it has said yes the wait stays hurried.
+fn wait_within<T>(
+    answer: &std::sync::mpsc::Receiver<T>,
+    budget: std::time::Duration,
+    hurried_budget: std::time::Duration,
+    hurried: impl Fn() -> bool,
+) -> Result<T, NoAnswer> {
+    use std::sync::mpsc::{RecvTimeoutError, TryRecvError};
+    const TICK: std::time::Duration = std::time::Duration::from_millis(25);
+    let started = std::time::Instant::now();
+    let mut in_a_hurry = false;
+    loop {
+        in_a_hurry = in_a_hurry || hurried();
+        let allowed = if in_a_hurry { budget.min(hurried_budget) } else { budget };
+        let Some(left) = allowed.checked_sub(started.elapsed()) else {
+            // An answer that landed just as time ran out still counts.
+            return match answer.try_recv() {
+                Ok(value) => Ok(value),
+                Err(TryRecvError::Disconnected) => Err(NoAnswer::Gone),
+                Err(TryRecvError::Empty) if in_a_hurry && hurried_budget < budget => Err(NoAnswer::Hurried),
+                Err(TryRecvError::Empty) => Err(NoAnswer::Slow),
+            };
+        };
+        match answer.recv_timeout(left.min(TICK)) {
+            Ok(value) => return Ok(value),
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => return Err(NoAnswer::Gone),
+        }
+    }
+}
+
 /// A dictation's words as the user would have typed them: fillers, stutters
 /// and false starts gone, punctuated, their own words spelled their way. The
 /// words as heard, with the dictionary's fixes, when the Mac isn't signed in or the
-/// server can't help in time.
+/// server can't help in time. `sending` says whether a Return is being held
+/// back for these words, which then get less time (`SENDING_POLISH_BUDGET`).
 /// `project` picks that project's tone and words over the account's.
-pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> Polished {
+pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>, sending: impl Fn() -> bool) -> Polished {
     let as_heard = || Polished {
         text: crate::vocabulary::apply_corrections(&strip_fillers(text), &crate::vocabulary::cached_corrections(app)),
         written: None,
@@ -80,7 +132,25 @@ pub fn polish_dictation(app: &AppHandle, text: &str, project: Option<&str>) -> P
         return as_heard();
     };
     let started = std::time::Instant::now();
-    let result = polish_with(&credential, text, project, polish_timeout(text));
+    let timeout = polish_timeout(text);
+    let (reply, answer) = std::sync::mpsc::channel();
+    {
+        let (text, project) = (text.to_string(), project.map(str::to_string));
+        // On its own thread so the wait can be cut short. A request given
+        // up on is left to end by its own timeout, and its reply dropped:
+        // one short request, not worth a way to cancel it.
+        std::thread::spawn(move || {
+            let _ = reply.send(polish_with(&credential, &text, project.as_deref(), timeout));
+        });
+    }
+    let result = wait_within(&answer, timeout, SENDING_POLISH_BUDGET, sending).unwrap_or_else(|why| {
+        Err(match why {
+            NoAnswer::Hurried => "not back in time for the held Return",
+            NoAnswer::Slow => "the server took too long",
+            NoAnswer::Gone => "the request ended without an answer",
+        }
+        .to_string())
+    });
     let polish_ms = started.elapsed().as_millis() as u64;
     match result {
         Ok(polished) => {
@@ -528,6 +598,79 @@ mod tests {
         // One mark where the filler ended a sentence.
         assert_eq!(strip_fillers("Ship it. You know. Next"), "Ship it. Next");
         assert_eq!(strip_fillers("It works. Like."), "It works.");
+    }
+
+    /// An answer sent after `after`, and the sender kept so the wait isn't told nobody will answer.
+    fn answer_after(after: std::time::Duration) -> std::sync::mpsc::Receiver<&'static str> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            std::thread::sleep(after);
+            let _ = tx.send("tidied");
+            std::thread::sleep(std::time::Duration::from_secs(10));
+        });
+        rx
+    }
+
+    #[test]
+    fn a_held_return_cuts_the_wait_for_the_polish_short() {
+        use super::{wait_within, NoAnswer};
+        use std::time::{Duration, Instant};
+        let ms = Duration::from_millis;
+        // Back inside the short budget: taken.
+        assert_eq!(wait_within(&answer_after(ms(100)), ms(5_000), ms(1_500), || true), Ok("tidied"));
+        // Back only after it: given up on at the short budget, not the long one.
+        let started = Instant::now();
+        assert_eq!(wait_within(&answer_after(ms(3_000)), ms(5_000), ms(300), || true), Err(NoAnswer::Hurried));
+        assert!(started.elapsed() >= ms(300) && started.elapsed() < ms(2_000), "{:?}", started.elapsed());
+        // Nobody sending: the same answer is waited for.
+        assert_eq!(wait_within(&answer_after(ms(600)), ms(5_000), ms(300), || false), Ok("tidied"));
+        // And the whole budget is what runs out.
+        let started = Instant::now();
+        assert_eq!(wait_within(&answer_after(ms(3_000)), ms(300), ms(100), || false), Err(NoAnswer::Slow));
+        assert!(started.elapsed() >= ms(300));
+    }
+
+    #[test]
+    fn a_return_pressed_during_the_wait_counts_from_when_the_wait_began() {
+        use super::{wait_within, NoAnswer};
+        use std::time::{Duration, Instant};
+        let ms = Duration::from_millis;
+        // Pressed 600ms in, with 1s allowed in all: the wait ends about 1s
+        // after it began, not at once and not 1s after the press (1.6s).
+        let started = Instant::now();
+        let pressed = || started.elapsed() >= ms(600);
+        assert_eq!(wait_within(&answer_after(ms(8_000)), ms(6_000), ms(1_000), pressed), Err(NoAnswer::Hurried));
+        assert!(started.elapsed() >= ms(1_000) && started.elapsed() < ms(1_500), "{:?}", started.elapsed());
+        // Pressed after the short budget has already gone by: it ends at once.
+        let started = Instant::now();
+        let pressed = || started.elapsed() >= ms(400);
+        assert_eq!(wait_within(&answer_after(ms(8_000)), ms(6_000), ms(100), pressed), Err(NoAnswer::Hurried));
+        assert!(started.elapsed() >= ms(400) && started.elapsed() < ms(3_000), "{:?}", started.elapsed());
+        // A Return let go of again leaves the wait hurried: held only the
+        // second time it is asked about.
+        let asked = std::cell::Cell::new(0);
+        let briefly = || {
+            asked.set(asked.get() + 1);
+            asked.get() == 2
+        };
+        let started = Instant::now();
+        assert_eq!(wait_within(&answer_after(ms(8_000)), ms(6_000), ms(500), briefly), Err(NoAnswer::Hurried));
+        assert!(started.elapsed() < ms(3_000), "{:?}", started.elapsed());
+    }
+
+    #[test]
+    fn a_wait_ends_with_what_is_there_when_time_runs_out() {
+        use super::{wait_within, NoAnswer};
+        let ms = std::time::Duration::from_millis;
+        // Already answered, no time left at all: still taken.
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send("tidied").unwrap();
+        assert_eq!(wait_within(&rx, ms(0), ms(0), || true), Ok("tidied"));
+        // An answer that will never come ends the wait at once.
+        drop(tx);
+        let started = std::time::Instant::now();
+        assert_eq!(wait_within(&rx, ms(5_000), ms(5_000), || false), Err(NoAnswer::Gone));
+        assert!(started.elapsed() < ms(1_000));
     }
 
     #[test]

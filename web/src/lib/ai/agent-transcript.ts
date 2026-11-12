@@ -110,7 +110,7 @@ function contextBlock(context: string | null) {
   return context ? `\n\nContext about the recording, for spelling names and terms only:\n${context}` : '';
 }
 
-async function cleanChunk(client: Anthropic, chunk: Turn[], system: string): Promise<string> {
+async function cleanChunk(client: Anthropic, chunk: Turn[], system: string, signal?: AbortSignal): Promise<string> {
   // A tag the speakers can't guess, so nothing said in the recording can close it early.
   const tag = `transcript-${crypto.randomUUID().slice(0, 8)}`;
   const response = await client.messages.create({
@@ -118,7 +118,7 @@ async function cleanChunk(client: Anthropic, chunk: Turn[], system: string): Pro
     max_tokens: 8_192,
     system,
     messages: [{ role: 'user', content: `<${tag}>\n${renderTurns(chunk)}\n</${tag}>` }],
-  });
+  }, { signal });
   if (response.stop_reason !== 'end_turn') throw new Error(`cleanup stopped: ${response.stop_reason}`);
   const text = response.content.map((block) => (block.type === 'text' ? block.text : '')).join('').trim();
   const open = `<${tag}>`;
@@ -185,6 +185,69 @@ export async function buildAgentTranscript(
 const MIN_POLISH_WORDS = 4;
 
 /**
+ * When a dictation's cleanup has taken unusually long for its length: about
+ * a second to start, then the time to write the words out, and a third on
+ * top. Most answers are back well before this; one in five or so is not, and
+ * then takes 3s to 6s while the Mac app holds the paste for it.
+ */
+export function hedgeAfterMs(chars: number): number {
+  return 1_200 + chars * 2;
+}
+
+/**
+ * `run`, asked a second time alongside when the first answer is slow: the
+ * first answer `accept` passes wins, and the other request is dropped. A
+ * request that fails, or whose answer isn't accepted, before the second was
+ * due ends it there (the client has already retried what is worth retrying,
+ * and the caller's fallback is instant); once both are out, each is waited
+ * for until one is accepted. A slow model call is usually slow by chance,
+ * not by its input, so the second one mostly comes back at the usual speed.
+ */
+export function hedged<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  afterMs: number,
+  accept: (value: T) => boolean = () => true,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const aborts: AbortController[] = [];
+    let pending = 0;
+    let settled = false;
+    const settle = (finish: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      for (const abort of aborts) abort.abort();
+      finish();
+    };
+    const lost = (error: unknown) => {
+      pending -= 1;
+      // The other request, if it is out, may still answer.
+      if (pending === 0) settle(() => reject(error instanceof Error ? error : new Error(String(error))));
+    };
+    const start = () => {
+      const abort = new AbortController();
+      aborts.push(abort);
+      pending += 1;
+      // A request that has ended is no longer there to abort.
+      const ended = () => aborts.splice(aborts.indexOf(abort), 1);
+      run(abort.signal).then(
+        (value) => {
+          ended();
+          if (accept(value)) settle(() => resolve(value));
+          else lost(new Error('answer not accepted'));
+        },
+        (error: unknown) => {
+          ended();
+          lost(error);
+        },
+      );
+    };
+    const timer = setTimeout(start, afterMs);
+    start();
+  });
+}
+
+/**
  * A dictation tidied the way it would have been typed: fillers, stutters and
  * false starts gone, punctuated, names spelled from `context`, rewritten in
  * `style` and, with `forAgents`, structured as a prompt for an AI agent.
@@ -208,14 +271,16 @@ export async function polishDictation(
   const turns: Turn[] = [{ speaker: null, text: said }];
   try {
     const system = restyle ? styledDictationPrompt(style, !!args.forAgents, args.context) : dictationPrompt(args.context);
-    const candidate = await cleanChunk(client, turns, system);
     const validationInput = known ? [...turns, { speaker: null, text: known }] : turns;
-    const shapeKept = restyle ? restyledIsValid(validationInput, candidate) : cleanedChunkIsValid(validationInput, candidate, 'solo');
     const terms = [...(args.terms ?? []), ...(args.confirmedSpellings ?? [])];
-    if (shapeKept && preservesSpellings(said, candidate, args.confirmedSpellings ?? [])
-      && inventedTerms(said, candidate, terms, args.corrections).length === 0) {
-      return { text: restyle ? withoutSwearing(candidate) : candidate, polished: true };
-    }
+    const usable = (candidate: string) =>
+      (restyle ? restyledIsValid(validationInput, candidate) : cleanedChunkIsValid(validationInput, candidate, 'solo'))
+      && preservesSpellings(said, candidate, args.confirmedSpellings ?? [])
+      && inventedTerms(said, candidate, terms, args.corrections).length === 0;
+    // The Mac app is holding a paste for this: a slow answer gets a second
+    // try alongside, and the first usable one is the dictation.
+    const candidate = await hedged((signal) => cleanChunk(client, turns, system, signal), hedgeAfterMs(said.length), usable);
+    return { text: restyle ? withoutSwearing(candidate) : candidate, polished: true };
   } catch {
     // The model-free cleanup below still beats the raw words.
   }
