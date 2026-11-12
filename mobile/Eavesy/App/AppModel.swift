@@ -81,6 +81,8 @@ final class AppModel {
 
     // Recording
     private var recorder: Recorder?
+    private let pendingRevoke = Credentials(account: "pending-revoke")
+    private var revoking = false
     private var startingRecording = false
     private(set) var recordingSince: Date?
     private(set) var level = 0.0
@@ -219,6 +221,7 @@ final class AppModel {
             recorder.onLevel = { [weak self] in self?.level = $0 }
             recorder.onSegment = { [weak self] in self?.sync() }
             recorder.onInterrupted = { [weak self] in self?.stopRecording() }
+            recorder.onWriteFailed = { [weak self] in self?.stopRecording(writeFailed: true) }
             do {
                 try recorder.start()
             } catch {
@@ -233,13 +236,18 @@ final class AppModel {
         }
     }
 
-    func stopRecording() {
+    func stopRecording(writeFailed: Bool = false) {
         guard let recorder else { return }
         self.recorder = nil
         recordingSince = nil
         level = 0
-        recorder.stop()
-        UINotificationFeedbackGenerator().notificationOccurred(.success)
+        let kept = recorder.stop()
+        if writeFailed {
+            notice = kept
+                ? "Recording stopped: this iPhone couldn't save more audio. What it had so far is kept."
+                : "Couldn't save that recording: this iPhone is out of space."
+        }
+        UINotificationFeedbackGenerator().notificationOccurred(writeFailed ? .error : .success)
         sync()
     }
 
@@ -306,6 +314,7 @@ final class AppModel {
     /// check. A run already under way is never cut short: the engine folds this
     /// call into it.
     func sync() {
+        revokePending()
         guard signedIn else { return }
         wake?.cancel()
         Task { [engine] in
@@ -424,12 +433,32 @@ final class AppModel {
     }
 
     func signOut() {
-        // Revoke with the token in hand: forgetting the account clears the shared one.
-        if let token = tokenBox.value {
-            let revoke = EavesyAPI(base: base) { token }
-            Task { try? await revoke.signOut() }
-        }
+        // The token is set aside before the account is forgotten, so the revoke
+        // survives being offline or the app closing: it is retried until it lands.
+        if let token = tokenBox.value { pendingRevoke.save(token: token, for: base) }
         forgetAccount()
+        revokePending()
+    }
+
+    /// Revokes a signed-out token on the server. Kept until the server takes it
+    /// (or no longer knows it); a failure that might pass is tried again on the
+    /// next launch, return to the app, or change of network.
+    private func revokePending() {
+        guard !revoking, let token = pendingRevoke.token(for: base) else { return }
+        revoking = true
+        let revoke = EavesyAPI(base: base) { token }
+        Task {
+            defer { revoking = false }
+            do {
+                try await revoke.signOut()
+            } catch let error as APIError where error.isPermanent || error == .unauthorized {
+                // Already gone, or never going to be accepted: nothing left to retry.
+            } catch {
+                return
+            }
+            // Only if it is still the one we sent: a newer sign-out may have replaced it.
+            if pendingRevoke.token(for: base) == token { pendingRevoke.clear() }
+        }
     }
 
     /// For screens that call the API themselves: a rejected token signs the app out.

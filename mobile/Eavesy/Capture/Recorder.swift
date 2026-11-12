@@ -29,6 +29,8 @@ final class Recorder: @unchecked Sendable {
     var onSegment: (@MainActor () -> Void)?
     /// The system took the microphone away (a phone call, say).
     var onInterrupted: (@MainActor () -> Void)?
+    /// Audio could not be written to disk (no space, say). Sent once.
+    var onWriteFailed: (@MainActor () -> Void)?
 
     private let store: OutboxStore
     private let engine = AVAudioEngine()
@@ -41,6 +43,7 @@ final class Recorder: @unchecked Sendable {
     private var framesInSegment: Int64 = 0
     private var lastLevelAt = Date.distantPast
     private var stopped = false
+    private var writeFailed = false
     private var interruption: NSObjectProtocol?
 
     init(store: OutboxStore) throws {
@@ -92,21 +95,30 @@ final class Recorder: @unchecked Sendable {
     }
 
     /// Seals the last segment and hands the recording to the sync engine.
-    func stop() {
+    /// Returns false when no audio reached disk: the item is removed rather
+    /// than kept as a recording with a length and nothing in it.
+    @discardableResult
+    func stop() -> Bool {
         if let interruption { NotificationCenter.default.removeObserver(interruption) }
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
-        queue.sync {
-            guard !stopped else { return }
+        let kept = queue.sync { () -> Bool in
+            guard !stopped else { return store.item(id) != nil }
             stopped = true
             seal()
+            guard let item = store.item(id), !item.segments.isEmpty else {
+                store.remove(id)
+                return false
+            }
             let totalMs = Int(Double(framesBefore) / sampleRate * 1_000)
             _ = try? store.update(id) {
                 $0.state = .pending
                 $0.durationMs = totalMs
             }
+            return true
         }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        return kept
     }
 
     // MARK: On the recorder queue
@@ -142,6 +154,11 @@ final class Recorder: @unchecked Sendable {
             framesBefore += framesInSegment + Int64(frames)
             framesInSegment = 0
             index += 1
+            // Tell the app once, so it can stop and say so rather than record on into nothing.
+            if !writeFailed {
+                writeFailed = true
+                Task { @MainActor [onWriteFailed] in onWriteFailed?() }
+            }
         }
     }
 

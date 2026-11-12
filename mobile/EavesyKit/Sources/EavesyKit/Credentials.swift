@@ -5,10 +5,12 @@ import Security
 /// a token is never sent to a different server than the one that issued it.
 public struct Credentials: Sendable {
     private let service: String
-    private let account = "device-token"
+    private let account: String
 
-    public init(service: String = "com.eavesy.mobile.device-token") {
+    /// `account` names the slot: the token in use, or one waiting to be revoked.
+    public init(service: String = "com.eavesy.mobile.device-token", account: String = "device-token") {
         self.service = service
+        self.account = account
     }
 
     public func token(for base: URL) -> String? {
