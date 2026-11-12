@@ -6,7 +6,7 @@ export const Route = createFileRoute('/(marketing)/terms/')({
     seoHead({
       title: 'Terms',
       description:
-        'Eavesy terms of service: you own your recordings, transcripts, summaries, and notes. We don’t sell your data, train on it, or share transcript content with analytics vendors.',
+        'Eavesy terms of service: you own your recordings, transcripts, summaries, and notes. We don’t sell your data or share transcript content with analytics vendors.',
       path: '/terms',
     }),
   component: TermsPage,
@@ -31,9 +31,10 @@ function TermsPage() {
           unlawful. Comply with your local recording laws.
         </p>
         <p className="mt-4">
-          We don't sell your data, train on it, or share transcript content with analytics
-          vendors. See the <a href="/privacy" className="underline">privacy policy</a> for the
-          full subprocessor list.
+          We don't sell your data or share transcript content with analytics vendors. We
+          don't currently train models on your recordings or transcripts. See the{' '}
+          <a href="/privacy" className="underline">privacy policy</a> for the full
+          subprocessor list.
         </p>
       </section>
     </main>

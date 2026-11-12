@@ -589,7 +589,7 @@ the pill can't jitter or flip while words arrive.
 
 | Size | Px | Used for |
 |---|---|---|
-| pill | 244 × 36 | idle, saved, video recording, a plain "Saved" |
+| pill | 272 × 36 | idle, saved, video recording, a plain "Saved" |
 | bar | 340 × 40 | recording and writing with live words off (the default): the light, the time, the voice bars, the write chip, Cancel and Stop. The light and Stop are never cut off: the chip shortens its own name first |
 | options | bar or wide width × 256 | a dictation being recorded with its options open: the six ways it is written, then **Type as I talk** |
 | wide | 400 × 62 + 20 per line | recording and writing with 1, 2 or 4 lines of live words, failed, a save that wasn't typed (**Not typed** and why) |
@@ -598,7 +598,7 @@ the pill can't jitter or flip while words arrive.
 | shot | 360 × 172 | a screenshot, with its thumbnail |
 
 **The idle pill** reads, left to right: **Open Eavesy** (a house, then a
-hairline), **Talk** with its shortcut, Screenshot, Video, bare room, and
+hairline), **Talk** with its shortcut, Meeting, Screenshot, Video, bare room, and
 **×**. Open Eavesy is the sure way into the panel; a click on the bare room
 opens it too, and a drag there moves the control. It leads the pill so a
 near miss never lands on ×. The other states at this size (Saved, a video

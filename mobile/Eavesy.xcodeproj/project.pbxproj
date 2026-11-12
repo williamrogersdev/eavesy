@@ -1,0 +1,401 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		EA0000000000000000000012 /* EavesyKit in Frameworks */ = {isa = PBXBuildFile; productRef = EA0000000000000000000017 /* EavesyKit */; };
+		EA0000000000000000000013 /* EavesyShare.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = EA0000000000000000000005 /* EavesyShare.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		EA0000000000000000000014 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = EA0000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = EA000000000000000000000A;
+			remoteInfo = EavesyShare;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		EA000000000000000000000E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				EA0000000000000000000013 /* EavesyShare.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		EA0000000000000000000004 /* Eavesy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Eavesy.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		EA0000000000000000000005 /* EavesyShare.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = EavesyShare.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		EA0000000000000000000021 /* Eavesy-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "Eavesy-Info.plist"; sourceTree = "<group>"; };
+		EA0000000000000000000022 /* EavesyShare-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "EavesyShare-Info.plist"; sourceTree = "<group>"; };
+		EA0000000000000000000023 /* Eavesy.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Eavesy.entitlements; sourceTree = "<group>"; };
+		EA0000000000000000000024 /* EavesyShare.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = EavesyShare.entitlements; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		EA0000000000000000000006 /* Eavesy */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Eavesy;
+			sourceTree = "<group>";
+		};
+		EA0000000000000000000007 /* EavesyShare */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = EavesyShare;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		EA000000000000000000000C /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EA0000000000000000000012 /* EavesyKit in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EA0000000000000000000010 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		EA0000000000000000000002 = {
+			isa = PBXGroup;
+			children = (
+				EA0000000000000000000006 /* Eavesy */,
+				EA0000000000000000000007 /* EavesyShare */,
+				EA0000000000000000000008 /* Config */,
+				EA0000000000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		EA0000000000000000000008 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				EA0000000000000000000021 /* Eavesy-Info.plist */,
+				EA0000000000000000000023 /* Eavesy.entitlements */,
+				EA0000000000000000000022 /* EavesyShare-Info.plist */,
+				EA0000000000000000000024 /* EavesyShare.entitlements */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
+		EA0000000000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				EA0000000000000000000004 /* Eavesy.app */,
+				EA0000000000000000000005 /* EavesyShare.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		EA0000000000000000000009 /* Eavesy */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EA000000000000000000001B /* Build configuration list for PBXNativeTarget "Eavesy" */;
+			buildPhases = (
+				EA000000000000000000000B /* Sources */,
+				EA000000000000000000000C /* Frameworks */,
+				EA000000000000000000000D /* Resources */,
+				EA000000000000000000000E /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				EA0000000000000000000015 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				EA0000000000000000000006 /* Eavesy */,
+			);
+			name = Eavesy;
+			packageProductDependencies = (
+				EA0000000000000000000017 /* EavesyKit */,
+			);
+			productName = Eavesy;
+			productReference = EA0000000000000000000004 /* Eavesy.app */;
+			productType = "com.apple.product-type.application";
+		};
+		EA000000000000000000000A /* EavesyShare */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = EA000000000000000000001E /* Build configuration list for PBXNativeTarget "EavesyShare" */;
+			buildPhases = (
+				EA000000000000000000000F /* Sources */,
+				EA0000000000000000000010 /* Frameworks */,
+				EA0000000000000000000011 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				EA0000000000000000000007 /* EavesyShare */,
+			);
+			name = EavesyShare;
+			productName = EavesyShare;
+			productReference = EA0000000000000000000005 /* EavesyShare.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		EA0000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2600;
+				LastUpgradeCheck = 2600;
+			};
+			buildConfigurationList = EA0000000000000000000018 /* Build configuration list for PBXProject "Eavesy" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = EA0000000000000000000002;
+			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				EA0000000000000000000016 /* XCLocalSwiftPackageReference "EavesyKit" */,
+			);
+			preferredProjectObjectVersion = 77;
+			productRefGroup = EA0000000000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				EA0000000000000000000009 /* Eavesy */,
+				EA000000000000000000000A /* EavesyShare */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		EA000000000000000000000D /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EA0000000000000000000011 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		EA000000000000000000000B /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EA000000000000000000000F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		EA0000000000000000000015 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = EA000000000000000000000A /* EavesyShare */;
+			targetProxy = EA0000000000000000000014 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		EA0000000000000000000019 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				MARKETING_VERSION = 0.1.0;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		EA000000000000000000001A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				MARKETING_VERSION = 0.1.0;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		EA000000000000000000001C /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/Eavesy.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/Eavesy-Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Eavesy;
+				PRODUCT_BUNDLE_IDENTIFIER = com.eavesy.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Lets you take a picture and keep it in Eavesy.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Lets Eavesy hear you while you record. It only listens while a recording is running.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+			};
+			name = Debug;
+		};
+		EA000000000000000000001D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/Eavesy.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/Eavesy-Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Eavesy;
+				PRODUCT_BUNDLE_IDENTIFIER = com.eavesy.mobile;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Lets you take a picture and keep it in Eavesy.";
+				INFOPLIST_KEY_NSMicrophoneUsageDescription = "Lets Eavesy hear you while you record. It only listens while a recording is running.";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+			};
+			name = Release;
+		};
+		EA000000000000000000001F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/EavesyShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/EavesyShare-Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Eavesy;
+				PRODUCT_BUNDLE_IDENTIFIER = com.eavesy.mobile.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				SKIP_INSTALL = YES;
+			};
+			name = Debug;
+		};
+		EA0000000000000000000020 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Config/EavesyShare.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Config/EavesyShare-Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = Eavesy;
+				PRODUCT_BUNDLE_IDENTIFIER = com.eavesy.mobile.share;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @executable_path/../../Frameworks";
+				SKIP_INSTALL = YES;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		EA0000000000000000000018 /* Build configuration list for PBXProject "Eavesy" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EA0000000000000000000019 /* Debug */,
+				EA000000000000000000001A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EA000000000000000000001B /* Build configuration list for PBXNativeTarget "Eavesy" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EA000000000000000000001C /* Debug */,
+				EA000000000000000000001D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		EA000000000000000000001E /* Build configuration list for PBXNativeTarget "EavesyShare" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EA000000000000000000001F /* Debug */,
+				EA0000000000000000000020 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		EA0000000000000000000016 /* XCLocalSwiftPackageReference "EavesyKit" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = EavesyKit;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		EA0000000000000000000017 /* EavesyKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = EavesyKit;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = EA0000000000000000000001 /* Project object */;
+}

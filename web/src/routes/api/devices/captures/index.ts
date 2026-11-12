@@ -55,7 +55,8 @@ export const Route = createFileRoute('/api/devices/captures/')({
         if (offset > MAX_OFFSET) return Response.json({ items: [] });
         const items = await capturesRepo.listForDevice(getDb(), {
           userId: actor.userId,
-          exceptDeviceId: actor.deviceId,
+          // A phone keeps no copies of its own, so it asks for its own captures too.
+          exceptDeviceId: search.get('all') === '1' ? undefined : actor.deviceId,
           limit,
           offset,
         });

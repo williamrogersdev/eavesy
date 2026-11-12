@@ -495,7 +495,7 @@ fn show_prompt(app: &AppHandle, prompt: &Prompt, deadline: Option<i64>) -> bool 
         HudState {
             phase: Phase::Prompt,
             session_id: Some(prompt_session(&prompt.key)),
-            mode: Some("meeting".into()),
+            mode: Some(hud::MEETING_MODE.into()),
             started_at_ms: deadline,
             message: Some(prompt.title.clone()),
             notice: None,
@@ -524,8 +524,64 @@ fn record(app: &AppHandle, prompt: &Prompt) {
                 watch.auto = Some(AutoRecording { session_id: session.session_id, bundle, precise: watch.precise, event_ends_at });
                 watch.gone_since = None;
             }),
-            // The capture start already shows why (a permission, say); the prompt won't repeat.
-            Err(error) => tracing::warn!("meeting watch: could not start recording: {error}"),
+            // The countdown said it would record: never fail without a word.
+            Err(error) => {
+                tracing::warn!("meeting watch: could not start recording: {error}");
+                if hud::current().phase != Phase::Recording {
+                    not_recording(&handle);
+                }
+            }
+        }
+    });
+}
+
+/// Tells the user a meeting they expect to be recorded is not.
+fn not_recording(app: &AppHandle) {
+    crate::commands::show_notice(
+        app.clone(),
+        "Eavesy isn’t recording this call".into(),
+        "It couldn’t start. Check Microphone and Screen Recording access in Eavesy’s setup, then choose Record a Meeting.".into(),
+    );
+}
+
+/// Records a meeting (both sides of the call) now, from the menu bar.
+pub fn record_now(app: &AppHandle) {
+    if !settings::load(app).setup_completed {
+        crate::commands::show_setup(app.clone());
+        return;
+    }
+    // Recording or starting to: show the control that says so, with its Stop.
+    if hud::current().phase == Phase::Recording {
+        hud::set_hidden_on_main(app, false);
+        return;
+    }
+    // A prompt for this call is waiting: this is its answer, so the recording
+    // stops with the call like any the prompt starts.
+    let asked = with_watch(|watch| {
+        let (prompt, _) = watch.prompt.take()?;
+        watch.dismissed.insert(prompt.key.clone());
+        Some(prompt)
+    });
+    if let Some(prompt) = asked {
+        record(app, &prompt);
+        return;
+    }
+    // One start at a time: the control only says Recording once the capture
+    // is up, so a second click before then is dropped, not raced.
+    static STARTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if STARTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
+    let handle = app.clone();
+    std::thread::spawn(move || {
+        let started = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now());
+        STARTING.store(false, std::sync::atomic::Ordering::SeqCst);
+        if let Err(error) = started {
+            tracing::warn!("tray: could not start a meeting recording: {error}");
+            // A second click loses to the first one's start: that is not a failure.
+            if hud::current().phase != Phase::Recording {
+                not_recording(&handle);
+            }
         }
     });
 }

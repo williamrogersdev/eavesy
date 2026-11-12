@@ -39,6 +39,8 @@ export const Route = createFileRoute('/api/devices/pair')({
           await getDb()
             .select({
               createdAt: devicePairingCodes.createdAt,
+              name: devicePairingCodes.name,
+              platform: devicePairingCodes.platform,
               expiresAt: devicePairingCodes.expiresAt,
               rawToken: devicePairingCodes.rawToken,
               claimedByUserId: devicePairingCodes.claimedByUserId,
@@ -54,6 +56,8 @@ export const Route = createFileRoute('/api/devices/pair')({
         const here = clientIp(request);
         return Response.json({
           requestedAt: pairing.createdAt,
+          name: pairing.name,
+          platform: pairing.platform ?? 'macos',
           sameNetwork: origin && here !== 'unknown' ? sameNetwork(origin, here) : null,
         });
       },
@@ -99,6 +103,7 @@ export const Route = createFileRoute('/api/devices/pair')({
               deviceId: pairing.deviceId,
               name: pairing.name,
               rootFolderPath: pairing.rootFolderPath,
+              platform: pairing.platform ?? 'macos',
               allowTransfer: true,
             });
             await db
@@ -108,7 +113,7 @@ export const Route = createFileRoute('/api/devices/pair')({
             await activityRepo.log(db, {
               userId: actor.userId,
               eventType: 'device.pair',
-              metadata: { platform: 'macos' },
+              metadata: { platform: pairing.platform ?? 'macos' },
             });
             return Response.json({ ok: true, deviceId: pairing.deviceId });
           } catch (error) {

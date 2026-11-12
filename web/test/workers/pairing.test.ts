@@ -7,6 +7,7 @@ import * as dictionary from '../../src/db/repo/dictionary';
 import * as dbSchema from '../../src/db/schema';
 import { registerDevice, STALE_DEVICE_MS } from '../../src/server/pair-device';
 import { Route as DevicesMeRoute } from '../../src/routes/api/devices/me';
+import { Route as PairStartRoute } from '../../src/routes/api/devices/pair/start';
 
 interface TestEnv {
   DB: D1Database;
@@ -20,6 +21,19 @@ const devicesMeDelete = (
   DevicesMeRoute.options as unknown as { server: { handlers: { DELETE: RouteHandler } } }
 ).server.handlers.DELETE;
 
+const pairStart = (
+  PairStartRoute.options as unknown as { server: { handlers: { POST: RouteHandler } } }
+).server.handlers.POST;
+const startPairing = (body: Record<string, string>) =>
+  pairStart({
+    request: new Request('https://eavesy.test/api/devices/pair/start', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+    params: {},
+  });
+
 const DEVICE = '6f1c2a4e-1b2c-4d3e-8f90-123456789abc';
 
 beforeAll(async () => {
@@ -29,6 +43,7 @@ beforeAll(async () => {
 beforeEach(async () => {
   await testEnv.DB.batch([
     testEnv.DB.prepare('DELETE FROM personal_dictionary'),
+    testEnv.DB.prepare('DELETE FROM device_pairing_codes'),
     testEnv.DB.prepare('DELETE FROM device_tokens'),
     testEnv.DB.prepare('DELETE FROM devices'),
     testEnv.DB.prepare('DELETE FROM users'),
@@ -122,4 +137,35 @@ it('atomically admits one of two competing dictionary inserts at capacity in D1'
   ]);
   expect(counts.reduce((a, b) => a+b, 0)).toBe(1);
   expect(await dictionary.list(db(), 'owner')).toHaveLength(500);
+});
+
+describe('pairing a phone', () => {
+  it('records the platform it paired as', async () => {
+    await registerDevice(db(), { userId: 'owner', deviceId: DEVICE, name: 'Eavesy for iPhone', rootFolderPath: 'On this iPhone', platform: 'ios' });
+    const row = await testEnv.DB.prepare('SELECT platform FROM devices WHERE id = ?').bind(DEVICE).first<{ platform: string }>();
+    expect(row?.platform).toBe('ios');
+  });
+
+  it('keeps calling a device a Mac when it does not say', async () => {
+    await pair('owner');
+    const row = await testEnv.DB.prepare('SELECT platform FROM devices WHERE id = ?').bind(DEVICE).first<{ platform: string }>();
+    expect(row?.platform).toBe('macos');
+  });
+
+  it('starts a code for a phone, which has no recordings folder to name', async () => {
+    const response = await startPairing({ deviceId: DEVICE, name: 'Eavesy for iPhone', platform: 'ios' });
+    expect(response.status).toBe(200);
+    const row = await testEnv.DB.prepare('SELECT platform, root_folder_path AS root FROM device_pairing_codes WHERE device_id = ?')
+      .bind(DEVICE)
+      .first<{ platform: string; root: string }>();
+    expect(row).toEqual({ platform: 'ios', root: 'On this iPhone' });
+  });
+
+  it('still requires a Mac to name its recordings folder', async () => {
+    expect((await startPairing({ deviceId: DEVICE, name: 'Eavesy for Mac' })).status).toBe(400);
+    const response = await startPairing({ deviceId: DEVICE, name: 'Eavesy for Mac', rootFolderPath: '~/Eavesy/Recordings' });
+    expect(response.status).toBe(200);
+    const row = await testEnv.DB.prepare('SELECT platform FROM device_pairing_codes WHERE device_id = ?').bind(DEVICE).first<{ platform: string }>();
+    expect(row?.platform).toBe('macos');
+  });
 });
