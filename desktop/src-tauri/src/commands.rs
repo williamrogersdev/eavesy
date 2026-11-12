@@ -371,10 +371,21 @@ pub fn set_launcher_position(app: AppHandle, position: settings::LauncherPositio
         .map_err(|error| format!("could not reposition Eavesy: {error}"))
 }
 
-/// Turns "Type as I talk" on or off; it applies from the next dictation.
+/// Turns "Type as I talk" on or off. With `session_id` (the recording
+/// control's switch, flipped during that dictation) it applies at once:
+/// turned on, the words heard from here on are typed; turned off, the ones
+/// typed so far are taken back and the finished words are pasted at the end.
 #[tauri::command(async)]
-pub fn set_type_as_you_talk(app: AppHandle, enabled: bool) -> Result<(), String> {
-    settings::update(&app, |config| config.type_as_you_talk = Some(enabled)).map(drop)
+pub fn set_type_as_you_talk(app: AppHandle, enabled: bool, session_id: Option<String>) -> Result<(), String> {
+    settings::update(&app, |config| config.type_as_you_talk = Some(enabled))?;
+    if let Some(id) = session_id.filter(|id| crate::dictate::is_dictating(&app, id)) {
+        if enabled {
+            crate::live_typing::start(&app, &id);
+        } else {
+            crate::live_typing::cancel(&id);
+        }
+    }
+    Ok(())
 }
 
 /// Turns Snapshots of shared screens on or off, from the next meeting.

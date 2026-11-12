@@ -467,7 +467,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
   const previewLines: HudPreviewLines = savedLines === 1 || savedLines === 2 || savedLines === 4 ? savedLines : 0;
   const translucent = settings?.hud_translucent ?? true;
   const fastWords = settings?.fast_live_words ?? true;
-  const resultPreview = settings?.hud_result_preview ?? true;
+  const resultPreview = settings?.hud_result_preview ?? false;
   const [lookError, setLookError] = useState<string | null>(null);
   const changeLook = (lines: HudPreviewLines, see: boolean, fast?: boolean, preview?: boolean) => {
     setLookError(null);

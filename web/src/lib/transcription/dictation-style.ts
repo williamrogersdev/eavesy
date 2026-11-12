@@ -1,5 +1,10 @@
-/** The tone a dictation is rewritten in before it is typed. `natural` keeps the speaker's own words. */
+/**
+ * How a dictation is written before it is typed. `verbatim` is every word as
+ * it was said, with no model in between; `natural` keeps the speaker's own
+ * words, tidied.
+ */
 export const DICTATION_STYLES = [
+  { id: 'verbatim', label: 'Exactly as said', hint: 'Every word as you said it. Nothing dropped, tidied or reworded.' },
   { id: 'natural', label: 'As spoken', hint: 'Tidied up, in your own words and tone.' },
   { id: 'professional', label: 'Professional', hint: 'Clear, polished and neutral. No swearing.' },
   { id: 'friendly', label: 'Friendly', hint: 'Warm, upbeat and supportive. No swearing.' },
@@ -14,12 +19,14 @@ export const FOR_AGENTS_HINT =
 export const DICTATION_EXAMPLE = {
   said: 'um so can you rename the summarize file to summary and uh fix the imports, the build keeps failing. oh and don’t touch the API',
   typed: {
+    verbatim: 'Um so can you rename the summarize file to summary and uh fix the imports, the build keeps failing. Oh and don’t touch the API.',
     natural: 'Can you rename the `summarize` file to `summary` and fix the imports? The build keeps failing. Don’t touch the API.',
     professional: 'Could you rename the `summarize` file to `summary` and update the imports? The build is currently failing. Please leave the API unchanged.',
     friendly: 'Could you rename the `summarize` file to `summary` and fix up the imports? The build keeps failing, so that would really help. Just leave the API as it is, thanks.',
     concise: 'Rename `summarize` to `summary` and fix the imports; the build is failing. Don’t touch the API.',
   },
   forAgents: {
+    verbatim: 'Um so can you rename the summarize file to summary and uh fix the imports, the build keeps failing. Oh and don’t touch the API.',
     natural: 'Rename the `summarize` file to `summary` and fix the imports.\n\nThe build keeps failing.\n\nDon’t touch the API.',
     professional: 'Rename the `summarize` file to `summary` and update the imports.\n\nContext: the build is currently failing.\n\nConstraint: leave the API unchanged.',
     friendly: 'Please rename the `summarize` file to `summary` and fix up the imports.\n\nThe build keeps failing, so this would really help.\n\nLeave the API as it is.',
@@ -32,7 +39,7 @@ export type DictationStyle = (typeof DICTATION_STYLES)[number]['id'];
 export const DEFAULT_DICTATION_STYLE: DictationStyle = 'natural';
 
 /** A rewrite tone the drawer and the history row offer: the words as saved, or any style but the plain one. */
-export type Tone = 'original' | Exclude<DictationStyle, 'natural'>;
+export type Tone = 'original' | Exclude<DictationStyle, 'natural' | 'verbatim'>;
 
 export interface ToneChoice { id: Tone; label: string; hint: string }
 
@@ -40,7 +47,7 @@ export interface ToneChoice { id: Tone; label: string; hint: string }
 export function toneChoices(originalHint: string): ToneChoice[] {
   return [
     { id: 'original', label: 'Original', hint: originalHint },
-    ...DICTATION_STYLES.filter((style): style is Extract<typeof style, { id: Tone }> => style.id !== 'natural'),
+    ...DICTATION_STYLES.filter((style): style is Extract<typeof style, { id: Tone }> => style.id !== 'natural' && style.id !== 'verbatim'),
   ];
 }
 
@@ -87,6 +94,31 @@ export function writtenWith(
 ): Writing & { projectId: string | null } {
   const own = !!project && (project.dictationStyle != null || project.dictationForAgents != null);
   return { ...requestedDictation(request, effectiveDictation(account, project)), projectId: own ? project.id : null };
+}
+
+/**
+ * The one choice a picker shows for a `Writing`: a tone, or "AI prompt".
+ * Exactly as said is never a prompt, whatever was saved beside it.
+ */
+export type WritingChoice = DictationStyle | 'ai';
+
+export const WRITING_CHOICES: readonly { id: WritingChoice; label: string; hint: string }[] = [
+  ...DICTATION_STYLES,
+  { id: 'ai', label: 'AI prompt', hint: 'Rewritten as a prompt for Claude, ChatGPT or a coding agent: what you want first, then context and constraints. Keeps the tone you last picked.' },
+];
+
+export function writingChoice(writing: Writing): WritingChoice {
+  return writing.forAgents && writing.style !== 'verbatim' ? 'ai' : writing.style;
+}
+
+/** The `Writing` a choice stands for: a tone alone, or a prompt in the tone `current` has. */
+export function writingFor(choice: WritingChoice, current: Writing): Writing {
+  if (choice !== 'ai') return { style: choice, forAgents: false };
+  return { style: current.style === 'verbatim' ? DEFAULT_DICTATION_STYLE : current.style, forAgents: true };
+}
+
+export function isWritingChoice(value: unknown): value is WritingChoice {
+  return WRITING_CHOICES.some((choice) => choice.id === value);
 }
 
 export function sameWriting(a: Writing, b: Writing): boolean {

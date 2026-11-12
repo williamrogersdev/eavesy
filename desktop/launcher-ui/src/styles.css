@@ -241,6 +241,13 @@ body {
    the window never has to hold it); For AI is a switch, lit cream when on;
    Translate, at the row's end, opens the language finder over the words. */
 .ctl-foot { flex: none; padding: 0 7px 7px; }
+/* On the recording bar: how the words are written, and whether they are typed live. */
+.ctl-live-opts { display: inline-flex; align-items: center; gap: 2px; margin-right: 2px; }
+.ctl-live-opts .ctl-field { padding-left: 0; }
+.ctl-live-opts .ctl-field > span:first-child { display: none; }
+.ctl-live-opts .ctl-select > select { max-width: 132px; }
+/* The voice bars keep their width beside them: they say the mic hears you. */
+.eavesy-control:is([data-size="bar"], [data-size="wide"]) .ctl-bars { flex: none; }
 .ctl-tones { display: flex; align-items: center; gap: 2px; }
 .ctl-field { display: inline-flex; align-items: center; gap: 6px; padding-left: 4px; color: var(--ctl-ink-2); font: 600 11.5px/24px var(--ev-font-round); }
 .ctl-select { position: relative; display: inline-flex; align-items: center; }

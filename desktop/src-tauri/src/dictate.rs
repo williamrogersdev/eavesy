@@ -101,6 +101,11 @@ fn active_session(app: &AppHandle) -> (Option<String>, bool) {
     (active, captures.is_starting())
 }
 
+/// Whether `session_id` is the capture being recorded right now.
+pub fn is_dictating(app: &AppHandle, session_id: &str) -> bool {
+    active_session(app).0.as_deref() == Some(session_id)
+}
+
 /// The dictation hotkey went down.
 pub fn key_down(app: &AppHandle) {
     if !take_press(app, &KEY_DOWN, &KEY_DOWN_AT) {
