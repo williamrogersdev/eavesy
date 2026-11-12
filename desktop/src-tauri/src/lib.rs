@@ -251,6 +251,7 @@ pub fn run() {
             commands::replace_dictation,
             commands::hud_painted,
             commands::close_hud,
+            commands::tuck_hud,
             commands::account_info,
             projects::list_projects,
             projects::account_call,

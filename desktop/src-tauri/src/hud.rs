@@ -46,6 +46,22 @@ impl HudState {
 /// `HudState::mode` while a meeting (both sides of a call) records.
 pub const MEETING_MODE: &str = "meeting";
 
+/// The session whose control the user hid while it records (a meeting, while
+/// sharing the screen). It stays hidden through saving, and comes back when
+/// they ask for it or something goes wrong.
+static TUCKED: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+fn tucked(state: &HudState) -> bool {
+    let tucked = TUCKED.lock().unwrap_or_else(|error| error.into_inner());
+    tucked.is_some() && *tucked == state.session_id
+}
+
+/// Whether the control stays put away in `state`: only the session that was
+/// hidden, and never a failure, which has to be seen.
+fn keeps_tuck(tucked: Option<&str>, state: &HudState) -> bool {
+    tucked.is_some() && tucked == state.session_id.as_deref() && !matches!(state.phase, Phase::Failed | Phase::Idle | Phase::Prompt)
+}
+
 static TRANSITION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// What the control shows. Written in exactly one place, [`set_state_if`],
 /// under [`TRANSITION`]: that is what lets a check-then-set there be atomic.
@@ -78,6 +94,12 @@ pub fn set_state_if(app: &AppHandle, state: HudState, allowed: impl FnOnce(&HudS
         return false;
     }
     let previous = CURRENT.lock().unwrap_or_else(|error| error.into_inner()).replace(state.clone());
+    {
+        let mut tucked = TUCKED.lock().unwrap_or_else(|error| error.into_inner());
+        if !keeps_tuck(tucked.as_deref(), &state) {
+            *tucked = None;
+        }
+    }
     {
         // An open drawer belongs to the dictation it was opened on. It may be
         // opened while the words are still being heard or written down (the
@@ -174,6 +196,8 @@ pub(crate) const STOPPING_TIMEOUT: std::time::Duration = std::time::Duration::fr
 const DEFAULT_SIZE: (f64, f64) = (272.0, 36.0);
 /// Recording and writing it down: controls above a scrollable transcript.
 const WIDE: (f64, f64) = (400.0, 142.0);
+/// A meeting recording: the controls above everything said so far, to scroll back through.
+const MEETING: (f64, f64) = (400.0, 320.0);
 /// Recording with the live words turned off: just the controls, with room
 /// for how the words are written and whether they are typed live.
 const BAR: (f64, f64) = (400.0, 40.0);
@@ -207,6 +231,7 @@ pub fn size_for(state: &HudState, lines: u8, peek: bool) -> (f64, f64) {
         Phase::Idle | Phase::Saved => DEFAULT_SIZE,
         Phase::Recording if video => VIDEO_LIVE,
         Phase::Transcribing if video => DEFAULT_SIZE,
+        Phase::Recording if state.mode.as_deref() == Some(MEETING_MODE) => MEETING,
         Phase::Recording | Phase::Transcribing if eavesy => live_size(lines.max(1)),
         Phase::Recording | Phase::Transcribing => live_size(lines),
         Phase::Failed | Phase::Prompt => WIDE,
@@ -476,7 +501,33 @@ pub fn reset_frame(app: &AppHandle) {
     update_prefs(app, |config| config.hud_frame = None);
 }
 
+/// Puts the control away while its capture keeps recording. The menu bar's
+/// red dot and tooltip still say it is. Returns whether there was one to hide.
+pub fn tuck_on_main(app: &AppHandle) -> bool {
+    let now = current();
+    if !matches!(now.phase, Phase::Recording | Phase::Transcribing) || now.session_id.is_none() {
+        return false;
+    }
+    *TUCKED.lock().unwrap_or_else(|error| error.into_inner()) = now.session_id;
+    release_editor_on_main(app);
+    imp::hide(app);
+    true
+}
+
+/// The "Show or hide Eavesy" shortcut: away if it is on screen, back if not.
+pub fn toggle_visible_on_main(app: &AppHandle) {
+    let visible = app.get_webview_window("hud").is_some_and(|window| window.is_visible().unwrap_or(false));
+    if !visible {
+        set_hidden_on_main(app, false);
+    } else if !tuck_on_main(app) {
+        set_hidden_on_main(app, true);
+    }
+}
+
 pub fn set_hidden_on_main(app: &AppHandle, hidden: bool) {
+    if !hidden {
+        *TUCKED.lock().unwrap_or_else(|error| error.into_inner()) = None;
+    }
     update_prefs(app, |config| config.hud_hidden = hidden);
     if hidden && !is_active(&current().phase) {
         imp::hide(app);
@@ -504,6 +555,7 @@ pub fn collapse_from_panel_on_main(app: &AppHandle) {
     if prefs(app).hidden {
         update_prefs(app, |config| config.hud_hidden = false);
     }
+    *TUCKED.lock().unwrap_or_else(|error| error.into_inner()) = None;
     follow_panel(app);
     show_unchecked(app, &current());
 }
@@ -513,7 +565,7 @@ fn show_unchecked(app: &AppHandle, state: &HudState) {
         return;
     };
     let prefs = prefs(app);
-    if prefs.hidden && !is_active(&state.phase) {
+    if (prefs.hidden && !is_active(&state.phase)) || tucked(state) {
         imp::hide(app);
         return;
     }
@@ -806,7 +858,31 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{anchored, is_active, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
+    use super::{anchored, is_active, keeps_tuck, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, MEETING, MEETING_MODE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
+
+    #[test]
+    fn a_hidden_recording_stays_hidden_until_it_fails_or_ends() {
+        let live = HudState { session_id: Some("m1".into()), ..state(Phase::Recording, Some(MEETING_MODE), None) };
+        assert!(keeps_tuck(Some("m1"), &live));
+        assert!(keeps_tuck(Some("m1"), &HudState { phase: Phase::Transcribing, ..live.clone() }));
+        assert!(keeps_tuck(Some("m1"), &HudState { phase: Phase::Saved, ..live.clone() }));
+        // A failure has to be seen, and the next capture is not the hidden one.
+        assert!(!keeps_tuck(Some("m1"), &HudState { phase: Phase::Failed, ..live.clone() }));
+        assert!(!keeps_tuck(Some("m1"), &HudState::idle()));
+        assert!(!keeps_tuck(Some("m1"), &HudState { session_id: Some("m2".into()), ..live.clone() }));
+        assert!(!keeps_tuck(None, &live));
+    }
+
+    #[test]
+    fn a_meeting_recording_has_room_to_scroll_back() {
+        let meeting = state(Phase::Recording, Some(MEETING_MODE), None);
+        assert_eq!(size_for(&meeting, 4, false), MEETING);
+        assert_eq!(size_for(&meeting, 1, false), MEETING);
+        // The transcript is what a meeting is for: it shows whatever dictation's line count is.
+        assert_eq!(size_for(&meeting, 0, false), MEETING);
+        assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 0, false), BAR);
+        assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 4, false), WIDE);
+    }
 
     #[test]
     fn saved_without_typing_has_room_to_say_why() {
