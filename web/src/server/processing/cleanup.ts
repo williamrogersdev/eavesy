@@ -18,7 +18,7 @@ import { deleteEmbeddings, deletePrefix } from './embed';
 import { chunked, D1_IN_LIST_SIZE, sendMessages } from './queue-batch';
 import { purgeAccountBots } from '@/server/meeting-bots/service';
 import { purgeAccountEmails } from '@/server/email/recaps';
-import { DEPART_STATEMENTS } from '@/db/repo/teams';
+import { depart as departTeam } from '@/db/repo/teams';
 
 export async function handleCleanup(meetingId: string, db: Db, env: ProcessingEnv) {
   const meeting = (await db.select().from(meetings).where(eq(meetings.id, meetingId)).limit(1))[0];
@@ -61,7 +61,7 @@ export async function handlePurgeAccount(userId: string, db: Db, env: Processing
   await deletePrefix(env.AUDIO_BUCKET, `anonymous/${userId}/`);
 
   // Before the membership row goes: hand the team to someone else, or delete it when nobody is left.
-  for (const statement of DEPART_STATEMENTS) await env.DB.prepare(statement).bind(userId).run();
+  await departTeam(db, userId);
 
   // Every table whose user_id references users, children first: D1 enforces
   // foreign keys, so one missed table fails the final delete for good.
