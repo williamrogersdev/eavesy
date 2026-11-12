@@ -304,7 +304,12 @@ mod mac {
         /// either: typing waits until they have been still for `QUIET`.
         seen: Option<(String, Option<(usize, usize)>)>,
         user_at: Option<std::time::Instant>,
+        /// Updates in a row whose words to retype the app didn't select.
+        refused: u8,
     }
+    /// How many updates in a row may fail to select the words to retype
+    /// before live typing stops for the dictation.
+    const SELECT_TRIES: u8 = 3;
     /// How long `LiveField::focused` waits for a field to become readable.
     const FIELD_APPEARS: Duration = Duration::from_millis(1500);
     /// How long the end waits for keys still landing before replacing the words.
@@ -359,6 +364,7 @@ mod mac {
                 edit: None,
                 seen: None,
                 user_at: None,
+                refused: 0,
             })
         }
 
@@ -431,14 +437,45 @@ mod mac {
                     // they are still the dictation's where they read whole,
                     // once. A second copy could be the user's own text, and
                     // a caret read late can't be trusted to tell them apart.
-                    let Some((prefix, suffix)) = super::relocated(&value, &self.posted) else {
+                    if let Some((prefix, suffix)) = super::relocated(&value, &self.posted) {
+                        tracing::info!("live typing: found the typed words elsewhere in the field");
+                        self.prefix = prefix;
+                        self.suffix = suffix;
+                        self.posted.clone()
+                    } else {
+                        // The text around them changed (the user typed there,
+                        // the app tidied it, the field was sent or cleared):
+                        // follow it rather than stop. Whatever now reads where
+                        // the words were is taken as the user's version below,
+                        // which is only ever added to.
                         let expected = format!("{}{}{}", self.prefix, self.posted, self.suffix);
-                        return Err(format!("the text around the typed words was changed ({})", super::where_it_differs(&value, &expected)));
-                    };
-                    tracing::info!("live typing: found the typed words elsewhere in the field");
-                    self.prefix = prefix;
-                    self.suffix = suffix;
-                    self.posted.clone()
+                        let differs = super::where_it_differs(&value, &expected);
+                        let (prefix, found, suffix) = super::reanchored(&value, &self.prefix, &self.posted, &self.suffix);
+                        // At the end the finished words replace what is found:
+                        // never text that isn't the dictation's own.
+                        if ending && found != self.posted && !found.trim().is_empty() {
+                            return Err(format!("the text around the typed words was changed ({differs})"));
+                        }
+                        tracing::info!("live typing: the text around the typed words changed ({differs}); following it");
+                        self.prefix = prefix;
+                        if found.trim().is_empty() && found != self.posted {
+                            // Gone with the text around them: nothing of the
+                            // dictation is left to replace or take back, and
+                            // words heard from now on go in at the caret. An
+                            // empty rich text field reads as a lone newline,
+                            // which is no word of anyone's.
+                            self.suffix = format!("{found}{suffix}");
+                            self.typed = String::new();
+                            self.posted = String::new();
+                            self.original = String::new();
+                            self.edit = Some((String::new(), self.consumed));
+                            self.user_at = Some(std::time::Instant::now());
+                            String::new()
+                        } else {
+                            self.suffix = suffix;
+                            found
+                        }
+                    }
                 }
             };
             let now = std::time::Instant::now();
@@ -522,8 +559,15 @@ mod mac {
                 if !unsafe { select_surely(field, from, length, &self.typed[keep..])? } {
                     // Never leave words selected: the user's next key would replace them.
                     unsafe { put_caret(field, start + super::units(&self.typed)) };
-                    return Err("the app didn't select the words to retype".into());
+                    // A busy app drops a selection now and then: the next
+                    // update tries again, a few times.
+                    self.refused += 1;
+                    if self.refused >= SELECT_TRIES {
+                        return Err("the app didn't select the words to retype".into());
+                    }
+                    return Ok(false);
                 }
+                self.refused = 0;
             }
             if self.typed.is_empty() && self.edit.is_none() {
                 // The previous dictation's paste, which paste learning may
@@ -1193,6 +1237,32 @@ pub fn relocated(value: &str, words: &str) -> Option<(String, String)> {
     anchors(&normalize(value), words, |_, _| false)
 }
 
+/// Where live-typed `words` are in `value` once the text they were typed
+/// between (`prefix`, `suffix`) has changed: the text before them, what now
+/// reads in their place, and the text after. A change wholly before or
+/// wholly after the words leaves them as they were. Otherwise what reads in
+/// their place is everything between the unchanged start of `prefix` and the
+/// unchanged end of `suffix`.
+pub fn reanchored(value: &str, prefix: &str, words: &str, suffix: &str) -> (String, String, String) {
+    let value = normalize(value);
+    let expected = format!("{prefix}{words}{suffix}");
+    let same_start = shared_prefix(&value, &expected);
+    let same_end = shared_suffix(&value, &expected).min(value.len() - same_start).min(expected.len() - same_start);
+    let tail = words.len() + suffix.len();
+    if same_end >= tail {
+        let (before, rest) = value.split_at(value.len() - tail);
+        return (before.into(), words.into(), rest[words.len()..].into());
+    }
+    let head = prefix.len() + words.len();
+    if same_start >= head {
+        return (prefix.into(), words.into(), value[head..].into());
+    }
+    let keep_start = same_start.min(prefix.len());
+    let keep_end = same_end.min(suffix.len()).min(value.len() - keep_start);
+    let end = value.len() - keep_end;
+    (value[..keep_start].into(), value[keep_start..end].into(), value[end..].into())
+}
+
 /// Where a field's text first parts from what was expected, for the log:
 /// UTF-16 offsets and the kind of character on each side there, never the
 /// text itself.
@@ -1405,6 +1475,25 @@ mod tests {
         // Only a last newline is forgiven.
         assert_eq!(typed_passage("Hello", "", "\nmore"), None);
         assert_eq!(typed_passage("Hello\n\n", "", "").as_deref(), Some("Hello\n\n"));
+    }
+
+    #[test]
+    fn typed_words_are_followed_when_the_text_around_them_changes() {
+        let own = |(a, b, c): (&str, &str, &str)| (a.to_string(), b.to_string(), c.to_string());
+        // Changed before the words only, or after them only: the words stand.
+        assert_eq!(reanchored("Hi there, so far tail", "Hello ", "so far", " tail"), own(("Hi there, ", "so far", " tail")));
+        assert_eq!(reanchored("Hello so far and more", "Hello ", "so far", " tail"), own(("Hello ", "so far", " and more")));
+        // Nothing typed yet, and the user typed before the caret.
+        assert_eq!(reanchored("Hello you tail", "Hello ", "", " tail"), own(("Hello you", "", " tail")));
+        // Sent or cleared: nothing reads where the words were.
+        assert_eq!(reanchored("\n", "Hello ", "so far", ""), own(("", "\n", "")));
+        assert_eq!(reanchored("", "Hello ", "so far", " tail"), own(("", "", "")));
+        // The words changed along with the text before them: what is between
+        // the unchanged ends reads in their place.
+        assert_eq!(reanchored("Hello. So fur tail", "Hello ", "so far", " tail"), own(("Hello", ". So fur", " tail")));
+        // Never split inside a character.
+        assert_eq!(reanchored("né so far", "nà ", "so far", ""), own(("né ", "so far", "")));
+        assert_eq!(reanchored("é", "è", "x", ""), own(("", "é", "")));
     }
 
     #[test]
