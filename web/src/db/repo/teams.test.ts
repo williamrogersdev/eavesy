@@ -50,6 +50,24 @@ describe('leaving a team', () => {
     expect(t.roles('a')).toEqual({ 'old-member': 'owner' });
   });
 
+  test('among equals the one who joined first takes over, then the lower user id', () => {
+    const t = setup();
+    t.team('a');
+    t.member('a', 'owner', 'owner', 1);
+    t.member('a', 'admin-late', 'admin', 5);
+    t.member('a', 'admin-early', 'admin', 3);
+    t.member('a', 'member-first', 'member', 2);
+    t.depart('owner');
+    expect(t.roles('a')).toEqual({ 'admin-late': 'admin', 'admin-early': 'owner', 'member-first': 'member' });
+
+    t.team('b');
+    t.member('b', 'owner-b', 'owner', 1);
+    t.member('b', 'tie-z', 'admin', 4);
+    t.member('b', 'tie-a', 'admin', 4);
+    t.depart('owner-b');
+    expect(t.roles('b')).toEqual({ 'tie-z': 'admin', 'tie-a': 'owner' });
+  });
+
   test('nobody is promoted while another owner remains, or when a non-owner leaves', () => {
     const t = setup();
     t.team('a');

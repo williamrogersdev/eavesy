@@ -49,6 +49,7 @@ export async function membershipOf(db: AppDb, userId: string): Promise<Membershi
   return rows[0] ?? null;
 }
 
+/** Everyone in the team, with their email: teammates see who they share the team with. */
 export async function listMembers(db: AppDb, teamId: string) {
   return await db
     .select({ userId: users.id, name: users.displayName, email: users.email, role: teamMembers.role, joinedAt: teamMembers.createdAt })
@@ -66,7 +67,11 @@ export async function listInvites(db: AppDb, teamId: string, now = Date.now()) {
     .orderBy(asc(teamInvites.createdAt));
 }
 
-/** Open invitations addressed to this email, with the team's name. */
+/**
+ * Open invitations addressed to this email, with the team's name.
+ * An invitation belongs to whoever signs in with that address, so the address on
+ * the account must be one the sign-in provider verified (see `loadClerkIdentity`).
+ */
 export async function invitesFor(db: AppDb, email: string, now = Date.now()) {
   return await db
     .select({ id: teamInvites.id, teamName: teams.name, role: teamInvites.role })
@@ -98,8 +103,10 @@ export async function rename(db: AppDb, args: { teamId: string; name: string }, 
 }
 
 /**
- * Invites an email address, or renews and re-roles an invitation it already has.
- * The seat check and the insert are one statement, so two invites can't both take the last seat.
+ * Invites an email address, or renews and re-roles the invitation it already has.
+ * One statement checks the seats and writes the row, so two invites at once can't
+ * both take the last seat, and a second one for the same address renews the first.
+ * A lapsed invitation holds no seat, so renewing one needs a free seat like a new one.
  */
 export async function invite(
   db: AppDb,
@@ -115,24 +122,23 @@ export async function invite(
     .limit(1);
   if (member[0]) throw new TeamError('already_member');
 
-  const existing = await db
-    .select({ id: teamInvites.id })
-    .from(teamInvites)
-    .where(and(eq(teamInvites.teamId, args.teamId), eq(teamInvites.email, email)))
-    .limit(1);
-  if (existing[0]) {
-    await db.update(teamInvites).set({ role: args.role, expiresAt: now + INVITE_TTL_MS }).where(eq(teamInvites.id, existing[0].id));
-    return existing[0].id;
-  }
-
-  const id = pid('tinv');
-  const rows = await db.insert(teamInvites).select(sql`
-    SELECT ${id}, ${args.teamId}, ${email}, ${args.role}, ${args.invitedBy}, ${now}, ${now + INVITE_TTL_MS}
-    WHERE (SELECT count(*) FROM team_members WHERE team_id = ${args.teamId})
-        + (SELECT count(*) FROM team_invites WHERE team_id = ${args.teamId} AND expires_at > ${now}) < ${TEAM_SEAT_LIMIT}
-  `).returning({ id: teamInvites.id });
+  // Lapsed invitations are only ever cleared here; they are hidden everywhere else.
+  await purgeExpiredInvites(db, args.teamId, now);
+  const rows = await db
+    .insert(teamInvites)
+    .select(sql`
+      SELECT ${pid('tinv')}, ${args.teamId}, ${email}, ${args.role}, ${args.invitedBy}, ${now}, ${now + INVITE_TTL_MS}
+      WHERE (SELECT count(*) FROM team_members WHERE team_id = ${args.teamId})
+          + (SELECT count(*) FROM team_invites WHERE team_id = ${args.teamId} AND expires_at > ${now} AND email <> ${email})
+          < ${TEAM_SEAT_LIMIT}
+    `)
+    .onConflictDoUpdate({
+      target: [teamInvites.teamId, teamInvites.email],
+      set: { role: sql`excluded.role`, expiresAt: sql`excluded.expires_at` },
+    })
+    .returning({ id: teamInvites.id });
   if (!rows[0]) throw new TeamError('team_full');
-  return id;
+  return rows[0].id;
 }
 
 export async function revokeInvite(db: AppDb, args: { teamId: string; id: string }) {
@@ -180,24 +186,26 @@ async function roleIn(db: AppDb, teamId: string, userId: string): Promise<TeamRo
   return rows[0]?.role ?? null;
 }
 
-async function ownerCount(db: AppDb, teamId: string): Promise<number> {
-  const rows = await db
-    .select({ n: sql<number>`count(*)` })
-    .from(teamMembers)
-    .where(and(eq(teamMembers.teamId, teamId), eq(teamMembers.role, 'owner')));
-  return rows[0]?.n ?? 0;
-}
+/** True while the team has an owner besides the row being changed. Part of the write itself, so two owners can't demote or remove each other at once. */
+const anotherOwner = (teamId: string) =>
+  sql`(SELECT count(*) FROM team_members o WHERE o.team_id = ${teamId} AND o.role = 'owner') > 1`;
 
 /** Changes someone's role. Only an owner does this, and the last owner can't be demoted. */
 export async function setRole(db: AppDb, args: { teamId: string; actorRole: TeamRole; userId: string; role: TeamRole }) {
   if (args.actorRole !== 'owner') throw new TeamError('forbidden');
-  const current = await roleIn(db, args.teamId, args.userId);
-  if (!current) throw new TeamError('not_found');
-  if (current === 'owner' && args.role !== 'owner' && (await ownerCount(db, args.teamId)) <= 1) throw new TeamError('last_owner');
-  await db
+  const changed = await db
     .update(teamMembers)
     .set({ role: args.role })
-    .where(and(eq(teamMembers.teamId, args.teamId), eq(teamMembers.userId, args.userId)));
+    .where(
+      and(
+        eq(teamMembers.teamId, args.teamId),
+        eq(teamMembers.userId, args.userId),
+        sql`(${teamMembers.role} <> 'owner' OR ${args.role} = 'owner' OR ${anotherOwner(args.teamId)})`,
+      ),
+    )
+    .returning({ userId: teamMembers.userId });
+  if (changed[0]) return;
+  throw new TeamError((await roleIn(db, args.teamId, args.userId)) ? 'last_owner' : 'not_found');
 }
 
 /** Removes someone else from the team. To leave yourself, use `depart`. */
@@ -205,8 +213,19 @@ export async function removeMember(db: AppDb, args: { teamId: string; actorRole:
   const target = await roleIn(db, args.teamId, args.userId);
   if (!target) throw new TeamError('not_found');
   if (!canManage(args.actorRole, target)) throw new TeamError('forbidden');
-  if (target === 'owner' && (await ownerCount(db, args.teamId)) <= 1) throw new TeamError('last_owner');
-  await db.delete(teamMembers).where(and(eq(teamMembers.teamId, args.teamId), eq(teamMembers.userId, args.userId)));
+  // Only while they still hold the role the permission check saw.
+  const removed = await db
+    .delete(teamMembers)
+    .where(
+      and(
+        eq(teamMembers.teamId, args.teamId),
+        eq(teamMembers.userId, args.userId),
+        eq(teamMembers.role, target),
+        sql`(${teamMembers.role} <> 'owner' OR ${anotherOwner(args.teamId)})`,
+      ),
+    )
+    .returning({ userId: teamMembers.userId });
+  if (!removed[0]) throw new TeamError(target === 'owner' ? 'last_owner' : 'not_found');
 }
 
 /**
@@ -215,9 +234,7 @@ export async function removeMember(db: AppDb, args: { teamId: string; actorRole:
  * (else member) becomes it. A team left with nobody is deleted with its invitations.
  * Plain SQL so the account purge, which has only the D1 binding, runs the same steps.
  */
-export const DEPART_STATEMENTS = [
-  `UPDATE team_members SET role = 'owner'
-    WHERE rowid = (
+const NEXT_OWNER = `rowid = (
       SELECT next.rowid FROM team_members next
       WHERE next.team_id = (SELECT team_id FROM team_members WHERE user_id = ?1 AND role = 'owner')
         AND next.user_id <> ?1
@@ -227,16 +244,31 @@ export const DEPART_STATEMENTS = [
         )
       ORDER BY (next.role = 'admin') DESC, next.created_at ASC, next.user_id ASC
       LIMIT 1
-    )`,
+    )`;
+const NO_MEMBERS_LEFT = `NOT IN (SELECT team_id FROM team_members)`;
+
+export const DEPART_STATEMENTS = [
+  `UPDATE team_members SET role = 'owner' WHERE ${NEXT_OWNER}`,
   `DELETE FROM team_members WHERE user_id = ?1`,
   // `?1 IS NOT NULL` only so every statement takes the same one binding.
-  `DELETE FROM team_invites WHERE ?1 IS NOT NULL AND team_id NOT IN (SELECT team_id FROM team_members)`,
-  `DELETE FROM teams WHERE ?1 IS NOT NULL AND id NOT IN (SELECT team_id FROM team_members)`,
+  `DELETE FROM team_invites WHERE ?1 IS NOT NULL AND team_id ${NO_MEMBERS_LEFT}`,
+  `DELETE FROM teams WHERE ?1 IS NOT NULL AND id ${NO_MEMBERS_LEFT}`,
 ] as const;
 
 /** Leaves the team (see `DEPART_STATEMENTS`), as one transaction. */
 export async function depart(d1: D1Database, userId: string) {
   await d1.batch(DEPART_STATEMENTS.map((statement) => d1.prepare(statement).bind(userId)));
+}
+
+/** The same four steps as drizzle queries, to share one batch (one transaction) with other writes. */
+export function departQueries(db: AppDb, userId: string) {
+  const nextOwner = sql.join(NEXT_OWNER.split('?1').map((part) => sql.raw(part)), sql`${userId}`);
+  return [
+    db.update(teamMembers).set({ role: 'owner' }).where(nextOwner),
+    db.delete(teamMembers).where(eq(teamMembers.userId, userId)),
+    db.delete(teamInvites).where(sql.raw(`team_id ${NO_MEMBERS_LEFT}`)),
+    db.delete(teams).where(sql.raw(`id ${NO_MEMBERS_LEFT}`)),
+  ] as const;
 }
 
 /** Deletes the team for everyone. Only an owner does this. */
@@ -249,7 +281,7 @@ export async function removeTeam(db: AppDb, args: { teamId: string; actorRole: T
   ]);
 }
 
-/** Drops invitations nobody accepted in time. */
-export async function purgeExpiredInvites(db: AppDb, now = Date.now()) {
-  await db.delete(teamInvites).where(lte(teamInvites.expiresAt, now));
+/** Drops a team's invitations nobody accepted in time. */
+export async function purgeExpiredInvites(db: AppDb, teamId: string, now = Date.now()) {
+  await db.delete(teamInvites).where(and(eq(teamInvites.teamId, teamId), lte(teamInvites.expiresAt, now)));
 }
