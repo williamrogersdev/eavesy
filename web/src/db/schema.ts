@@ -701,7 +701,7 @@ export const devices = sqliteTable(
       .notNull()
       .references(() => users.id),
     name: text('name').notNull(),
-    platform: text('platform', { enum: ['macos', 'windows', 'linux'] }).notNull(),
+    platform: text('platform', { enum: ['macos', 'windows', 'linux', 'ios'] }).notNull(),
     rootFolderPath: text('root_folder_path').notNull(),
     lastSeenAt: integer('last_seen_at').notNull(),
     createdAt: integer('created_at').notNull(),
@@ -824,6 +824,8 @@ export const devicePairingCodes = sqliteTable(
     deviceId: text('device_id').notNull(),
     name: text('name').notNull(),
     rootFolderPath: text('root_folder_path').notNull(),
+    /** What asked for the code. Null on codes from before phones could pair: a Mac. */
+    platform: text('platform', { enum: ['macos', 'ios'] }),
     rawToken: text('raw_token'),
     claimedByUserId: text('claimed_by_user_id'),
     expiresAt: integer('expires_at').notNull(),

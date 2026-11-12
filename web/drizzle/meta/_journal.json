@@ -379,6 +379,13 @@
       "when": 1793923106100,
       "tag": "0053_captures_note_changes",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1794520570293,
+      "tag": "0054_pairing_platform",
+      "breakpoints": true
     }
   ]
 }

@@ -28,6 +28,7 @@ fit together. Repository layout:
 | `desktop/launcher-ui/` | Launcher UI bundled in the Mac app | Bun |
 | `desktop/src-tauri/` | Rust app core (Tauri) | Rust stable, Xcode CLT |
 | `desktop/swift-audio/` | macOS audio/screen capture sidecar | Swift (Xcode) |
+| `mobile/` | iPhone app (SwiftUI) and its sync core, `EavesyKit` | Xcode 16+ |
 
 ### Web app, local dev mode
 
@@ -90,6 +91,10 @@ docker build --platform linux/amd64 ../workers/meeting-bot   # the bot's image
 # desktop
 cd desktop/src-tauri && cargo test --locked
 cd desktop/swift-audio && swift test
+
+# mobile
+cd mobile/EavesyKit && swift test
+xcodebuild -project mobile/Eavesy.xcodeproj -scheme Eavesy -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
 ```
 
 Browser UX tests (Playwright, optional locally): `cd web && bun run test:ux`.
