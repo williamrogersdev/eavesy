@@ -6,11 +6,15 @@ import { sha256Hex } from '@/server/device-auth';
 import { rememberPairingOrigin } from '@/server/pairing-origin';
 import { clientIp, rateLimit } from '@/server/rate-limit';
 
-const bodySchema = z.object({
-  deviceId: z.string().uuid(),
-  name: z.string().trim().min(1).max(120),
-  rootFolderPath: z.string().trim().min(1).max(1_024),
-});
+const bodySchema = z
+  .object({
+    deviceId: z.string().uuid(),
+    name: z.string().trim().min(1).max(120),
+    platform: z.enum(['macos', 'ios']).default('macos'),
+    // Where the Mac keeps recordings. A phone has no folder to name.
+    rootFolderPath: z.string().trim().min(1).max(1_024).optional(),
+  })
+  .refine((body) => body.platform === 'ios' || body.rootFolderPath !== undefined);
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 function pairingCode(): string {
@@ -45,7 +49,8 @@ export const Route = createFileRoute('/api/devices/pair/start')({
           codeHash,
           deviceId: parsed.data.deviceId,
           name: parsed.data.name,
-          rootFolderPath: parsed.data.rootFolderPath,
+          rootFolderPath: parsed.data.rootFolderPath ?? 'On this iPhone',
+          platform: parsed.data.platform,
           expiresAt: now + 10 * 60 * 1_000,
           createdAt: now,
         });

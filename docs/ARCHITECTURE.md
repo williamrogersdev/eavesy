@@ -26,6 +26,9 @@ macOS capture ──device token──► web session API ──► R2 audio
   summary, embeds the meeting, and performs scheduled cleanup.
 - `workers/mcp/` is a stateless Streamable HTTP MCP server. Read-only tokens are
   created and revoked in Settings; every lookup is scoped to the token's user.
+- `mobile/` is a native SwiftUI iPhone app: record, note, picture, screenshot.
+  It pairs like the Mac (as `platform: "ios"`), keeps an on-disk outbox, and
+  syncs through the same device-token routes (`mobile/README.md`).
 - `desktop/` is a Tauri 2 macOS app with an offline launcher UI, Rust state and
   sync, SQLite durability, macOS Keychain device credentials, and a Swift
   ScreenCaptureKit/AVAudioEngine capture sidecar.
@@ -262,7 +265,7 @@ own address only; sending to other participants is not built.
 
 ## Authentication
 
-Browser requests use Clerk. Desktop long-form requests use a random device
+Browser requests use Clerk. The Mac and iPhone apps use a random device
 token obtained through browser-assisted pairing:
 
 1. The desktop requests a short one-time code.
@@ -317,4 +320,5 @@ bundle. See [OBSERVABILITY.md](OBSERVABILITY.md) for the exact rules.
 - The browser recorder remains a short, one-shot experience.
 - No speaker diarization is promised.
 - Local Whisper is not part of this launch; cloud transcription is Workers AI.
-- Mobile capture is deferred.
+- The iPhone app (`mobile/`) records the microphone only, has no live captions, and
+  takes screenshots through the photo picker or the share sheet. There is no Android app.
