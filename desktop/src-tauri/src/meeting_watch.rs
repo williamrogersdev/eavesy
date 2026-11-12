@@ -540,17 +540,20 @@ fn record(app: &AppHandle, prompt: &Prompt) {
     let claim = Starting::claim();
     // Answered either way: the prompt never stays on screen behind a start.
     clear_prompt(app, &prompt.key);
-    // Another start holds the capture. This answer waits for it to settle
-    // and is told if no recording came of it, whatever that start was for.
+    // One capture, so one recording at a time: while a start is under way a
+    // second one is dropped and logged. Which call a start is "for" is not
+    // tracked anywhere; the capture records whatever call is on. The start
+    // under way shows Recording when it is up and reports its own failure.
     let Some(starting) = claim else {
-        tracing::info!(key = %prompt.key, "meeting watch: a recording is already starting, waiting on it");
-        after_other_start(app);
+        tracing::info!(key = %prompt.key, "meeting watch: a recording is already starting, this start is dropped");
         return;
     };
     let handle = app.clone();
     std::thread::spawn(move || {
         let started = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now());
-        drop(starting);
+        // Held until the recording is on the watch's books (or has failed),
+        // so no other start runs in between.
+        let _starting = starting;
         match started {
             Ok(session) => with_watch(|watch| {
                 let bundle = watch.call.as_ref().map(|(signal, _)| signal.bundle().to_string()).unwrap_or_default();
@@ -565,30 +568,6 @@ fn record(app: &AppHandle, prompt: &Prompt) {
                     not_recording(&handle);
                 }
             }
-        }
-    });
-}
-
-/// How long a start that lost the claim waits for the one under way.
-const OTHER_START_WAIT: Duration = Duration::from_secs(60);
-
-/// Whether a start that waited on another one still owes the user a notice:
-/// only when that start is over and nothing is recording.
-fn start_came_to_nothing(still_starting: bool, phase: &Phase) -> bool {
-    !still_starting && *phase != Phase::Recording
-}
-
-/// For a start dropped because another was under way: once that one is
-/// over, says so if no recording came of it.
-fn after_other_start(app: &AppHandle) {
-    let handle = app.clone();
-    std::thread::spawn(move || {
-        let waited = Instant::now();
-        while STARTING.load(std::sync::atomic::Ordering::SeqCst) && waited.elapsed() < OTHER_START_WAIT {
-            std::thread::sleep(Duration::from_millis(100));
-        }
-        if start_came_to_nothing(STARTING.load(std::sync::atomic::Ordering::SeqCst), &hud::current().phase) {
-            not_recording(&handle);
         }
     });
 }
@@ -628,7 +607,7 @@ pub fn record_now(app: &AppHandle) {
     let handle = app.clone();
     std::thread::spawn(move || {
         let started = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now());
-        drop(starting);
+        let _starting = starting;
         if let Err(error) = started {
             tracing::warn!("tray: could not start a meeting recording: {error}");
             // A second click loses to the first one's start: that is not a failure.
@@ -682,15 +661,6 @@ pub fn set_auto_record_meetings(app: AppHandle, enabled: bool) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_dropped_start_speaks_up_only_when_no_recording_came() {
-        assert!(start_came_to_nothing(false, &Phase::Idle));
-        assert!(start_came_to_nothing(false, &Phase::Prompt));
-        // The other start brought the recording, or is still at it.
-        assert!(!start_came_to_nothing(false, &Phase::Recording));
-        assert!(!start_came_to_nothing(true, &Phase::Idle));
-    }
 
     #[test]
     fn one_start_at_a_time_and_a_failed_one_frees_the_next() {
