@@ -1282,9 +1282,10 @@ pub enum Followed {
 /// empty and there is nothing to replace.
 pub fn followed(value: &str, prefix: &str, words: &str, suffix: &str, ending: bool) -> Option<Followed> {
     let value = normalize(value);
-    // Spaces are text someone typed: only nothing, or the newlines an empty
-    // rich text field reads as, is an empty field.
-    if value.chars().all(|c| c == '\n') {
+    // Spaces (non-breaking ones too, after `normalize`) and tabs are text
+    // someone typed: only nothing, or the line breaks an empty rich text
+    // field reads as, is an empty field.
+    if value.chars().all(|c| c == '\n' || c == '\r') {
         return Some(Followed::Gone { suffix: value });
     }
     let (prefix, found, suffix) = reanchored(&value, prefix, words, suffix);
@@ -1543,17 +1544,24 @@ mod tests {
         // Blanked out between text that is still there: the same.
         assert_eq!(followed("Hi   tail", "Hello ", "so far", " tail", false), words("H", "i  ", " tail"));
         assert_eq!(followed("Hi   tail", "Hello ", "so far", " tail", true), None);
-        // Only the words blanked, the text around them as it was (the field
-        // itself reads this as the user's edit before `followed` is asked).
+        // Only the words blanked, the text around them as it was. The field
+        // reads that as the user's edit and never asks `followed`: the
+        // anchors still match.
+        assert_eq!(typed_passage("Hello    tail", "Hello ", " tail").as_deref(), Some("  "));
+        assert_eq!(typed_passage("Hello  tail", "Hello ", " tail").as_deref(), Some(""));
+        // Asked all the same, it is refused at the end like any other
+        // change to the words.
         assert_eq!(followed("Hello    tail", "Hello ", "so far", " tail", false), words("Hello ", "  ", " tail"));
         assert_eq!(followed("Hello    tail", "Hello ", "so far", " tail", true), None);
         // Spaces are text: a field of them is not an emptied one.
         assert_eq!(followed("   ", "Hello ", "so far", " tail", false), words("", "   ", ""));
         assert_eq!(followed("   ", "Hello ", "so far", " tail", true), None);
+        assert_eq!(followed("\u{a0}\t", "Hello ", "so far", " tail", true), None);
         // An emptied field: go on at the caret, at the end too.
         for ending in [false, true] {
             assert_eq!(followed("", "Hello ", "so far", " tail", ending), Some(Followed::Gone { suffix: String::new() }));
             assert_eq!(followed("\n", "Hello ", "so far", "", ending), Some(Followed::Gone { suffix: "\n".into() }));
+            assert_eq!(followed("\r\n", "Hello ", "so far", "", ending), Some(Followed::Gone { suffix: "\r\n".into() }));
         }
         // An empty rich text field's newline is the field's, never typed:
         // words that go in after it read back without it.
