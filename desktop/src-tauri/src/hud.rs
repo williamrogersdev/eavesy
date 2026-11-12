@@ -531,6 +531,8 @@ pub fn toggle_visible_on_main(app: &AppHandle) {
 
 pub fn set_hidden_on_main(app: &AppHandle, hidden: bool) {
     if !hidden {
+        // Under the lock every other write to it takes, in the same order.
+        let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
         *TUCKED.lock().unwrap_or_else(|error| error.into_inner()) = None;
     }
     update_prefs(app, |config| config.hud_hidden = hidden);
@@ -560,7 +562,10 @@ pub fn collapse_from_panel_on_main(app: &AppHandle) {
     if prefs(app).hidden {
         update_prefs(app, |config| config.hud_hidden = false);
     }
-    *TUCKED.lock().unwrap_or_else(|error| error.into_inner()) = None;
+    {
+        let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
+        *TUCKED.lock().unwrap_or_else(|error| error.into_inner()) = None;
+    }
     follow_panel(app);
     show_unchecked(app, &current());
 }
