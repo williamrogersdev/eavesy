@@ -42,11 +42,13 @@ record with the Mac app instead of sending the bot.
 - **Leaving.** The bot counts a call that holds only itself and other
   notetakers as empty and leaves after the usual minute
   (`workers/meeting-bot/bot/src/assistants.rs`). It stays whenever the app's
-  head count is larger than the tiles it reads, or one of them spoke in the
-  last five minutes. **Not handled yet:** a tile named just "Claude". That is
-  probably what Claude Meetings shows, but it isn't documented and it is a
-  person's name, so the bot treats it as a person and stays (as it did
-  before). Add the name to `CLAUDE_NAMES` once it has been seen in a call.
+  head count differs from the tiles it reads, or one of them has spoken at
+  any point in the call. **Not handled yet:** a tile named just "Claude". That
+  is probably what Claude Meetings shows, but it isn't documented and it is a
+  person's name, so the bot treats it as a person. In a call left to the bot
+  and a tile named "Claude", the bot therefore stays until the call ends or
+  its own time limit is reached. Add the name to `CLAUDE_NAMES` once it has
+  been seen in a call.
 - **Notes.** The summary prompt treats an assistant on the call as software:
   what it reported is kept, but it never owns an action item or a decision
   (`web/src/lib/ai/meeting-summary.ts`).

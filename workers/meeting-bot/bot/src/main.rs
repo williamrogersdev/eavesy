@@ -93,9 +93,12 @@ struct Speakers {
 }
 
 impl Speakers {
-    /// Whether `name` was shown speaking at or after `since_ms`.
-    fn spoke_since(&self, name: &str, since_ms: u64) -> bool {
-        self.spans.iter().rev().any(|(n, _, end)| n == name && *end >= since_ms)
+    /// Whether `name` was ever shown speaking. Names are compared as the
+    /// assistant check reads them: the speaking indicator and the tile may
+    /// differ in case or spacing.
+    fn spoke(&self, name: &str) -> bool {
+        let name = assistants::normal(name);
+        self.spans.iter().any(|(n, _, _)| assistants::normal(n) == name)
     }
 
     fn note(&mut self, names: &[String], at_ms: u64, tick_ms: u64) {
@@ -225,8 +228,7 @@ async fn run(
                 // them is over, like one left to this bot alone.
                 if seen.phase == Phase::InCall && !seen.alone {
                     let count = seen.detail.get("count").and_then(Value::as_u64);
-                    let recent = recording_since.map_or(0, |since| (since.elapsed().as_millis() as u64).saturating_sub(assistants::SPOKE_RECENTLY_MS));
-                    if assistants::only_assistants(&seen.participants, &cfg.bot_name, count, |n| speakers.spoke_since(n, recent)) {
+                    if assistants::only_assistants(&seen.participants, &cfg.bot_name, count, |n| speakers.spoke(n)) {
                         if !assistants_only {
                             log(json!({ "msg": "only assistants left", "participants": seen.participants }));
                         }
@@ -306,6 +308,14 @@ async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn someone_heard_once_has_spoken_however_the_name_is_spelt() {
+        let mut s = Speakers::default();
+        s.note(&["Ana's Notetaker ".to_owned()], 1_000, 500);
+        assert!(s.spoke("ana's notetaker"));
+        assert!(!s.spoke("Claude Meetings"));
+    }
 
     #[test]
     fn speaker_spans_merge_while_someone_keeps_talking() {
