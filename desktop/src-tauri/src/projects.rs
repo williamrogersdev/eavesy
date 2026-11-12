@@ -286,10 +286,14 @@ fn remote_meeting(app: &AppHandle, session_id: &str) -> Result<Option<String>, S
 #[tauri::command]
 pub async fn meeting_overview(app: AppHandle, session_id: String) -> Result<Option<Value>, String> {
     let Some(credential) = settings::device_credential(&app) else { return Ok(None) };
-    // Asked again every so often by the panel: a recording this Mac can't
-    // read right now (logged by remote_meeting) is "nothing yet", not an
-    // error repeated on every poll. A typed question does get the error.
-    let Ok(Some(remote_id)) = remote_meeting(&app, &session_id) else { return Ok(None) };
+    // Asked again every so often by the panel. One failed read of the local
+    // recording is "nothing yet"; a read that keeps failing is shown.
+    let remote = remote_meeting(&app, &session_id);
+    let failed_before = match &remote {
+        Ok(_) => OVERVIEW_READ_FAILURES.swap(0, std::sync::atomic::Ordering::SeqCst),
+        Err(_) => OVERVIEW_READ_FAILURES.fetch_add(1, std::sync::atomic::Ordering::SeqCst),
+    };
+    let Some(remote_id) = overview_read(remote, failed_before)? else { return Ok(None) };
     let response = client()
         .ok_or("Could not reach eavesy.com")?
         .get(crate::base_url::join(&credential.base, &format!("/api/sessions/{remote_id}/result")))
@@ -307,6 +311,21 @@ pub async fn meeting_overview(app: AppHandle, session_id: String) -> Result<Opti
     }
     let body: Value = response.json().await.map_err(|_| "eavesy.com sent an answer Eavesy couldn't read".to_string())?;
     Ok(overview_from(&body))
+}
+
+/// How many times in a row the overview's read of the local recording has failed.
+static OVERVIEW_READ_FAILURES: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+/// A read that failed this many times running is no passing hiccup.
+const OVERVIEW_READ_PATIENCE: u32 = 2;
+
+/// What the overview makes of reading the local recording: a failure is
+/// "nothing yet" until it has happened `OVERVIEW_READ_PATIENCE` times before.
+fn overview_read(remote: Result<Option<String>, String>, failed_before: u32) -> Result<Option<String>, String> {
+    match remote {
+        Err(error) if failed_before >= OVERVIEW_READ_PATIENCE => Err(error),
+        Err(_) => Ok(None),
+        ok => ok,
+    }
 }
 
 /// The result endpoint's answers for a meeting it has nothing for yet: the
@@ -435,6 +454,12 @@ mod tests {
         assert_eq!(tail_chars("a😀b😀", 4), "b😀");
         assert_eq!(tail_chars("a😀b😀", 1), "");
         assert_eq!(tail_chars("", 4), "");
+        // A local read that fails once or twice is quiet; one that keeps failing is shown.
+        assert_eq!(overview_read(Err("no".into()), 0), Ok(None));
+        assert_eq!(overview_read(Err("no".into()), 1), Ok(None));
+        assert_eq!(overview_read(Err("no".into()), 2), Err("no".into()));
+        assert_eq!(overview_read(Ok(Some("m1".into())), 5), Ok(Some("m1".into())));
+        assert_eq!(overview_read(Ok(None), 0), Ok(None));
         assert!(not_written_yet(404) && not_written_yet(409));
         assert!(!not_written_yet(401) && !not_written_yet(500) && !not_written_yet(200));
     }
