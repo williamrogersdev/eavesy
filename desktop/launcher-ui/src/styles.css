@@ -977,3 +977,26 @@ html:has(.ev-meeting-card), html:has(.ev-meeting-card) body { margin: 0; overflo
 .ctl-turn-head > time { font-weight: 400; font-variant-numeric: tabular-nums; opacity: 0.8; }
 .ctl-meeting-empty { margin: auto; max-width: 280px; padding: 0 12px; text-align: center; color: var(--ctl-ink-2); font: 400 12.5px/18px var(--ev-font-text); user-select: none; -webkit-user-select: none; }
 .ctl-latest { position: absolute; right: 10px; bottom: 6px; gap: 4px; background: rgb(60 60 64 / 0.96); box-shadow: 0 2px 8px rgb(0 0 0 / 0.35); }
+
+/* The box's three views and the question box under them. */
+.ctl-tabs { display: flex; flex: none; gap: 2px; padding: 0 8px 4px; }
+.ctl-tab { appearance: none; border: 0; background: transparent; color: var(--ctl-ink-2); font: 500 11.5px/16px var(--ev-font-text); padding: 3px 9px; border-radius: 999px; cursor: default; }
+.ctl-tab:hover { color: var(--ctl-ink); background: var(--ctl-hover); }
+.ctl-tab[aria-selected="true"] { color: var(--ctl-ink); background: rgb(255 255 255 / 0.12); }
+.ctl-tab:focus-visible { outline: 1px solid var(--ctl-line); }
+.ctl-pane { position: relative; display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
+.ctl-overview { font: 400 13px/19px var(--ev-font-text); color: var(--ctl-ink); }
+.ctl-overview > p { margin: 0 0 8px; }
+.ctl-overview > h3 { margin: 10px 0 2px; font: 600 11px/16px var(--ev-font-text); color: var(--ctl-ink-2); }
+.ctl-overview > ul { margin: 0; padding-left: 16px; }
+.ctl-overview li { margin: 0 0 3px; }
+.ctl-overview li > b { font-weight: 600; }
+.ctl-ask { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 13px/19px var(--ev-font-text); color: var(--ctl-ink); }
+.ctl-ask[data-role="user"] { margin-left: 48px; padding: 4px 9px; border-radius: 10px; background: rgb(255 255 255 / 0.1); width: fit-content; max-width: calc(100% - 48px); align-self: flex-end; margin-left: auto; }
+.ctl-asks { display: flex; flex-direction: column; }
+.ctl-askbar { display: flex; flex: none; align-items: center; gap: 4px; margin: 6px 6px 0; padding: 2px 2px 2px 10px; border-radius: 999px; background: rgb(255 255 255 / 0.08); box-shadow: inset 0 0 0 1px var(--ctl-line); }
+.ctl-askbar:focus-within { background: rgb(255 255 255 / 0.12); }
+.ctl-askbar > input { flex: 1 1 auto; min-width: 0; height: 26px; border: 0; outline: 0; background: transparent; color: var(--ctl-ink); font: 400 13px/18px var(--ev-font-text); user-select: text; -webkit-user-select: text; }
+.ctl-askbar > input::placeholder { color: var(--ctl-ink-2); }
+.ctl-send { border-radius: 999px; background: var(--ev-rec); color: #fff; }
+.ctl-send:disabled { background: rgb(255 255 255 / 0.1); color: var(--ctl-ink-2); }

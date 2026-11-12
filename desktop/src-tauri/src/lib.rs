@@ -256,6 +256,8 @@ pub fn run() {
             projects::list_projects,
             projects::account_call,
             projects::agent_transcript,
+            projects::meeting_overview,
+            projects::ask_meeting,
             projects::set_project_choice,
             front_window::front_window,
             commands::disconnect_account,

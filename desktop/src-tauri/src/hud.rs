@@ -197,7 +197,7 @@ const DEFAULT_SIZE: (f64, f64) = (272.0, 36.0);
 /// Recording and writing it down: controls above a scrollable transcript.
 const WIDE: (f64, f64) = (400.0, 142.0);
 /// A meeting recording: the controls above everything said so far, to scroll back through.
-const MEETING: (f64, f64) = (400.0, 320.0);
+const MEETING: (f64, f64) = (400.0, 380.0);
 /// Recording with the live words turned off: just the controls, with room
 /// for how the words are written and whether they are typed live.
 const BAR: (f64, f64) = (400.0, 40.0);
