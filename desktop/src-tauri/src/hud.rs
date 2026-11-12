@@ -351,10 +351,17 @@ pub fn set_options(app: &AppHandle, open: bool) -> bool {
     });
     let opened = dispatched.is_ok() && fitted.recv_timeout(std::time::Duration::from_millis(500)).unwrap_or(false);
     if !opened && open {
-        // Never reached, or too late to trust: closed, and sized to match when the main thread gets to it.
-        OPTIONS.store(false, std::sync::atomic::Ordering::SeqCst);
+        // Too late to trust: the task above may still run and open them
+        // after the caller was told no. This one runs after it, on the same
+        // thread, and closes them and sizes the window to match.
         let handle = app.clone();
-        let _ = app.run_on_main_thread(move || fit_on_main(&handle));
+        let _ = app.run_on_main_thread(move || {
+            {
+                let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
+                OPTIONS.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+            fit_on_main(&handle);
+        });
     }
     opened
 }
