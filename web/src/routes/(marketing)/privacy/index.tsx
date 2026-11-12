@@ -52,7 +52,7 @@ function PrivacyPage() {
             advertising tracking.
           </li>
           <li>
-            <strong>Eavesy does not train models on recording content.</strong> Cloudflare
+            <strong>Eavesy does not currently train models on recording content.</strong> Cloudflare
             Workers AI and Anthropic&rsquo;s commercial API state that customer content is not
             used for model training without an explicit opt-in. A connected OpenRouter account
             follows the provider privacy settings you control there.

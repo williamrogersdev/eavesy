@@ -46,7 +46,7 @@ export function AuthFrame({ children }: { children: ReactNode }) {
           href={siteConfig.github}
           className="relative flex w-fit items-center gap-2 font-round text-xs font-semibold text-ev-ink-2 hover:text-ev-coat"
         >
-          <GithubMark className="h-3.5 w-3.5" /> Open source · Plain files on your Mac · No meeting bot
+          <GithubMark className="h-3.5 w-3.5" /> Open source · Plain files on your Mac
         </a>
       </aside>
 

@@ -29,7 +29,7 @@ const PILLARS = [
   {
     icon: ShieldCheck,
     title: 'Documented model-provider policies',
-    body: 'Eavesy does not train on recording content. Cloudflare Workers AI and Anthropic’s commercial API state that customer content is not used for training without an explicit opt-in; connected OpenRouter accounts follow the user’s settings.',
+    body: 'Eavesy does not currently train on recording content. Cloudflare Workers AI and Anthropic’s commercial API state that customer content is not used for training without an explicit opt-in; connected OpenRouter accounts follow the user’s settings.',
   },
   {
     icon: Trash2,
