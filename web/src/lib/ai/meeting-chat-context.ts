@@ -39,10 +39,22 @@ export function meetingClock(ms: number): string {
   return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${seconds}` : `${minutes}:${seconds}`;
 }
 
-function keepEnd(text: string, max: number): string {
+/** Whether the meeting is still being recorded or sent up. */
+export function meetingIsLive(status: string): boolean {
+  return status === 'recording' || status === 'uploading';
+}
+
+/**
+ * The end of `text` that fits in `max`. It starts at a line start when one
+ * is near, so a cut doesn't leave half a line without its time; a single
+ * very long line is cut where it falls, never through the middle of a
+ * character (an emoji is two units).
+ */
+export function keepEnd(text: string, max: number): string {
   if (text.length <= max) return text;
-  // From a line start, so a cut never leaves half a line without its time.
-  const tail = text.slice(-max);
+  let tail = text.slice(-max);
+  const first = tail.charCodeAt(0);
+  if (first >= 0xdc00 && first <= 0xdfff) tail = tail.slice(1);
   const line = tail.indexOf('\n');
   return line >= 0 && line < 400 ? tail.slice(line + 1) : tail;
 }
@@ -54,7 +66,7 @@ function keepEnd(text: string, max: number): string {
  */
 export function meetingChatContext(data: MeetingChatSource, opts: { heard?: string; now?: number } = {}): string {
   const { meeting, summary, segments, notes } = data;
-  const live = meeting.status === 'recording' || meeting.status === 'uploading';
+  const live = meetingIsLive(meeting.status);
   const out: string[] = [`Title: ${meeting.title}`, `Started: ${new Date(meeting.startedAt).toISOString()}`];
   if (live && opts.now) {
     out.push(`Status: still going on. It is now ${meetingClock(opts.now - meeting.startedAt)} into the meeting.`);
@@ -88,9 +100,16 @@ export function meetingChatContext(data: MeetingChatSource, opts: { heard?: stri
     out.push('', 'Transcript (each line starts with its time into the meeting):', keepEnd(transcript, MAX_CHAT_TRANSCRIPT));
   }
 
-  const heard = opts.heard?.trim();
+  const hasTranscript = Boolean(meeting.transcriptOverrideMd?.trim() || segments?.length);
+  // Only a meeting still going on has words the transcript hasn't caught up with.
+  const heard = live ? opts.heard?.trim() : '';
   if (heard) {
-    out.push('', 'Heard in the last moments, after the transcript above (rough, may repeat its last lines):', keepEnd(heard, MAX_HEARD));
+    if (!hasTranscript) out.push('', 'No transcript has been written yet.');
+    out.push(
+      '',
+      `Heard by the recorder's Mac in the last moments${hasTranscript ? ', after the transcript above' : ''} (unchecked live captions, not the transcript: rough, no speaker names, may repeat its last lines):`,
+      keepEnd(heard, MAX_HEARD),
+    );
   }
 
   return out.join('\n');

@@ -5,7 +5,7 @@ import * as activityRepo from '@/db/repo/activity';
 import * as meetingsRepo from '@/db/repo/meetings';
 import * as usersRepo from '@/db/repo/users';
 import { chatWithMeeting } from '@/lib/ai/chat-meeting';
-import { MAX_HEARD, meetingChatContext } from '@/lib/ai/meeting-chat-context';
+import { MAX_HEARD, meetingChatContext, meetingIsLive } from '@/lib/ai/meeting-chat-context';
 import { guardUserQuota } from '@/server/rate-limit';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { resolveIngestActor } from '@/server/device-auth';
@@ -34,7 +34,9 @@ export const Route = createFileRoute('/api/meetings/$id/chat')({
       POST: async ({ request, params }) => {
         const { id } = params;
 
-        // The website's session, or the Mac that is recording the meeting.
+        // The website's session, or the Mac that is recording the meeting. A
+        // Mac's token stands for its own account and nothing else, and the
+        // meeting is read by that account below: another account's is a 404.
         let actor;
         try {
           actor = await resolveIngestActor(request);
@@ -57,7 +59,10 @@ export const Route = createFileRoute('/api/meetings/$id/chat')({
         const db = getDb();
         const data = await meetingsRepo.getFull(db, { meetingId: id, userId: actor.userId });
         if (!data) return Response.json({ error: 'not_found' }, { status: 404 });
-        if (data.meeting.status !== 'complete' && !data.segments.length && !body.heard?.trim()) {
+        // Before any transcript, only a meeting still going on can be asked
+        // about, from what its recorder has just heard.
+        const heardLive = meetingIsLive(data.meeting.status) && Boolean(body.heard?.trim());
+        if (data.meeting.status !== 'complete' && !data.segments.length && !heardLive) {
           return Response.json(
             { error: 'not_ready', message: 'This meeting is still processing.' },
             { status: 409 },

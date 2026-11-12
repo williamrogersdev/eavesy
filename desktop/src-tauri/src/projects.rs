@@ -270,11 +270,15 @@ fn contains_word(text: &str, needle: &str) -> bool {
     })
 }
 
-/// Ids are interpolated into an authenticated URL path: letters, digits, `-` and `_` only.
 /// The account's meeting for a recording on this Mac, once the first part of
 /// it has reached eavesy.com (a few seconds into the recording).
 fn remote_meeting(app: &AppHandle, session_id: &str) -> Option<String> {
-    crate::sqlite::remote_meeting_id(app, session_id).ok().flatten().filter(|id| is_plain_id(id))
+    crate::sqlite::remote_meeting_id(app, session_id)
+        .unwrap_or_else(|error| {
+            tracing::warn!("meeting panel: could not read the meeting's account id: {error}");
+            None
+        })
+        .filter(|id| is_plain_id(id))
 }
 
 /// The notes written so far for a meeting that is still recording: the
@@ -292,11 +296,21 @@ pub async fn meeting_overview(app: AppHandle, session_id: String) -> Result<Opti
         .send()
         .await
         .map_err(|_| "Could not reach eavesy.com".to_string())?;
+    let status = response.status().as_u16();
+    if not_written_yet(status) {
+        return Ok(None);
+    }
     if !response.status().is_success() {
-        return Err(format!("eavesy.com said {}", response.status().as_u16()));
+        return Err(format!("eavesy.com said {status}"));
     }
     let body: Value = response.json().await.map_err(|_| "eavesy.com sent an answer Eavesy couldn't read".to_string())?;
     Ok(overview_from(&body))
+}
+
+/// The result endpoint's answers for a meeting it has nothing for yet: the
+/// panel asks again later, and that is not an error to show.
+fn not_written_yet(status: u16) -> bool {
+    matches!(status, 404 | 409)
 }
 
 /// The overview the panel shows, from a session's result: the lists arrive
@@ -362,12 +376,22 @@ pub async fn ask_meeting(app: AppHandle, session_id: String, messages: Value, he
 /// web/src/lib/ai/meeting-chat-context.ts).
 const MAX_HEARD: usize = 12_000;
 
-/// The last `max` characters of `text`, never splitting one.
+/// The end of `text` that fits in `max` UTF-16 units, never splitting a
+/// character. The server counts a string's length that way, so an emoji is two.
 fn tail_chars(text: &str, max: usize) -> String {
-    let count = text.chars().count();
-    text.chars().skip(count.saturating_sub(max)).collect()
+    let mut units = 0;
+    let mut start = text.len();
+    for (at, c) in text.char_indices().rev() {
+        units += c.len_utf16();
+        if units > max {
+            break;
+        }
+        start = at;
+    }
+    text[start..].to_string()
 }
 
+/// Ids are interpolated into an authenticated URL path: letters, digits, `-` and `_` only.
 fn is_plain_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
@@ -403,6 +427,14 @@ mod tests {
     fn what_was_heard_is_cut_to_its_end_on_a_character() {
         assert_eq!(tail_chars("héllo wörld", 5), "wörld");
         assert_eq!(tail_chars("short", 50), "short");
+        // The server counts UTF-16 units: an emoji is two, and is never cut in half.
+        assert_eq!(tail_chars("a😀b😀", 2), "😀");
+        assert_eq!(tail_chars("a😀b😀", 3), "b😀");
+        assert_eq!(tail_chars("a😀b😀", 4), "b😀");
+        assert_eq!(tail_chars("a😀b😀", 1), "");
+        assert_eq!(tail_chars("", 4), "");
+        assert!(not_written_yet(404) && not_written_yet(409));
+        assert!(!not_written_yet(401) && !not_written_yet(500) && !not_written_yet(200));
     }
 
     #[test]
