@@ -40,7 +40,6 @@ function IntegrationsPage() {
   const [saving, setSaving] = useState(false);
   const [webhooksOpen, setWebhooksOpen] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
-  const copyFailed = useCallback(() => setError('Could not copy it. Select the text and copy it yourself.'), []);
 
   const loadMe = useCallback(async () => {
     const response = await fetch('/api/me');
@@ -62,7 +61,7 @@ function IntegrationsPage() {
     else if (params.has('error')) setNotice({ kind: 'error', text: 'Could not finish connecting. Try again.' });
     const google = googleOutcome(params);
     if (google) setNotice(google);
-    if (params.has('connected') || params.has('error')) window.history.replaceState({}, '', '/app/integrations');
+    if (params.has('connected') || params.has('error')) window.history.replaceState(window.history.state, '', '/app/integrations');
   }, []);
 
   /** The change is already saved by the time this runs: a failed reload only leaves the page out of date. */
@@ -119,13 +118,13 @@ function IntegrationsPage() {
           icon={<Bot />}
           name="Claude and ChatGPT"
           blurb={`Add ${MCP_URL} as a connector and sign in`}
-          action={<CopyButton text={MCP_URL} label="Copy URL" onFail={copyFailed} />}
+          action={<CopyButton text={MCP_URL} label="Copy URL" />}
         />
         <IntegrationCard
           icon={<Terminal />}
           name="Claude Code"
           blurb="Run one command in your terminal, then sign in"
-          action={<CopyButton text={CLAUDE_CODE_ADD} label="Copy command" onFail={copyFailed} />}
+          action={<CopyButton text={CLAUDE_CODE_ADD} label="Copy command" />}
         />
       </IntegrationGroup>
 
@@ -213,21 +212,23 @@ function IntegrationsPage() {
   );
 }
 
-function CopyButton({ text, label, onFail }: { text: string; label: string; onFail: () => void }) {
-  const [copied, setCopied] = useState(false);
+/** Copies `text`; says so on the button, or that it couldn't, for a moment. */
+function CopyButton({ text, label }: { text: string; label: string }) {
+  const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const settle = (next: 'copied' | 'failed') => {
+    setState(next);
+    window.setTimeout(() => setState('idle'), 1500);
+  };
   return (
     <button
       type="button"
       onClick={() => {
-        void navigator.clipboard.writeText(text).then(() => {
-          setCopied(true);
-          window.setTimeout(() => setCopied(false), 1500);
-        }, onFail);
+        void navigator.clipboard.writeText(text).then(() => settle('copied'), () => settle('failed'));
       }}
       className={appButton('secondary', 'sm')}
     >
-      {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-      {copied ? 'Copied' : label}
+      {state === 'copied' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+      <span aria-live="polite">{state === 'copied' ? 'Copied' : state === 'failed' ? 'Couldn’t copy' : label}</span>
     </button>
   );
 }

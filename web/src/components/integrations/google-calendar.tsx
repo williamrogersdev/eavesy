@@ -24,7 +24,7 @@ export function googleOutcome(params: URLSearchParams): { kind: 'ok' | 'error'; 
 }
 
 /** Google Calendar: Connect, or each linked account with Disconnect. */
-export function GoogleCalendarCards({ onError }: { onError: (message: string | null) => void }) {
+export function GoogleCalendarCards({ onError }: { onError: (message: string) => void }) {
   const [status, setStatus] = useState<CalendarStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   /** The connection Google couldn't be told about, so Disconnect kept it. */
@@ -32,14 +32,9 @@ export function GoogleCalendarCards({ onError }: { onError: (message: string | n
   const [failed, setFailed] = useState(false);
   const load = useCallback(() => {
     setFailed(false);
-    void getCalendarStatus().then((loaded) => {
-      setStatus(loaded);
-      onError(null);
-    }).catch(() => {
-      setFailed(true);
-      onError('Could not load your calendar connections.');
-    });
-  }, [onError]);
+    // A failed load is shown on the card itself, with its own retry.
+    void getCalendarStatus().then(setStatus).catch(() => setFailed(true));
+  }, []);
   useEffect(load, [load]);
 
   const icon = <CalendarDays />;
@@ -48,7 +43,8 @@ export function GoogleCalendarCards({ onError }: { onError: (message: string | n
       <IntegrationCard
         icon={icon}
         name="Google Calendar"
-        blurb={failed ? 'Could not load' : 'Checking…'}
+        blurb={failed ? 'Could not load your calendar connections' : 'Checking…'}
+        status={failed ? { text: 'Error', tone: 'warn' } : undefined}
         action={failed ? <button type="button" onClick={load} className={appButton('secondary', 'sm')}>Try again</button> : null}
       />
     );
