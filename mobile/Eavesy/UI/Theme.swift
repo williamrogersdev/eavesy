@@ -43,10 +43,21 @@ enum Ev {
     static let note = dyn(0x85580C, 0xF0C879)
     static let noteSoft = dyn(0xF6E8CC, 0x3A2F1C)
 
-    // radii
+    // the live card: the same charcoal in both modes, as on the Mac
+    static let hud = Color(UIColor(hex: 0x161312))
+    static let hudInk = Color(UIColor(hex: 0xF6EFE4))
+    static let hudInk2 = Color(UIColor(hex: 0xF6EFE4)).opacity(0.62)
+    static let hudLine = Color(red: 1, green: 0.94, blue: 0.86).opacity(0.14)
+    /// Shadows are charcoal-tinted, never neutral grey.
+    static let shade = Color(UIColor { UIColor(hex: 0x211C1A).withAlphaComponent($0.userInterfaceStyle == .dark ? 0.6 : 0.3) })
+
+    // radii: they grow with the container
     static let rCtl: CGFloat = 12
     static let rPanel: CGFloat = 18
     static let rMedia: CGFloat = 10
+    static let rDock: CGFloat = 28
+    /// The page gutter.
+    static let gutter: CGFloat = 20
 
     // type: rounded for UI, text face for reading
     static func title(_ size: CGFloat = 24) -> Font { .system(size: size, weight: .bold, design: .rounded) }
@@ -55,6 +66,8 @@ enum Ev {
     static let small = Font.system(.caption, design: .rounded).weight(.medium)
     static let group = Font.system(.caption, design: .rounded).weight(.bold)
     static let body = Font.system(.body)
+    /// Long text: notes and transcripts.
+    static let reading = Font.system(size: 17)
 
     private static func dyn(_ light: UInt32, _ dark: UInt32) -> Color {
         Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(hex: dark) : UIColor(hex: light) })
@@ -94,5 +107,69 @@ struct WellButtonStyle: ButtonStyle {
             .frame(minHeight: 44)
             .background(Ev.well, in: RoundedRectangle(cornerRadius: Ev.rCtl, style: .continuous))
             .opacity(configuration.isPressed ? 0.7 : 1)
+    }
+}
+
+/// The four kinds of thing Eavesy keeps. Each has one ink, worn only by its
+/// index tab and its filter dot (`desktop/DESIGN.md` §4).
+enum EvKind: String, CaseIterable, Identifiable {
+    case voice, meeting, screen, note
+
+    var id: String { rawValue }
+
+    var ink: Color {
+        switch self {
+        case .voice: Ev.voice
+        case .meeting: Ev.meeting
+        case .screen: Ev.screen
+        case .note: Ev.note
+        }
+    }
+
+    var soft: Color {
+        switch self {
+        case .voice: Ev.voiceSoft
+        case .meeting: Ev.meetingSoft
+        case .screen: Ev.screenSoft
+        case .note: Ev.noteSoft
+        }
+    }
+
+    /// The filter's name for the kind.
+    var plural: String {
+        switch self {
+        case .voice: "Voice"
+        case .meeting: "Meetings"
+        case .screen: "Pictures"
+        case .note: "Notes"
+        }
+    }
+}
+
+/// A kind's index tab: its icon on its soft tint.
+struct KindTab: View {
+    let kind: EvKind
+    let symbol: String
+    var size: CGFloat = 34
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: size * 0.44, weight: .medium))
+            .foregroundStyle(kind.ink)
+            .frame(width: size, height: size)
+            .background(kind.soft, in: RoundedRectangle(cornerRadius: size * 0.3, style: .continuous))
+            .accessibilityHidden(true)
+    }
+}
+
+extension View {
+    /// Menus, thumbnails, cards that sit just above the paper.
+    func evLift() -> some View {
+        shadow(color: Ev.shade.opacity(0.35), radius: 7, y: 4)
+    }
+
+    /// The dock and the live card: the one thing floating over the page.
+    func evFloat() -> some View {
+        shadow(color: Ev.shade.opacity(0.75), radius: 22, y: 12)
     }
 }

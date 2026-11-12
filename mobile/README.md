@@ -8,7 +8,7 @@ here.
 | Path | What it is |
 |---|---|
 | `EavesyKit/` | Swift package: API client, offline outbox, sync engine. No UIKit, so `swift test` runs on a Mac. |
-| `Eavesy/` | The SwiftUI app: capture pad, library, recorder, shortcuts. |
+| `Eavesy/` | The SwiftUI app: library, capture dock, recorder, shortcuts. |
 | `EavesyShare/` | Share extension ("Save to Eavesy" in the share sheet). |
 | `Config/` | Info.plists and entitlements. |
 | `Eavesy.xcodeproj` | The project. Both source folders are synchronized, so new files need no project edit. |

@@ -170,7 +170,7 @@ public extension OutboxStore {
     }
 
     /// A note is named after its first line, as on the Mac.
-    static func noteTitle(_ text: String) -> String {
+    public static func noteTitle(_ text: String) -> String {
         let line = text.split(whereSeparator: \.isNewline).first.map(String.init) ?? ""
         let cleaned = line.trimmingCharacters(in: CharacterSet(charactersIn: "#*-> ").union(.whitespaces))
         return cleaned.isEmpty ? "Note" : String(cleaned.prefix(80))
