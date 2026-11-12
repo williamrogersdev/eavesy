@@ -12,6 +12,7 @@ import {
   Mic,
   Search,
   Settings,
+  Users,
   X,
 } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { href: '/app', label: 'Library', icon: LayoutGrid },
   { href: '/app/projects', label: 'Projects', icon: FolderOpen },
   { href: '/app/notetaker', label: 'Notetaker', icon: Bot },
+  { href: '/app/team', label: 'Team', icon: Users },
   { href: '/app/integrations', label: 'Integrations', icon: Plug },
   { href: '/app/settings', label: 'Settings', icon: Settings },
 ] as const;
