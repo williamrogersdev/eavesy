@@ -512,11 +512,20 @@ fn clear_prompt(app: &AppHandle, key: &str) {
 /// Starts the Meeting recording the prompt was for. It goes through the
 /// `mixed` source, so the cloud links it to the calendar event and names it.
 /// On its own thread: the engine can take a while to start.
+/// A meeting recording is starting. The control only says Recording once the
+/// capture is up, so every way to start one (the prompt, the menu bar) goes
+/// through this: a second start before then is dropped, not raced.
+static STARTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 fn record(app: &AppHandle, prompt: &Prompt) {
     clear_prompt(app, &prompt.key);
+    if STARTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
     let handle = app.clone();
     std::thread::spawn(move || {
         let started = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now());
+        STARTING.store(false, std::sync::atomic::Ordering::SeqCst);
         match started {
             Ok(session) => with_watch(|watch| {
                 let bundle = watch.call.as_ref().map(|(signal, _)| signal.bundle().to_string()).unwrap_or_default();
@@ -566,9 +575,6 @@ pub fn record_now(app: &AppHandle) {
         record(app, &prompt);
         return;
     }
-    // One start at a time: the control only says Recording once the capture
-    // is up, so a second click before then is dropped, not raced.
-    static STARTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     if STARTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
         return;
     }

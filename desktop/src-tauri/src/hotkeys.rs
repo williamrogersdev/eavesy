@@ -343,6 +343,8 @@ fn register(app: &AppHandle, action: Action, accelerator: &str) -> Result<(), Ho
     let shortcut = match keys(accelerator).map_err(HotkeyError::invalid)? {
         None => return Ok(()),
         Some(Keys::Fn | Keys::FnChord { .. }) if action == Action::Screen => return Err(HotkeyError::invalid(SCREEN_RULE)),
+        // On load as on edit: a saved fn binding for it is never bound as Talk.
+        Some(Keys::Fn | Keys::FnChord { .. }) if action == Action::Control => return Err(HotkeyError::invalid(CONTROL_RULE)),
         Some(Keys::Fn) => {
             #[cfg(target_os = "macos")]
             return crate::fn_key::bind(app, match action { Action::Toggle => 1, Action::Dictation => 2, Action::Assistant | Action::Screen | Action::Control => crate::fn_key::TALK });

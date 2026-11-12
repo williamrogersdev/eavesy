@@ -504,11 +504,16 @@ pub fn reset_frame(app: &AppHandle) {
 /// Puts the control away while its capture keeps recording. The menu bar's
 /// red dot and tooltip still say it is. Returns whether there was one to hide.
 pub fn tuck_on_main(app: &AppHandle) -> bool {
-    let now = current();
-    if !matches!(now.phase, Phase::Recording | Phase::Transcribing) || now.session_id.is_none() {
-        return false;
+    {
+        // Read and written under the lock state changes take, so the session
+        // named here is the one on the control.
+        let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
+        let now = current();
+        if !matches!(now.phase, Phase::Recording | Phase::Transcribing) || now.session_id.is_none() {
+            return false;
+        }
+        *TUCKED.lock().unwrap_or_else(|error| error.into_inner()) = now.session_id;
     }
-    *TUCKED.lock().unwrap_or_else(|error| error.into_inner()) = now.session_id;
     release_editor_on_main(app);
     imp::hide(app);
     true
