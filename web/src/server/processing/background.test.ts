@@ -453,7 +453,9 @@ describe('deleting an account', () => {
     t.sqlite.run(`INSERT INTO users (id, created_at, updated_at) VALUES ('u2', ?, ?)`, [now, now]);
 
     const referencing = [...new Set(tablesReferencingUsers(t.sqlite))];
-    const parents: Record<string, string> = { users: 'u1', meetings: 'm1' };
+    // A membership needs its team, which references no user itself.
+    t.sqlite.run(`INSERT INTO teams (id, name, created_by, created_at, updated_at) VALUES ('team1', 'Team', 'u1', ?, ?)`, [now, now]);
+    const parents: Record<string, string> = { users: 'u1', meetings: 'm1', teams: 'team1' };
     // Parents first: a child's other foreign keys need their row to exist.
     const order = ['devices', 'calendar_connections', ...referencing.filter((x) => x !== 'meetings')];
     const seeded = new Set<string>(['meetings']);
@@ -479,6 +481,8 @@ describe('deleting an account', () => {
     }
     expect(t.sqlite.query(`SELECT id FROM users ORDER BY id`).all()).toEqual([{ id: 'u2' }]);
     expect(t.sqlite.query(`SELECT code_hash FROM oauth_codes`).all()).toEqual([{ code_hash: 'other' }]);
+    // The team had only that member, so it went with them.
+    expect(t.sqlite.query(`SELECT id FROM teams`).all()).toEqual([]);
     // Purged by name, or by the helpers for bots and emails, or as the meeting rows themselves.
     const handledElsewhere = new Set(['meetings', 'meeting_bots', 'email_deliveries']);
     for (const table of referencing) {
