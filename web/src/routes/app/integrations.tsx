@@ -65,6 +65,10 @@ function IntegrationsPage() {
     if (params.has('connected') || params.has('error')) window.history.replaceState({}, '', '/app/integrations');
   }, []);
 
+  /** The change is already saved by the time this runs: a failed reload only leaves the page out of date. */
+  const refreshAfterChange = () =>
+    loadMe().catch(() => setError('Saved, but this page could not refresh. Reload to see it.'));
+
   const saveAnthropic = async (value: string | null = anthropic) => {
     setSaving(true);
     setError(null);
@@ -75,9 +79,9 @@ function IntegrationsPage() {
         body: JSON.stringify({ byoAnthropicKey: value }),
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
-      await loadMe();
       setAnthropic('');
       setAddingKey(false);
+      await refreshAfterChange();
     } catch (cause) {
       setError(cause instanceof Error ? `Could not save the key: ${cause.message}` : 'Could not save the key.');
     } finally {
@@ -91,7 +95,7 @@ function IntegrationsPage() {
     try {
       const response = await fetch('/api/connections/openrouter', { method: 'DELETE' });
       if (!response.ok) throw new Error('Could not disconnect OpenRouter.');
-      await loadMe();
+      await refreshAfterChange();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not disconnect OpenRouter.');
     } finally {

@@ -24,7 +24,7 @@ export function googleOutcome(params: URLSearchParams): { kind: 'ok' | 'error'; 
 }
 
 /** Google Calendar: Connect, or each linked account with Disconnect. */
-export function GoogleCalendarCards({ onError }: { onError: (message: string) => void }) {
+export function GoogleCalendarCards({ onError }: { onError: (message: string | null) => void }) {
   const [status, setStatus] = useState<CalendarStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   /** The connection Google couldn't be told about, so Disconnect kept it. */
@@ -32,7 +32,10 @@ export function GoogleCalendarCards({ onError }: { onError: (message: string) =>
   const [failed, setFailed] = useState(false);
   const load = useCallback(() => {
     setFailed(false);
-    void getCalendarStatus().then(setStatus).catch(() => {
+    void getCalendarStatus().then((loaded) => {
+      setStatus(loaded);
+      onError(null);
+    }).catch(() => {
       setFailed(true);
       onError('Could not load your calendar connections.');
     });
