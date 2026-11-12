@@ -604,7 +604,9 @@ opens it too, and a drag there moves the control. It leads the pill so a
 near miss never lands on ×. The other states at this size (Saved, a video
 being written) show their status and × only. The pill is one width whatever
 the Talk shortcut is: a shortcut that would leave under 12px of bare room
-is left off the pill and named in Talk's tooltip instead.
+wraps under Talk, where the button's own box clips it out of sight, and is
+named in Talk's tooltip instead. Talk always has at least 98px, more than its
+icon and label need, so only the shortcut is ever hidden.
 
 **Everything about the pill is set on one page, Settings → Pill**: when it
 shows, its colour, how see-through it is, what it shows while you talk, what
