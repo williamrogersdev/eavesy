@@ -272,7 +272,7 @@ function Team({ state, busy, change }: { state: InTeam; busy: boolean; change: C
               <button
                 type="button"
                 disabled={busy}
-                onClick={() => void change(() => call('DELETE', confirming === 'delete' ? '/api/team?everyone=1' : '/api/team')).then(() => setConfirming(null))}
+                onClick={() => void change(() => call('DELETE', confirming === 'delete' ? '/api/team?everyone=1' : '/api/team')).then((done) => { if (done) setConfirming(null); })}
                 className={appButton('danger', 'sm')}
               >
                 {confirming === 'delete' ? 'Delete team' : 'Leave team'}
