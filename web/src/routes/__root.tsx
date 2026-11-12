@@ -31,7 +31,7 @@ export const Route = createRootRoute({
           'screen and voice recorder',
           'paste context into claude',
           'ai meeting notes',
-          'bot-free recorder',
+          'mac meeting recorder',
           'markdown transcript',
         ].join(', '),
       },

@@ -29,7 +29,7 @@ export const INTEGRATIONS: Integration[] = [
     slug: 'zoom',
     name: 'Zoom',
     category: 'Video calls',
-    tagline: 'Turn Zoom calls into an AI-ready brief — no bot',
+    tagline: 'Turn Zoom calls into an AI-ready brief',
     description:
       'Use Meeting mode to capture your microphone and the sound Zoom plays on your Mac. Sign in for cloud transcripts and Markdown briefs. Follow your organization’s recording requirements.',
     steps: [
@@ -40,7 +40,7 @@ export const INTEGRATIONS: Integration[] = [
     ],
     faqs: [
       { q: 'Do I need Zoom admin rights?', a: 'Eavesy captures Mac audio rather than using Zoom’s cloud recording. macOS permissions, device policy, and participant consent still apply.' },
-      { q: 'Will other people see a recording bot?', a: 'No. Nothing joins your Zoom call — Eavesy captures audio locally on your machine.' },
+      { q: 'Will other people see a recording bot?', a: 'Not when you record from your Mac: Eavesy captures the audio locally and adds no participant to the call. If you send the Eavesy Notetaker instead, it joins as a visible participant.' },
     ],
   },
   {
@@ -84,7 +84,7 @@ export const INTEGRATIONS: Integration[] = [
     category: 'Video calls',
     tagline: 'Briefs and transcripts for Webex calls',
     description:
-      'Capture Webex calls the same simple way — record your Mac’s screen and audio, get a transcript and an AI-ready brief, with no bot joining the session.',
+      'Capture Webex calls the same simple way — record your Mac’s screen and audio, get a transcript and an AI-ready brief.',
     steps: [
       'Join your Webex meeting.',
       'Press record in Eavesy.',
@@ -98,7 +98,7 @@ export const INTEGRATIONS: Integration[] = [
     category: 'Video calls',
     tagline: 'Capture Slack huddles as AI-ready briefs',
     description:
-      'Turn quick Slack huddles into transcripts and briefs you can search later or hand to your AI — recorded locally, with no bot in the huddle.',
+      'Turn quick Slack huddles into transcripts and briefs you can search later or hand to your AI — recorded on your Mac.',
     steps: [
       'Start or join a Slack huddle.',
       'Hit record in Eavesy to capture the audio.',
