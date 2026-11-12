@@ -6,6 +6,12 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.15] - 2026-11-12 - desktop
+
+### Fixed
+
+- Mac app: shorter waits for the tidied words before a paste ([#371](https://github.com/williamrogersdev/eavesy/pull/371))
+
 ## [0.9.14] - 2026-11-11 - desktop
 
 ### Added
