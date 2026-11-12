@@ -86,12 +86,27 @@ export function transcriptAttachment(
     .join('\n');
 }
 
+/**
+ * A summary's open questions as stored, keeping only entries that are a
+ * question with words: one bad entry never stops the recap from going out.
+ */
+export function openQuestionsFrom(stored: string | null | undefined): { text: string }[] {
+  const decoded = decode<unknown>(stored, []);
+  if (!Array.isArray(decoded)) return [];
+  return decoded.flatMap((entry) => {
+    const text = typeof entry === 'object' && entry !== null ? (entry as { text?: unknown }).text : null;
+    return typeof text === 'string' && text.trim() ? [{ text: text.trim() }] : [];
+  });
+}
+
 export interface RecapContent {
   title: string;
   startedAt: number | null;
   tldr: string;
   decisions: Decision[];
   actionItems: ActionItem[];
+  /** What the meeting left unanswered, as the meeting's panel and page show it. */
+  openQuestions: { text: string }[];
   link: string;
   attachmentNote?: string | null;
   /** The "Send to everyone" button: a page in the app that asks before sending anything. */
@@ -113,6 +128,7 @@ export function renderRecap(content: RecapContent) {
     const meta = [a.owner, a.due && `due ${a.due}`].filter(Boolean).join(', ');
     return { text: a.text, meta };
   });
+  const questions = content.openQuestions.map((q) => q.text).filter(Boolean);
 
   const text = [
     content.title,
@@ -122,6 +138,7 @@ export function renderRecap(content: RecapContent) {
     content.tldr || 'No summary was written for this meeting.',
     ...(decisions.length ? ['', 'Decisions', ...decisions.map((d) => `- ${d}`)] : []),
     ...(actions.length ? ['', 'Action items', ...actions.map((a) => `- ${a.text}${a.meta ? ` (${a.meta})` : ''}`)] : []),
+    ...(questions.length ? ['', 'Open questions', ...questions.map((q) => `- ${q}`)] : []),
     '',
     `Transcript: ${content.link}`,
     ...(content.attachmentNote ? [content.attachmentNote] : []),
@@ -141,6 +158,7 @@ ${when ? `<p style="color:#78716c;margin:0 0 16px;font-size:13px">${escapeHtml(w
 <p style="margin:0">${escapeHtml(content.tldr || 'No summary was written for this meeting.')}</p>
 ${section('Decisions', decisions.map(escapeHtml))}
 ${section('Action items', actions.map((a) => `${escapeHtml(a.text)}${a.meta ? ` <span style="color:#78716c">(${escapeHtml(a.meta)})</span>` : ''}`))}
+${section('Open questions', questions.map(escapeHtml))}
 <p style="margin:24px 0 0"><a href="${escapeHtml(content.link)}" style="color:#1c1917">Open the transcript</a></p>
 ${content.attachmentNote ? `<p style="color:#78716c;font-size:13px">${escapeHtml(content.attachmentNote)}</p>` : ''}
 ${content.shareLink ? `<p style="margin:24px 0 0"><a href="${escapeHtml(content.shareLink)}" style="display:inline-block;background:#1c1917;color:#fafaf9;text-decoration:none;font-weight:600;padding:10px 18px;border-radius:999px">Send to everyone</a></p>
@@ -239,6 +257,7 @@ export async function sendRecap(db: AppDb, env: RecapEnv, meetingId: string, now
     tldr: summary?.tldr ?? '',
     decisions: decode<Decision[]>(summary?.decisionsJson, []),
     actionItems: decode<ActionItem[]>(summary?.actionItemsJson, []),
+    openQuestions: openQuestionsFrom(summary?.openQuestionsJson),
     link: `${app}/app/meetings/${encodeURIComponent(meetingId)}`,
     attachmentNote,
     shareLink: user.shareNotesOffer ? `${app}/app/meetings/${encodeURIComponent(meetingId)}/share-notes` : null,
