@@ -6,6 +6,9 @@ in the Meet chat, builds docs and whiteboards during the call, and keeps
 notes, action items and a transcript on a meeting page in Claude. It saves no
 audio. Other platforms are announced, not shipped.
 
+As of 2026-11-12, from Anthropic's pages below; the product is in beta and
+these details may change.
+
 Sources: <https://support.claude.com/en/articles/18325154-use-claude-meetings>,
 <https://claude.com/resources/articles/claude-meetings>.
 
@@ -35,9 +38,10 @@ record with the Mac app instead of sending the bot.
 - **Leaving.** Claude stays up to eight hours. The bot counts a call that
   holds only itself, Claude and other notetakers as empty and leaves after the
   usual minute (`workers/meeting-bot/bot/src/assistants.rs`). Because Claude is
-  also a person's name, a "Claude" who has been seen speaking counts as a
-  person, and the bot stays whenever Meet's head count is larger than the
-  tiles it can read.
+  also a person's name, a bare "Claude" counts as software only after other
+  people were in the call and left, and never while it has spoken in the last
+  five minutes. The bot also stays whenever Meet's head count is larger than
+  the tiles it can read.
 - **Notes.** The summary prompt treats an assistant on the call as software:
   what it reported is kept, but it never owns an action item or a decision
   (`web/src/lib/ai/meeting-summary.ts`).

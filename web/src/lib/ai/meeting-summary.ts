@@ -135,7 +135,7 @@ Rules:
 - Action items are concrete commitments; include an owner only when the transcript makes it explicit.
 - Decisions are concluded, not proposals still under debate.
 - Do not invent facts or attribution. Omit anything the transcript does not support.
-- An AI assistant or notetaker on the call (Claude, a participant named like a notetaker) is software, not an attendee: keep what it reported or produced, but never make it the owner of an action item or the one who decided something. The owner is the person who asked it or took the work on, when the transcript says who.
+- An AI assistant or notetaker on the call (Claude added to the meeting, a participant named like a notetaker) is software, not an attendee, unless the transcript makes clear it is a person: keep what it reported or produced, but never make it the owner of an action item or the one who decided something. The owner is the person who asked it or took the work on, when the transcript says who.
 - ${notesLanguageRule(args.notesLanguage)}${args.chapters ? `\n- ${CHAPTER_INSTRUCTIONS}` : ''}`;
 }
 

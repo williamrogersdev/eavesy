@@ -93,8 +93,9 @@ struct Speakers {
 }
 
 impl Speakers {
-    fn has_spoken(&self, name: &str) -> bool {
-        self.spans.iter().any(|(n, _, _)| n == name)
+    /// Whether `name` was shown speaking at or after `since_ms`.
+    fn spoke_since(&self, name: &str, since_ms: u64) -> bool {
+        self.spans.iter().rev().any(|(n, _, end)| n == name && *end >= since_ms)
     }
 
     fn note(&mut self, names: &[String], at_ms: u64, tick_ms: u64) {
@@ -197,6 +198,7 @@ async fn run(
     let mut recording_since: Option<Instant> = None;
     let mut announced = false;
     let mut assistants_only = false;
+    let mut people_seen = false;
     let mut last_heartbeat = Instant::now();
     let mut blocks: u64 = 0;
     let mut tick = interval(Duration::from_secs(1));
@@ -224,7 +226,9 @@ async fn run(
                 // them is over, like one left to this bot alone.
                 if seen.phase == Phase::InCall && !seen.alone {
                     let count = seen.detail.get("count").and_then(Value::as_u64);
-                    if assistants::only_assistants(&seen.participants, &cfg.bot_name, count, |n| speakers.has_spoken(n)) {
+                    people_seen |= seen.participants.iter().any(|n| *n != cfg.bot_name && !assistants::is_assistant(n));
+                    let recent = recording_since.map_or(0, |since| (since.elapsed().as_millis() as u64).saturating_sub(assistants::SPOKE_RECENTLY_MS));
+                    if assistants::only_assistants(&seen.participants, &cfg.bot_name, count, people_seen, |n| speakers.spoke_since(n, recent)) {
                         if !assistants_only {
                             log(json!({ "msg": "only assistants left", "participants": seen.participants }));
                         }
