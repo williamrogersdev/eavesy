@@ -39,6 +39,8 @@ function IntegrationsPage() {
   const [addingKey, setAddingKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [webhooksOpen, setWebhooksOpen] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const copyFailed = useCallback(() => setError('Could not copy it. Select the text and copy it yourself.'), []);
 
   const loadMe = useCallback(async () => {
     const response = await fetch('/api/me');
@@ -56,19 +58,21 @@ function IntegrationsPage() {
     const params = new URLSearchParams(window.location.search);
     if (params.get('connected') === 'openrouter') setNotice({ kind: 'ok', text: 'OpenRouter connected.' });
     else if (params.get('error')?.startsWith('openrouter')) setNotice({ kind: 'error', text: 'Could not connect OpenRouter. Try again.' });
+    else if (params.get('error') === 'signin_required') setNotice({ kind: 'error', text: 'Sign in, then connect again.' });
+    else if (params.has('error')) setNotice({ kind: 'error', text: 'Could not finish connecting. Try again.' });
     const google = googleOutcome(params);
     if (google) setNotice(google);
     if (params.has('connected') || params.has('error')) window.history.replaceState({}, '', '/app/integrations');
   }, []);
 
-  const saveAnthropic = async () => {
+  const saveAnthropic = async (value: string | null = anthropic) => {
     setSaving(true);
     setError(null);
     try {
       const response = await fetch('/api/me', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ byoAnthropicKey: anthropic }),
+        body: JSON.stringify({ byoAnthropicKey: value }),
       });
       if (!response.ok) throw new Error(`Server returned ${response.status}`);
       await loadMe();
@@ -83,12 +87,15 @@ function IntegrationsPage() {
 
   const disconnectOpenRouter = async () => {
     setError(null);
+    setDisconnecting(true);
     try {
       const response = await fetch('/api/connections/openrouter', { method: 'DELETE' });
       if (!response.ok) throw new Error('Could not disconnect OpenRouter.');
       await loadMe();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not disconnect OpenRouter.');
+    } finally {
+      setDisconnecting(false);
     }
   };
 
@@ -108,13 +115,13 @@ function IntegrationsPage() {
           icon={<Bot />}
           name="Claude and ChatGPT"
           blurb={`Add ${MCP_URL} as a connector and sign in`}
-          action={<CopyButton text={MCP_URL} label="Copy URL" />}
+          action={<CopyButton text={MCP_URL} label="Copy URL" onFail={copyFailed} />}
         />
         <IntegrationCard
           icon={<Terminal />}
           name="Claude Code"
           blurb="Run one command in your terminal, then sign in"
-          action={<CopyButton text={CLAUDE_CODE_ADD} label="Copy command" />}
+          action={<CopyButton text={CLAUDE_CODE_ADD} label="Copy command" onFail={copyFailed} />}
         />
       </IntegrationGroup>
 
@@ -135,7 +142,9 @@ function IntegrationsPage() {
           blurb="Bill chat, translation and screenshot descriptions to your credits"
           status={me?.hasOpenRouterKey ? { text: 'Connected', tone: 'on' } : undefined}
           action={me?.hasOpenRouterKey ? (
-            <button type="button" onClick={() => void disconnectOpenRouter()} className={appButton('ghost', 'sm')}>Disconnect</button>
+            <button type="button" disabled={disconnecting} onClick={() => void disconnectOpenRouter()} className={appButton('ghost', 'sm')}>
+              {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+            </button>
           ) : (
             <a href="/api/connections/openrouter" className={appButton('secondary', 'sm')}>Connect</a>
           )}
@@ -146,9 +155,14 @@ function IntegrationsPage() {
           blurb={me?.anthropicKeyHint ? `Summaries and chat bill to the key ending ${me.anthropicKeyHint}` : 'Bill summaries and chat to your own API key'}
           status={me?.hasAnthropicKey ? { text: 'Connected', tone: 'on' } : undefined}
           action={addingKey ? null : (
-            <button type="button" onClick={() => setAddingKey(true)} className={appButton('secondary', 'sm')}>
-              {me?.hasAnthropicKey ? 'Replace key' : 'Add key'}
-            </button>
+            <>
+              {me?.hasAnthropicKey ? (
+                <button type="button" disabled={saving} onClick={() => void saveAnthropic(null)} className={appButton('ghost', 'sm')}>Remove</button>
+              ) : null}
+              <button type="button" onClick={() => setAddingKey(true)} className={appButton('secondary', 'sm')}>
+                {me?.hasAnthropicKey ? 'Replace key' : 'Add key'}
+              </button>
+            </>
           )}
         >
           {addingKey ? (
@@ -195,7 +209,7 @@ function IntegrationsPage() {
   );
 }
 
-function CopyButton({ text, label }: { text: string; label: string }) {
+function CopyButton({ text, label, onFail }: { text: string; label: string; onFail: () => void }) {
   const [copied, setCopied] = useState(false);
   return (
     <button
@@ -204,7 +218,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
         void navigator.clipboard.writeText(text).then(() => {
           setCopied(true);
           window.setTimeout(() => setCopied(false), 1500);
-        }, () => undefined);
+        }, onFail);
       }}
       className={appButton('secondary', 'sm')}
     >

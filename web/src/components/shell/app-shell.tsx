@@ -418,7 +418,7 @@ function TopSearch() {
           aria-label="Search your library"
           aria-expanded={open && Boolean(query.trim())}
           aria-controls={listId}
-          aria-activedescendant={open && query.trim() ? `${listId}-${active}` : undefined}
+          aria-activedescendant={open && query.trim() ? `${listId}-${Math.min(active, results.length)}` : undefined}
           className="h-9 w-full rounded-[var(--ev-r-ctl)] bg-ev-well pl-9 pr-12 font-round text-[13.5px] text-ev-ink outline-none transition placeholder:text-ev-ink-3 focus:bg-ev-raised focus:shadow-[var(--ev-focus)]"
         />
         {shortcut && !query ? (

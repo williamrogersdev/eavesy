@@ -19,7 +19,7 @@ export function googleOutcome(params: URLSearchParams): { kind: 'ok' | 'error'; 
   const back = params.get('from') === 'mac' ? ' You can go back to the Eavesy app.' : '';
   if (params.get('connected') === 'google') return { kind: 'ok', text: `Google Calendar connected.${back}` };
   const error = params.get('error');
-  if (error && error in GOOGLE_ERRORS) return { kind: 'error', text: GOOGLE_ERRORS[error] + back };
+  if (error && Object.hasOwn(GOOGLE_ERRORS, error)) return { kind: 'error', text: GOOGLE_ERRORS[error] + back };
   return null;
 }
 
@@ -29,13 +29,27 @@ export function GoogleCalendarCards({ onError }: { onError: (message: string) =>
   const [busy, setBusy] = useState<string | null>(null);
   /** The connection Google couldn't be told about, so Disconnect kept it. */
   const [stuck, setStuck] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const load = useCallback(() => {
-    void getCalendarStatus().then(setStatus).catch(() => onError('Could not load your calendar connections.'));
+    setFailed(false);
+    void getCalendarStatus().then(setStatus).catch(() => {
+      setFailed(true);
+      onError('Could not load your calendar connections.');
+    });
   }, [onError]);
   useEffect(load, [load]);
 
   const icon = <CalendarDays />;
-  if (!status) return <IntegrationCard icon={icon} name="Google Calendar" blurb="Checking…" />;
+  if (!status) {
+    return (
+      <IntegrationCard
+        icon={icon}
+        name="Google Calendar"
+        blurb={failed ? 'Could not load' : 'Checking…'}
+        action={failed ? <button type="button" onClick={load} className={appButton('secondary', 'sm')}>Try again</button> : null}
+      />
+    );
+  }
 
   const google = status.connections.filter((connection) => connection.provider === 'google');
   const disconnect = (id: string, force = false) => {

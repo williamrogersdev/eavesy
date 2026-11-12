@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { Link } from '@/components/ui/app-link';
 import { AppAlert, AppEmptyState, AppPage, AppPageHeader, AppSection, appButton } from '@/components/ui/app-page';
 import { getMeetingCapture, getUpcomingMeetings, setCaptureMode, type UpcomingMeeting } from '@/lib/api/calendar';
-import { wantsNotetaker, type CaptureDefault } from '@/lib/meetings/capture-plan';
+import { notetakerToggle, wantsNotetaker, type CaptureDefault } from '@/lib/meetings/capture-plan';
 
 export const Route = createFileRoute('/app/notetaker')({ component: NotetakerPage });
 
@@ -96,8 +96,8 @@ function NotetakerPage() {
     }
   }, []);
 
-  // Null until loaded; `false` when no calendar is connected.
-  const [upcoming, setUpcoming] = useState<UpcomingMeeting[] | false | null>(null);
+  // Null until loaded; `false` when no calendar is connected; 'error' when it couldn't be read.
+  const [upcoming, setUpcoming] = useState<UpcomingMeeting[] | false | 'error' | null>(null);
   const [captureDefault, setCaptureDefault] = useState<CaptureDefault>('mac');
   const [changing, setChanging] = useState<string | null>(null);
 
@@ -107,8 +107,8 @@ function NotetakerPage() {
       setUpcoming(meetings ?? false);
       setCaptureDefault(prefs.captureDefault);
     } catch {
-      // The calendar is an extra here: the link form below still works without it.
-      setUpcoming([]);
+      // The link form below still works without the calendar.
+      setUpcoming('error');
     }
   }, []);
   useEffect(() => {
@@ -120,8 +120,7 @@ function NotetakerPage() {
     setChanging(meeting.id);
     setError('');
     try {
-      const off = wantsNotetaker(captureDefault) ? 'mac' : null;
-      await setCaptureMode(meeting.id, wantsNotetaker(meeting.mode) ? off : 'notetaker');
+      await setCaptureMode(meeting.id, notetakerToggle(meeting.mode, captureDefault));
       await loadUpcoming();
     } catch {
       setError('Could not change that meeting. Please retry.');
@@ -201,6 +200,11 @@ function NotetakerPage() {
         <AppSection title="Your next meetings">
           {upcoming === null ? (
             <p role="status" className="text-sm text-ev-ink-2">Loading your calendar…</p>
+          ) : upcoming === 'error' ? (
+            <div className="flex items-center justify-between gap-3 rounded-[var(--ev-r-panel)] bg-ev-warn-soft px-4 py-3">
+              <p role="alert" className="text-sm text-ev-warn-ink">Could not load your calendar.</p>
+              <button type="button" onClick={() => { setUpcoming(null); void loadUpcoming(); }} className={appButton('secondary', 'sm')}>Try again</button>
+            </div>
           ) : upcoming === false ? (
             <div className="flex items-center justify-between gap-3 rounded-[var(--ev-r-panel)] bg-ev-well px-4 py-3">
               <p className="flex min-w-0 items-center gap-2.5 text-sm text-ev-ink-2">

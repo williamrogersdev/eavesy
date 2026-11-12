@@ -21,13 +21,18 @@ export function ApiKeysCard({ onError }: { onError: (message: string | null) => 
   const [tokens, setTokens] = useState<McpToken[]>([]);
   const [config, setConfig] = useState<string | null>(null);
   const [key, setKey] = useState<string | null>(null);
+  /** The key whose one-time secret is on screen, so revoking another key leaves it there. */
+  const [shownId, setShownId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [allowWrite, setAllowWrite] = useState(false);
 
   useEffect(() => {
     void fetch('/api/mcp-tokens')
-      .then(async (response): Promise<unknown> => (response.ok ? response.json() : []))
+      .then(async (response): Promise<unknown> => {
+        if (!response.ok) throw new Error(`Server returned ${response.status}`);
+        return response.json();
+      })
       .then((value) => setTokens(parseMcpTokens(value)))
       .catch(() => onError('Could not load your API keys.'));
   }, [onError]);
@@ -48,10 +53,12 @@ export function ApiKeysCard({ onError }: { onError: (message: string | null) => 
       if (!serverUrl || !token) throw new Error('Server returned an invalid key');
       setConfig(mcpClientConfig(serverUrl, token));
       setKey(token);
+      setShownId(isRecord(created) ? optionalString(created.id) ?? null : null);
       setCopied(false);
-      const refreshed = await fetch('/api/mcp-tokens');
-      if (!refreshed.ok) throw new Error('Could not refresh your API keys');
-      setTokens(parseMcpTokens(await refreshed.json()));
+      // The key exists by now: a failed refresh only leaves the list out of date.
+      const refreshed = await fetch('/api/mcp-tokens').catch(() => null);
+      if (refreshed?.ok) setTokens(parseMcpTokens(await refreshed.json()));
+      else onError('Your key was created, but the list could not be refreshed. Reload to see it.');
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : 'Could not create the key.');
     } finally {
@@ -69,8 +76,11 @@ export function ApiKeysCard({ onError }: { onError: (message: string | null) => 
       });
       if (!response.ok) throw new Error('Could not revoke the key');
       setTokens((current) => current.filter((token) => token.id !== id));
-      setConfig(null);
-      setKey(null);
+      if (id === shownId) {
+        setConfig(null);
+        setKey(null);
+        setShownId(null);
+      }
     } catch (cause) {
       onError(cause instanceof Error ? cause.message : 'Could not revoke the key.');
     }
@@ -94,7 +104,7 @@ export function ApiKeysCard({ onError }: { onError: (message: string | null) => 
       status={tokens.length ? { text: `${tokens.length} ${tokens.length === 1 ? 'key' : 'keys'}`, tone: 'on' } : undefined}
       action={
         <>
-          <label className="hidden items-center gap-1.5 text-xs text-ev-ink-2 sm:flex">
+          <label className="flex items-center gap-1.5 text-xs text-ev-ink-2">
             <input type="checkbox" checked={allowWrite} onChange={(event) => setAllowWrite(event.target.checked)} />
             Allow writes
           </label>
