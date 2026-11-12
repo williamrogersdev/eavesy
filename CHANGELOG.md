@@ -6,6 +6,17 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.9.16] - 2026-11-12 - desktop
+
+### Added
+
+- Mac app: an Open Eavesy button on the resting pill ([#376](https://github.com/williamrogersdev/eavesy/pull/376))
+
+### Fixed
+
+- Mac app: only an empty field counts as emptied, and a delivery is waited for until it ends ([#375](https://github.com/williamrogersdev/eavesy/pull/375))
+- Mac app: live typing follows a field that changes under it ([#373](https://github.com/williamrogersdev/eavesy/pull/373))
+
 ## [0.9.15] - 2026-11-12 - desktop
 
 ### Fixed
