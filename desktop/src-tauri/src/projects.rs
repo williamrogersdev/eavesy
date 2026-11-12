@@ -272,13 +272,12 @@ fn contains_word(text: &str, needle: &str) -> bool {
 
 /// The account's meeting for a recording on this Mac, once the first part of
 /// it has reached eavesy.com (a few seconds into the recording).
-fn remote_meeting(app: &AppHandle, session_id: &str) -> Option<String> {
-    crate::sqlite::remote_meeting_id(app, session_id)
-        .unwrap_or_else(|error| {
-            tracing::warn!("meeting panel: could not read the meeting's account id: {error}");
-            None
-        })
-        .filter(|id| is_plain_id(id))
+fn remote_meeting(app: &AppHandle, session_id: &str) -> Result<Option<String>, String> {
+    let id = crate::sqlite::remote_meeting_id(app, session_id).map_err(|error| {
+        tracing::warn!("meeting panel: could not read the meeting's account id: {error}");
+        "Eavesy couldn’t read this recording on your Mac.".to_string()
+    })?;
+    Ok(id.filter(|id| is_plain_id(id)))
 }
 
 /// The notes written so far for a meeting that is still recording: the
@@ -287,7 +286,7 @@ fn remote_meeting(app: &AppHandle, session_id: &str) -> Option<String> {
 #[tauri::command]
 pub async fn meeting_overview(app: AppHandle, session_id: String) -> Result<Option<Value>, String> {
     let Some(credential) = settings::device_credential(&app) else { return Ok(None) };
-    let Some(remote_id) = remote_meeting(&app, &session_id) else { return Ok(None) };
+    let Some(remote_id) = remote_meeting(&app, &session_id)? else { return Ok(None) };
     let response = client()
         .ok_or("Could not reach eavesy.com")?
         .get(crate::base_url::join(&credential.base, &format!("/api/sessions/{remote_id}/result")))
@@ -350,7 +349,7 @@ fn ask_failure(status: u16, reason: &str) -> String {
 #[tauri::command]
 pub async fn ask_meeting(app: AppHandle, session_id: String, messages: Value, heard: Option<String>) -> Result<String, String> {
     let credential = settings::device_credential(&app).ok_or("Sign in to Eavesy to ask about this meeting.")?;
-    let remote_id = remote_meeting(&app, &session_id).ok_or("This meeting hasn’t reached your account yet. Ask again in a moment.")?;
+    let remote_id = remote_meeting(&app, &session_id)?.ok_or("This meeting hasn’t reached your account yet. Ask again in a moment.")?;
     let mut body = json!({ "messages": messages });
     if let Some(heard) = heard.map(|text| tail_chars(text.trim(), MAX_HEARD)).filter(|text| !text.is_empty()) {
         body["heard"] = Value::String(heard);

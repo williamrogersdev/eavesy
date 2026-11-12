@@ -536,8 +536,10 @@ impl Drop for Starting {
 }
 
 fn record(app: &AppHandle, prompt: &Prompt) {
-    clear_prompt(app, &prompt.key);
+    // Another start is under way: the prompt stays until that one puts
+    // Recording, or its failure, in its place. The answer is never just dropped.
     let Some(starting) = Starting::claim() else { return };
+    clear_prompt(app, &prompt.key);
     let handle = app.clone();
     std::thread::spawn(move || {
         let started = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now());

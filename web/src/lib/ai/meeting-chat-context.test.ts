@@ -49,7 +49,7 @@ describe('meetingChatContext', () => {
     expect(context).toContain('Line number 8999 ');
     expect(context).not.toContain('Line number 0 ');
     // The cut falls on a line start.
-    expect(context.split('each line starts with its time into the meeting):\n')[1]?.startsWith('[')).toBe(true);
+    expect(context.split('so the first line may be cut):\n')[1]?.startsWith('[')).toBe(true);
   });
 
   it('takes what the Mac heard only for a meeting still going on, and says it is not the transcript', () => {
