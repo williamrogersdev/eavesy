@@ -48,9 +48,10 @@ public actor SyncEngine {
         return .idle
     }
 
-    /// When the next retry or transcript check is due, if any.
+    /// When the next retry or transcript check is due, if any. A recording still
+    /// being captured has nothing to wait for: each sealed segment asks for a run itself.
     public func nextWake() -> Date? {
-        store.items.filter(\.needsSync).map { $0.nextAttemptAt ?? now() }.min()
+        store.items.filter { $0.needsSync && $0.state != .recording }.map { $0.nextAttemptAt ?? now() }.min()
     }
 
     private func sync(_ item: OutboxItem) async throws {
@@ -152,7 +153,7 @@ public actor SyncEngine {
 
     /// 2 s doubling to 5 minutes, the Mac app's schedule.
     public static func backoff(_ attempts: Int) -> TimeInterval {
-        min(2 * pow(2, Double(min(max(attempts, 1), 8) - 1)), 300)
+        min(2 * pow(2, Double(min(max(attempts, 1), 9) - 1)), 300)
     }
 
     static func describe(_ error: Error) -> String {

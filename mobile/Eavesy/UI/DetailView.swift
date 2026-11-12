@@ -113,7 +113,7 @@ private struct RecordingBody: View {
                     }
                 }
             } else if failed {
-                Text("Couldn't load this one. Pull down on the list to try again.").font(.footnote).foregroundStyle(Ev.ink2)
+                Text("Couldn't load this one. Check your connection, then open it again.").font(.footnote).foregroundStyle(Ev.ink2)
             } else {
                 ProgressView().frame(maxWidth: .infinity)
             }
@@ -125,6 +125,7 @@ private struct RecordingBody: View {
                     result = latest
                     if latest.isFinal { return }
                 } catch {
+                    model.loadFailed(error)
                     if result == nil { failed = true }
                     return
                 }
@@ -164,6 +165,7 @@ private struct RemoteCaptureBody: View {
             do {
                 data = try await model.api.captureContent(id: id)
             } catch {
+                model.loadFailed(error)
                 failed = true
             }
         }

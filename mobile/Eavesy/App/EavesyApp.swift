@@ -13,8 +13,10 @@ struct EavesyApp: App {
                 .environment(model)
                 .tint(Ev.coat)
                 .onOpenURL { url in
-                    // eavesy://record, eavesy://note, eavesy://photo, eavesy://screenshot
-                    if let action = url.host.flatMap(QuickAction.init(rawValue:)) { QuickActions.shared.run(action) }
+                    // eavesy://note, eavesy://photo, eavesy://screenshot. A link never starts the
+                    // microphone: any page or app can open one. Recording starts from a tap,
+                    // a Home Screen action or a shortcut the user ran.
+                    if let action = url.host.flatMap(QuickAction.init(rawValue:)), action != .record { QuickActions.shared.run(action) }
                 }
         }
         .onChange(of: phase) { _, phase in

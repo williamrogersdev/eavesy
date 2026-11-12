@@ -37,8 +37,9 @@ here.
   Screenshot button opens your recent screenshots to pick from, and the share
   extension takes one straight from the screenshot preview. Shared items wait
   in the app group's inbox until the app next opens.
-- **Fast ways in.** Home Screen quick actions, `eavesy://record|note|photo|screenshot`,
-  and App Intents (Action button, Control Center, Shortcuts, Siri).
+- **Fast ways in.** Home Screen quick actions, App Intents (Action button,
+  Control Center, Shortcuts, Siri), and `eavesy://note|photo|screenshot`
+  links. A link never starts a recording: any page or app can open one.
 
 ## Build and run
 

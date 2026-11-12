@@ -67,10 +67,20 @@ final class Recorder: @unchecked Sendable {
         guard format.sampleRate > 0, format.channelCount > 0 else { throw Failure.noInput }
         sampleRate = format.sampleRate
         input.installTap(onBus: 0, bufferSize: 4_096, format: format) { [weak self] buffer, _ in
-            self?.queue.async { self?.write(buffer) }
+            // The engine reuses its buffer once this block returns, so the samples are
+            // copied here and the copy is what the recorder queue writes.
+            guard let self, let samples = Self.firstChannel(of: buffer) else { return }
+            self.queue.async { self.write(samples) }
         }
         engine.prepare()
-        try engine.start()
+        do {
+            try engine.start()
+        } catch {
+            // Leave nothing behind for the next attempt to trip over.
+            input.removeTap(onBus: 0)
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            throw error
+        }
 
         interruption = NotificationCenter.default.addObserver(
             forName: AVAudioSession.interruptionNotification, object: session, queue: .main
@@ -101,26 +111,37 @@ final class Recorder: @unchecked Sendable {
 
     // MARK: On the recorder queue
 
-    private func write(_ buffer: AVAudioPCMBuffer) {
-        guard !stopped, buffer.frameLength > 0, let source = buffer.floatChannelData else { return }
+    /// The voice is the first channel; a stereo input repeats it.
+    private static func firstChannel(of buffer: AVAudioPCMBuffer) -> [Float]? {
+        guard buffer.frameLength > 0, let source = buffer.floatChannelData else { return nil }
+        return Array(UnsafeBufferPointer(start: source[0], count: Int(buffer.frameLength)))
+    }
+
+    private func write(_ samples: [Float]) {
+        guard !stopped else { return }
+        let frames = AVAudioFrameCount(samples.count)
         do {
             if file == nil { try open() }
-            guard let file, let mono = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: buffer.frameLength),
+            guard let file, let mono = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frames),
                   let target = mono.floatChannelData else { return }
-            // The first channel is the voice; a stereo input repeats it.
-            mono.frameLength = buffer.frameLength
-            target[0].update(from: source[0], count: Int(buffer.frameLength))
+            mono.frameLength = frames
+            samples.withUnsafeBufferPointer { target[0].update(from: $0.baseAddress!, count: samples.count) }
             try file.write(from: mono)
-            framesInSegment += Int64(buffer.frameLength)
+            framesInSegment += Int64(frames)
 
-            let level = rms(source[0], Int(buffer.frameLength))
+            let level = Self.rms(samples)
             report(level)
             let seconds = Double(framesInSegment) / sampleRate
             if seconds >= Self.maxSec || (seconds >= Self.targetSec && level < Self.quietRms) { seal() }
         } catch {
-            // A segment that can't be written is dropped; the ones already sealed stay.
+            // A segment that can't be written is dropped: its half-written file is
+            // removed, and the time it covered stays a gap so later segments keep
+            // their place. The ones already sealed stay.
             file = nil
+            try? FileManager.default.removeItem(at: store.folder(for: id).appendingPathComponent(fileName))
+            framesBefore += framesInSegment + Int64(frames)
             framesInSegment = 0
+            index += 1
         }
     }
 
@@ -156,10 +177,10 @@ final class Recorder: @unchecked Sendable {
         Task { @MainActor [onSegment] in onSegment?() }
     }
 
-    private func rms(_ samples: UnsafePointer<Float>, _ count: Int) -> Float {
+    static func rms(_ samples: [Float]) -> Float {
         var sum: Float = 0
-        for i in 0..<count { sum += samples[i] * samples[i] }
-        return (sum / Float(max(count, 1))).squareRoot()
+        for sample in samples { sum += sample * sample }
+        return (sum / Float(max(samples.count, 1))).squareRoot()
     }
 
     private func report(_ level: Float) {

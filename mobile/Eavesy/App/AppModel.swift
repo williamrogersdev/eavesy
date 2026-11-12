@@ -81,6 +81,7 @@ final class AppModel {
 
     // Recording
     private var recorder: Recorder?
+    private var startingRecording = false
     private(set) var recordingSince: Date?
     private(set) var level = 0.0
     var isRecording: Bool { recorder != nil }
@@ -205,7 +206,10 @@ final class AppModel {
     }
 
     func startRecording() async {
-        guard recorder == nil else { return }
+        // Claimed before the first await, so two quick taps start one recording.
+        guard recorder == nil, !startingRecording else { return }
+        startingRecording = true
+        defer { startingRecording = false }
         guard await Recorder.micAllowed() else {
             notice = Recorder.Failure.micDenied.localizedDescription
             return
@@ -322,10 +326,11 @@ final class AppModel {
     func finishInBackground() {
         guard signedIn, store.items.contains(where: \.needsSync) else { return }
         let app = UIApplication.shared
-        let task = app.beginBackgroundTask(expirationHandler: nil)
+        let background = BackgroundTask()
+        background.id = app.beginBackgroundTask { MainActor.assumeIsolated { background.end() } }
         Task { [engine] in
             _ = await engine.drain()
-            app.endBackgroundTask(task)
+            background.end()
         }
     }
 
@@ -351,6 +356,8 @@ final class AppModel {
                         delay = 2
                         await self.refresh()
                     }
+                } catch APIError.unauthorized {
+                    return self.tokenRejected()
                 } catch {
                     try? await Task.sleep(for: .seconds(delay))
                     delay = min(delay * 2, 120)
@@ -376,12 +383,24 @@ final class AppModel {
             do {
                 let start = try await api.startPairing(deviceId: deviceId, name: "Eavesy for iPhone")
                 // Only ever open the server we asked.
-                guard start.verificationUrl.host == base.host else { throw APIError.network("unexpected sign-in address") }
+                let page = start.verificationUrl
+                guard page.scheme == base.scheme, page.host == base.host, page.port == base.port else {
+                    throw APIError.network("unexpected sign-in address")
+                }
                 signIn = .waiting(start.verificationUrl)
                 let deadline = Date().addingTimeInterval(Double(start.expiresInSec))
                 while Date() < deadline {
                     try await Task.sleep(for: .seconds(2))
-                    guard let token = try? await api.pairingToken(code: start.code, deviceId: deviceId) else { continue }
+                    let token: String?
+                    do {
+                        token = try await api.pairingToken(code: start.code, deviceId: deviceId)
+                    } catch let error as APIError where error.isPermanent {
+                        // The code expired or was refused: waiting longer won't help.
+                        break
+                    } catch {
+                        continue
+                    }
+                    guard let token else { continue }
                     credentials.save(token: token, for: base)
                     tokenBox.value = token
                     signedIn = true
@@ -405,9 +424,17 @@ final class AppModel {
     }
 
     func signOut() {
-        let api = api
-        Task { try? await api.signOut() }
+        // Revoke with the token in hand: forgetting the account clears the shared one.
+        if let token = tokenBox.value {
+            let revoke = EavesyAPI(base: base) { token }
+            Task { try? await revoke.signOut() }
+        }
         forgetAccount()
+    }
+
+    /// For screens that call the API themselves: a rejected token signs the app out.
+    func loadFailed(_ error: Error) {
+        if case APIError.unauthorized = error { tokenRejected() }
     }
 
     /// The server no longer knows this phone. Captures stay; sign in again to sync them.
@@ -428,6 +455,19 @@ final class AppModel {
         remoteSessions = []
         remoteCaptures = []
         try? FileManager.default.removeItem(at: cacheURL)
+    }
+}
+
+/// The short while iOS allows after the app leaves the screen. Ended once,
+/// whether the upload finished or iOS called time.
+@MainActor
+private final class BackgroundTask {
+    var id = UIBackgroundTaskIdentifier.invalid
+
+    func end() {
+        guard id != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(id)
+        id = .invalid
     }
 }
 

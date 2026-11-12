@@ -222,6 +222,22 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(store.item(item.id)?.state, .recording)
     }
 
+    func testNothingWakesTheEngineWhileARecordingIsOnlyBeingCaptured() async throws {
+        var item = try recording(segments: 0)
+        item.state = .recording
+        try store.save(item)
+        let wake = await engine().nextWake()
+        XCTAssertNil(wake)
+
+        // A note waiting on a retry still does.
+        try store.addNote("later", at: clock)
+        server.respond = { _ in (0, "") }
+        let engine = engine()
+        _ = await engine.drain()
+        let retry = await engine.nextWake()
+        XCTAssertEqual(retry, clock.addingTimeInterval(2))
+    }
+
     func testTheOutboxSurvivesARestartAndClosesAnInterruptedRecording() throws {
         let note = try store.addNote("still here", at: clock)
         var live = OutboxItem(kind: .recording, title: "Voice note", createdAt: clock, state: .recording)
@@ -239,7 +255,8 @@ final class SyncTests: XCTestCase {
         XCTAssertEqual(SyncEngine.backoff(1), 2)
         XCTAssertEqual(SyncEngine.backoff(2), 4)
         XCTAssertEqual(SyncEngine.backoff(8), 256)
-        XCTAssertEqual(SyncEngine.backoff(40), 256)
+        XCTAssertEqual(SyncEngine.backoff(9), 300)
+        XCTAssertEqual(SyncEngine.backoff(40), 300)
     }
 
     func testNoteTitles() {

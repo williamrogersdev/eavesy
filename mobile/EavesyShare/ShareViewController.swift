@@ -7,8 +7,13 @@ import UniformTypeIdentifiers
 final class ShareViewController: UIViewController {
     private static let group = "group.com.eavesy.mobile"
 
+    private var started = false
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
+        // The sheet can appear more than once; the items are saved once.
+        guard !started else { return }
+        started = true
         Task {
             let saved = await saveAll()
             await show(saved > 0 ? "Saved to Eavesy" : "Couldn't save that")
@@ -48,7 +53,12 @@ final class ShareViewController: UIViewController {
 
     private func write(_ data: Data, to inbox: URL, ext: String) -> Int {
         let file = inbox.appendingPathComponent("\(UUID().uuidString).\(ext)")
-        return (try? data.write(to: file, options: .atomic)) == nil ? 0 : 1
+        do {
+            try data.write(to: file, options: .atomic)
+            return 1
+        } catch {
+            return 0
+        }
     }
 
     private func show(_ message: String) async {
