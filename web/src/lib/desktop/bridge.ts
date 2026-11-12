@@ -50,8 +50,8 @@ export function isDesktop(): boolean {
 }
 
 /** Settings sections another window can ask the Settings window to show. */
-export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'connections' | 'agents' | 'assistant' | 'machine' | 'permissions' | 'account';
-const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'connections', 'agents', 'assistant', 'machine', 'permissions', 'account'];
+export type SettingsSection = 'capture' | 'pill' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'connections' | 'agents' | 'assistant' | 'machine' | 'permissions' | 'account';
+const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'pill', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'connections', 'agents', 'assistant', 'machine', 'permissions', 'account'];
 /** Both webviews share an origin, so the panel leaves the section here for the Settings window. */
 const SETTINGS_SECTION_KEY = 'eavesy.settings.section';
 /** A request older than this was for a Settings window that has come and gone. */
@@ -747,11 +747,27 @@ export async function onAssistantThread(cb: (thread: AssistantThread) => void): 
 }
 
 /** Lines of live words the recording control shows: 0 hides them and leaves just the bar. */
-export type HudPreviewLines = 0 | 1 | 2 | 4;
+export type HudPreviewLines = 0 | 1 | 2 | 4 | 8;
 
 /** `fastLiveWords` applies from the next recording; it and `resultPreview` are sent only when that switch changes. */
 export async function setHudLook(lines: HudPreviewLines, translucent: boolean, fastLiveWords?: boolean, resultPreview?: boolean): Promise<void> {
   await invoke('set_hud_look', { lines, translucent, fastLiveWords, resultPreview });
+}
+
+/** The pill's colours (`HUD_TINTS` in settings.rs); the first is the default. */
+export const HUD_TINTS = ['charcoal', 'ink', 'forest', 'plum', 'slate', 'paper'] as const;
+export type HudTint = (typeof HUD_TINTS)[number];
+
+/** The pill's colour, and how solid it is in percent (30 to 100); either may be left out. */
+export async function setHudStyle(style: { tint?: HudTint; opacity?: number }): Promise<void> {
+  await invoke('set_hud_style', style);
+}
+
+/** When the pill is on screen: always, only while it captures, or never (it still asks about a meeting and says when something went wrong). */
+export type HudVisibility = 'always' | 'capturing' | 'never';
+
+export async function setHudVisibility(show: HudVisibility): Promise<void> {
+  await invoke('set_hud_visibility', { show });
 }
 
 // Each request asks for one permission alone, while the launcher steps out of the way so the
@@ -957,6 +973,14 @@ export interface Settings {
   /** Absent means off. */
   hud_preview_lines?: HudPreviewLines;
   hud_translucent?: boolean;
+  /** The pill's colour. Absent means charcoal. */
+  hud_tint?: string;
+  /** How solid the pill is, in percent. Absent reads `hud_translucent`: see-through (64) unless that is false. */
+  hud_opacity?: number;
+  /** The pill is off screen at rest. */
+  hud_hidden?: boolean;
+  /** The pill is off screen while it records too. */
+  hud_quiet?: boolean;
   /** A finished dictation opens with its words to edit. Absent means on. */
   hud_result_preview?: boolean;
   /** Live words about a second sooner from a fast recognizer. Absent means on. */

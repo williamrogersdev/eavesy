@@ -46,6 +46,7 @@ export function installDevMock(): void {
     toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', assistant_hotkey: 'Alt+Space', screen_hotkey: 'Alt+Shift+R', device_id: 'dev', setup_completed: true,
     recordings_root: '~/Eavesy/Recordings', launcher_position: 'top_center', live_captions: true, add_screenshots: true,
     hud_preview_lines: params.has('lines') ? Number(params.get('lines')) : undefined, hud_translucent: params.has('solid') ? false : undefined,
+    hud_tint: undefined as string | undefined, hud_opacity: undefined as number | undefined, hud_hidden: false, hud_quiet: false,
     fast_live_words: undefined as unknown, hud_result_preview: params.has('receipt') ? false : undefined as boolean | undefined,
   };
   let preferencesLoadFailures = params.has('settings-offline') ? 2 : 0;
@@ -108,8 +109,17 @@ export function installDevMock(): void {
       Object.assign(settings, { hud_preview_lines: lines, hud_translucent: translucent });
       if (fastLiveWords !== undefined) settings.fast_live_words = fastLiveWords;
       if (resultPreview !== undefined) settings.hud_result_preview = Boolean(resultPreview);
-      emit('hud:look', { lines, translucent, preview: settings.hud_result_preview ?? false });
+      emit('hud:look', { lines, translucent, preview: settings.hud_result_preview ?? false, tint: settings.hud_tint, opacity: settings.hud_opacity });
     },
+    set_hud_style: ({ tint, opacity }: Record<string, unknown>) => {
+      if (tint !== undefined) settings.hud_tint = String(tint);
+      if (opacity !== undefined) settings.hud_opacity = Number(opacity);
+      emit('hud:look', { lines: settings.hud_preview_lines ?? 0, preview: settings.hud_result_preview ?? false, tint: settings.hud_tint, opacity: settings.hud_opacity });
+    },
+    set_hud_visibility: ({ show }: Record<string, unknown>) => {
+      Object.assign(settings, { hud_hidden: show !== 'always', hud_quiet: show === 'never' });
+    },
+    hud_options: () => null,
     copy_text: ({ text }: Record<string, unknown>) => { copiedText = String(text); },
     sync_status: { signedOut: false },
     check_permissions: { mic: true, micAsked: true, screen: !params.has('perms-missing'), accessibility: true, speech: true, inputMonitoring: true, notifications: !params.has('perms-missing') },

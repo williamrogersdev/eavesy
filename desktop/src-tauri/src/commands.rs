@@ -424,11 +424,47 @@ pub fn set_capture_sounds(app: AppHandle, enabled: bool) -> Result<(), String> {
 /// whether a finished dictation opens with its words.
 #[tauri::command(async)]
 pub fn set_hud_look(app: AppHandle, lines: u8, translucent: bool, fast_live_words: Option<bool>, result_preview: Option<bool>) -> Result<(), String> {
-    if !matches!(lines, 0 | 1 | 2 | 4) {
-        return Err(format!("the preview shows 0, 1, 2 or 4 lines, not {lines}"));
+    if !settings::HUD_LINES.contains(&lines) {
+        return Err(format!("the preview shows 0, 1, 2, 4 or 8 lines, not {lines}"));
     }
     crate::hud::set_look(&app, lines, translucent, fast_live_words, result_preview);
     Ok(())
+}
+
+/// The pill's colour (one of `settings::HUD_TINTS`) and how solid it is, in
+/// percent; either may be left out.
+#[tauri::command(async)]
+pub fn set_hud_style(app: AppHandle, tint: Option<String>, opacity: Option<u8>) -> Result<(), String> {
+    if let Some(tint) = tint.as_deref().filter(|tint| !settings::HUD_TINTS.contains(tint)) {
+        return Err(format!("the pill doesn't come in {tint}"));
+    }
+    if let Some(percent) = opacity.filter(|percent| !(settings::HUD_OPACITY.0..=settings::HUD_OPACITY.1).contains(percent)) {
+        return Err(format!("the pill is {} to {} percent solid, not {percent}", settings::HUD_OPACITY.0, settings::HUD_OPACITY.1));
+    }
+    crate::hud::set_style(&app, tint, opacity);
+    Ok(())
+}
+
+/// When the pill is on screen: "always", "capturing" (not at rest) or
+/// "never" (only to ask about a meeting, or to say something went wrong).
+#[tauri::command]
+pub fn set_hud_visibility(app: AppHandle, show: String) -> Result<(), String> {
+    let (hidden, quiet) = match show.as_str() {
+        "always" => (false, false),
+        "capturing" => (true, false),
+        "never" => (true, true),
+        other => return Err(format!("the pill shows always, capturing or never, not {other}")),
+    };
+    let handle = app.clone();
+    app.run_on_main_thread(move || crate::hud::set_visibility_on_main(&handle, hidden, quiet))
+        .map_err(|error| format!("could not reach the pill: {error}"))
+}
+
+/// Opens or closes the dictation options under the recording controls;
+/// returns once the control has their size.
+#[tauri::command]
+pub async fn hud_options(app: AppHandle, open: bool) {
+    let _ = tauri::async_runtime::spawn_blocking(move || crate::hud::set_options(&app, open)).await;
 }
 
 #[derive(Debug, Clone, Serialize)]

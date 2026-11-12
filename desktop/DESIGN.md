@@ -590,10 +590,11 @@ the pill can't jitter or flip while words arrive.
 | Size | Px | Used for |
 |---|---|---|
 | pill | 244 × 36 | idle, saved, video recording, a plain "Saved" |
-| bar | 400 × 40 | recording and writing with live words off (the default) |
+| bar | 320 × 40 | recording and writing with live words off (the default): the light, the time, the voice bars, the write chip, Cancel and Stop. Nothing may be cut off at this width |
+| options | bar or wide width × 256 | a dictation being recorded with its options open: the six ways it is written, then **Type as I talk** |
 | wide | 400 × 62 + 20 per line | recording and writing with 1, 2 or 4 lines of live words, failed, a save that wasn't typed (**Not typed** and why) |
 | receipt | 248 × 36 | a finished dictation with "Show the words when it's done" off, or **Not pasted** |
-| result | 400 × 176 | a finished dictation's drawer: the words that went out, editable, and the tone row (the dictation setting: a Tone pop-up and a For AI switch, then Translate). Opens by itself unless that switch is off; then hovering the receipt opens it |
+| result | 400 × 176 | a finished dictation's drawer: the words that went out, editable, and the tone row (the dictation setting: the write chip, then Translate). Opens by itself unless that switch is off; then hovering the receipt opens it |
 | shot | 360 × 172 | a screenshot, with its thumbnail |
 
 **The idle pill** reads, left to right: **Open Eavesy** (a house, then a
@@ -605,15 +606,32 @@ being written) show their status and × only. The pill is one width whatever
 the Talk shortcut is: a shortcut that would leave under 12px of bare room
 is left off the pill and named in Talk's tooltip instead.
 
-**How it looks while recording** is the user's call (Settings → General → Recording
-control, `set_hud_look`): live words Off (the bar, the default), 1, 2 or 4
-lines, **Show the words when it's done**, on by default, and
-**See-through**, on by default, which turns the charcoal into a plain smoked
-glass (neutral grey at 64%, enough for 4.5:1 text over white, a hairline
-white edge, no coral ring) so the
-control sits back over whatever is underneath and blends into a screen share. Still
-no native glass, for the corner reason above. A change applies at once, even
-mid-recording: Rust refits the window and the HUD hears `hud:look`.
+**Everything about the pill is set on one page, Settings → Pill**: when it
+shows, its colour, how see-through it is, what it shows while you talk, what
+it does when a dictation is done, and where it sits. A change applies at
+once, even mid-recording: Rust refits the window and the HUD hears
+`hud:look`.
+
+- **Show the pill** (`set_hud_visibility`): **Always**; **While recording**
+  (off screen at rest, the same as closing it with ×); or **Never**, for
+  recording from shortcuts and the menu bar with nothing on screen. Never
+  still brings the pill up for what needs an answer or went wrong: a meeting
+  about to be recorded, a failure, and words that could not be pasted.
+- **Colour** (`set_hud_style`): Charcoal (the default), Ink, Forest, Plum,
+  Slate, or Paper, which turns the control light with dark ink. Each is one
+  `--ctl-bg`; everything drawn on the pill is `--ctl-fg` at some strength, so
+  a colour is never set on a single part. Red is still only the live mic.
+- **Transparency**: Solid, A little see-through, See-through (64%, the
+  default: neutral smoked glass, enough for 4.5:1 text over white), Very
+  see-through, Barely there (30%). Below the default the words can be hard
+  to read over a bright window; that is the user's trade to make. A hairline
+  edge, no coral ring, and no native glass, for the corner reason above. An
+  open menu is nearly solid whatever the level, and a screen recording's
+  controls stay solid.
+- **Live words** (`set_hud_look`): Off (the bar, the default), 1, 2, 4 or 8
+  lines; 8 keeps the most of what was said in view, and scrolls.
+- **Show the words when it's done**, and **Type as I talk**.
+
 **Faster live words**, on by default, shows words about a second sooner from
 a fast preview recognizer until the accurate one catches up; it applies from
 the next recording.
@@ -647,11 +665,15 @@ pointer on it for 250ms (not on a button) opens the drawer.
 The drawer holds the words that went out, editable in place, beside Copy,
 **–** (collapse to the pill) and **×** (hide the control until it is
 reopened from the menu bar). Under the words, the **tone row** is the
-dictation setting itself (Settings → Dictation), not a one-off: a **Tone**
-pop-up (As spoken · Professional · Friendly · Concise, a native `<select>`
-whose list opens over the control, so the window never has to hold it), a
-1px rule, a **For AI** switch (written as a prompt for an AI agent; the
-track lights cream when on) and, at the row's end, **Translate**. The row shows the tone in force for the words (the server tells
+dictation setting itself (Settings → Dictation), not a one-off: the **write
+chip**, which names the choice in force (Exactly as said · As spoken ·
+Professional · Friendly · Concise · AI prompt) and, at the row's end,
+**Translate**. The chip opens the choices in the control's own look, where
+the words are, two to a row, with a tick on the one in force; never a native
+pop-up, which reads as another app's menu on a dark pill. The same chip sits
+on the recording bar, where the choices open under the controls, one to a
+row with what each does, above **Type as I talk**; the window grows to hold
+them and gives the room back when one is picked. The row shows the tone in force for the words (the server tells
 the app with them; a project's own tone counts, and the saved choice stands
 in when the server didn't say). Changing it keeps the choice first, for
 every dictation to come, on the account or on the project when the tone was

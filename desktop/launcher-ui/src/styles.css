@@ -138,10 +138,15 @@ body {
    appearances (DESIGN.md → HUD). It draws its own shape, so the window and
    the pill always agree. Coral only while the mic is live. */
 .eavesy-control {
+  /* Its colour (Settings → Pill) is --ctl-bg; what is drawn on it is --ctl-fg
+     at some strength, and --ctl-on-ink is text on a button filled with --ctl-ink. */
+  --ctl-bg: 34 32 30;
+  --ctl-fg: 255 248 238;
+  --ctl-on-ink: #221e1b;
   --ctl-ink: #f7f1e8;
   --ctl-ink-2: rgb(247 241 232 / 0.74);
   --ctl-ink-3: rgb(247 241 232 / 0.5);
-  --ctl-hover: rgb(255 248 238 / 0.11);
+  --ctl-hover: rgb(var(--ctl-fg) / 0.11);
   --ctl-line: rgb(255 244 228 / 0.16);
   display: flex;
   flex-direction: column;
@@ -149,7 +154,7 @@ body {
   width: 100%;
   overflow: hidden;
   border-radius: 18px;
-  background: rgb(34 32 30 / 0.97);
+  background: rgb(var(--ctl-bg) / 0.97);
   box-shadow: inset 0 0 0 1px var(--ctl-line), inset 0 1px 0 rgb(255 255 255 / 0.09);
   color: var(--ctl-ink);
   font: 550 12.5px/16px var(--ev-font-round);
@@ -180,10 +185,30 @@ body {
    Neutral grey at 64% keeps cream text at 4.5:1 even over white; a hairline
    edge, no coral ring, and the words keep a soft shadow. */
 .eavesy-control[data-translucent] {
+  --ctl-bg: 28 28 30;
   --ctl-line: rgb(255 255 255 / 0.14);
-  background: rgb(28 28 30 / 0.64);
+  background: rgb(var(--ctl-bg) / var(--ctl-alpha, 0.64));
   box-shadow: inset 0 0 0 1px var(--ctl-line);
   text-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+}
+
+/* Its colour (Settings → Pill). Charcoal is the default above; these are
+   deep enough to keep cream text at 4.5:1 when solid, and Paper turns the
+   whole control light with dark ink. */
+.eavesy-control[data-tint="ink"] { --ctl-bg: 22 30 52; }
+.eavesy-control[data-tint="forest"] { --ctl-bg: 22 44 36; }
+.eavesy-control[data-tint="plum"] { --ctl-bg: 48 28 50; }
+.eavesy-control[data-tint="slate"] { --ctl-bg: 52 58 66; }
+.eavesy-control[data-tint="paper"] {
+  --ctl-bg: 250 246 239;
+  --ctl-fg: 33 28 26;
+  --ctl-on-ink: #f7f1e8;
+  --ctl-ink: #211c1a;
+  --ctl-ink-2: rgb(33 28 26 / 0.72);
+  --ctl-ink-3: rgb(33 28 26 / 0.52);
+  --ctl-line: rgb(33 28 26 / 0.16);
+  box-shadow: inset 0 0 0 1px var(--ctl-line);
+  text-shadow: none;
 }
 
 /* The fill takes any spare room, so this only matters when there is none:
@@ -241,37 +266,65 @@ body {
    the window never has to hold it); For AI is a switch, lit cream when on;
    Translate, at the row's end, opens the language finder over the words. */
 .ctl-foot { flex: none; padding: 0 7px 7px; }
-/* On the recording bar: how the words are written, and whether they are typed live. */
-.ctl-live-opts { display: inline-flex; align-items: center; gap: 2px; margin-right: 2px; }
-.ctl-live-opts .ctl-field { padding-left: 0; }
-.ctl-live-opts .ctl-field > span:first-child { display: none; }
-.ctl-live-opts .ctl-select > select { max-width: 132px; }
-/* The voice bars keep their width beside them: they say the mic hears you. */
-.eavesy-control:is([data-size="bar"], [data-size="wide"]) .ctl-bars { flex: none; }
-.ctl-tones { display: flex; align-items: center; gap: 2px; }
-.ctl-field { display: inline-flex; align-items: center; gap: 6px; padding-left: 4px; color: var(--ctl-ink-2); font: 600 11.5px/24px var(--ev-font-round); }
-.ctl-select { position: relative; display: inline-flex; align-items: center; }
-.ctl-select > select {
+/* How the words are written: a chip that names the choice and opens the
+   menu below it. On the recording bar it sits before Cancel and Stop. */
+.ctl-write-chip {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   height: 24px;
-  max-width: 150px;
-  padding: 0 24px 0 9px;
-  border: 0;
+  padding: 0 7px 0 10px;
   border-radius: 12px;
-  outline: 0;
-  appearance: none;
-  -webkit-appearance: none;
-  background: rgb(255 248 238 / 0.1);
+  background: rgb(var(--ctl-fg) / 0.1);
   box-shadow: inset 0 0 0 1px var(--ctl-line);
   color: var(--ctl-ink);
   font: 600 11.5px/24px var(--ev-font-round);
-  text-overflow: ellipsis;
-  cursor: default;
   transition: background var(--ev-d-press) ease;
 }
-.ctl-select > select:hover:not(:disabled) { background: rgb(255 248 238 / 0.16); }
-.ctl-select > select:focus-visible { outline: 2px solid var(--ctl-ink-3); outline-offset: 1px; }
-.ctl-select > select:disabled { opacity: 0.5; }
-.ctl-select-icon { position: absolute; right: 7px; width: 12px; height: 12px; color: var(--ctl-ink-3); pointer-events: none; }
+.ctl-write-chip > span { overflow: hidden; text-overflow: ellipsis; }
+.ctl-write-chip > svg { flex: none; color: var(--ctl-ink-3); transition: transform var(--ev-d-state) var(--ev-ease-out); }
+.ctl-write-chip[aria-expanded="true"] { background: rgb(var(--ctl-fg) / 0.18); }
+.ctl-write-chip[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.ctl-write-chip:hover:not(:disabled) { background: rgb(var(--ctl-fg) / 0.16); }
+.ctl-write-chip:disabled { opacity: 0.5; }
+.ctl-write-chip:focus-visible { outline: 2px solid var(--ctl-ink-3); outline-offset: 1px; }
+.eavesy-control[data-size="bar"] .ctl-write-chip { margin-right: 2px; }
+/* The menu: one row a choice, its name then what it does, a tick on the one
+   in force. In the drawer it takes the words' place, two to a row. */
+.ctl-write-menu { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; }
+.ctl-write {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--ctl-ink-2);
+  font: 600 11.5px/28px var(--ev-font-round);
+  text-align: left;
+  white-space: nowrap;
+  transition: background var(--ev-d-press) ease, color var(--ev-d-press) ease;
+}
+.ctl-write:hover:not(:disabled) { background: var(--ctl-hover); color: var(--ctl-ink); }
+.ctl-write[aria-checked="true"] { background: rgb(var(--ctl-fg) / 0.12); color: var(--ctl-ink); }
+.ctl-write:disabled { opacity: 0.5; }
+.ctl-write:focus-visible { outline: 2px solid var(--ctl-ink-3); outline-offset: -2px; }
+.ctl-write-name { flex: none; }
+.ctl-write-hint { flex: 1 1 0; min-width: 0; overflow: hidden; color: var(--ctl-ink-3); font-weight: 500; text-overflow: ellipsis; }
+.ctl-write-tick { flex: none; width: 12px; height: 12px; margin-left: auto; }
+.eavesy-control[data-size="result"] .ctl-write-menu { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; }
+.eavesy-control[data-size="result"] .ctl-write { height: 26px; line-height: 26px; }
+.eavesy-control[data-size="result"] .ctl-write-hint { display: none; }
+/* Under the recording controls: the menu, a hairline, then "Type as I talk". */
+.eavesy-control[data-options] .ctl-below { margin: 2px 6px 6px; padding: 0; overflow: hidden; user-select: none; -webkit-user-select: none; }
+.ctl-options { display: flex; flex-direction: column; gap: 5px; }
+.ctl-option-switch { justify-content: space-between; height: 30px; padding: 0 8px; border-radius: 8px; box-shadow: 0 -1px 0 var(--ctl-line); margin-top: 1px; }
+/* The voice bars keep their width beside them: they say the mic hears you. */
+.eavesy-control:is([data-size="bar"], [data-size="wide"]) .ctl-bars { flex: none; }
+.ctl-tones { display: flex; align-items: center; gap: 2px; }
 .ctl-switch-row {
   display: inline-flex;
   align-items: center;
@@ -293,7 +346,7 @@ body {
   width: 26px;
   height: 16px;
   border-radius: 8px;
-  background: rgb(255 248 238 / 0.22);
+  background: rgb(var(--ctl-fg) / 0.22);
   box-shadow: inset 0 0 0 1px var(--ctl-line);
   transition: background var(--ev-d-state) var(--ev-ease-out);
 }
@@ -310,7 +363,7 @@ body {
   transition: transform var(--ev-d-state) var(--ev-ease-spring), background var(--ev-d-state) var(--ev-ease-out);
 }
 .ctl-switch-row[aria-checked="true"] .ctl-switch { background: var(--ctl-ink); box-shadow: none; }
-.ctl-switch-row[aria-checked="true"] .ctl-switch::after { transform: translateX(10px); background: #221e1b; }
+.ctl-switch-row[aria-checked="true"] .ctl-switch::after { transform: translateX(10px); background: var(--ctl-on-ink); }
 /* Translate, and the language finder it opens in place of the words: a
    search box, then the languages as chips (recent ones first), so the one
    you want is a couple of keystrokes or one click away. */
@@ -324,7 +377,7 @@ body {
   border: 0;
   border-radius: 12px;
   outline: 0;
-  background: rgb(255 248 238 / 0.1);
+  background: rgb(var(--ctl-fg) / 0.1);
   box-shadow: inset 0 0 0 1px var(--ctl-line);
   color: var(--ctl-ink);
   font: 600 11.5px/24px var(--ev-font-round);
@@ -357,7 +410,7 @@ body {
 }
 .ctl-lang[data-recent] { color: var(--ctl-ink); box-shadow: inset 0 0 0 1px var(--ctl-line); }
 .ctl-lang[data-active] { background: var(--ctl-hover); color: var(--ctl-ink); }
-.ctl-lang[aria-selected="true"] { background: rgb(255 248 238 / 0.16); color: var(--ctl-ink); }
+.ctl-lang[aria-selected="true"] { background: rgb(var(--ctl-fg) / 0.16); color: var(--ctl-ink); }
 @media (prefers-reduced-motion: reduce) {
   .ctl-switch, .ctl-switch::after { transition: none; }
 }
@@ -370,7 +423,7 @@ body {
   transition: background var(--ev-d-press) ease, color var(--ev-d-press) ease;
 }
 .ctl-tone:hover:not(:disabled) { background: var(--ctl-hover); color: var(--ctl-ink); }
-.ctl-tone[aria-pressed="true"] { background: rgb(255 248 238 / 0.16); color: var(--ctl-ink); }
+.ctl-tone[aria-pressed="true"] { background: rgb(var(--ctl-fg) / 0.16); color: var(--ctl-ink); }
 .ctl-tone:disabled { cursor: default; }
 .ctl-tone:focus-visible { outline: 2px solid var(--ctl-ink-3); outline-offset: 1px; }
 /* In the drawer the words take all the room above the tones, and a long
@@ -402,8 +455,8 @@ body {
 .ctl-btn:hover:not(:disabled) { background: var(--ctl-hover); color: var(--ctl-ink); }
 .ctl-btn:disabled { opacity: 0.35; }
 .ctl-icon { width: 24px; padding: 0; }
-.ctl-primary { background: var(--ctl-ink); color: #221e1b; font-weight: 650; padding: 0 10px 0 9px; }
-.ctl-primary:hover:not(:disabled) { background: #fff; color: #221e1b; }
+.ctl-primary { background: var(--ctl-ink); color: var(--ctl-on-ink); font-weight: 650; padding: 0 10px 0 9px; }
+.ctl-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ctl-ink) 88%, rgb(var(--ctl-bg))); color: var(--ctl-on-ink); }
 .ctl-talk { color: var(--ctl-ink); padding: 0 6px 0 8px; }
 /* Open Eavesy, first on the resting pill: a hairline sets it apart from the capture buttons. */
 .ctl-home { position: relative; margin-right: 4px; }
@@ -417,7 +470,7 @@ body {
   margin-left: 1px;
   padding: 0 5px;
   border-radius: 5px;
-  background: rgb(255 248 238 / 0.08);
+  background: rgb(var(--ctl-fg) / 0.08);
   color: var(--ctl-ink-3);
   font: 600 10.5px/16px var(--ev-font-round);
 }
@@ -455,9 +508,9 @@ body {
   font: 700 11px/18px var(--ev-font-round);
   font-variant-numeric: tabular-nums;
 }
-.ctl-marker { color: var(--ctl-ink); background: rgb(255 248 238 / 0.08); padding: 0 6px 0 8px; margin-left: 4px; }
+.ctl-marker { color: var(--ctl-ink); background: rgb(var(--ctl-fg) / 0.08); padding: 0 6px 0 8px; margin-left: 4px; }
 .ctl-marker > svg { color: var(--ev-manila); }
-.ctl-seg { display: inline-flex; flex: none; gap: 2px; padding: 2px; border-radius: 999px; background: rgb(255 248 238 / 0.08); }
+.ctl-seg { display: inline-flex; flex: none; gap: 2px; padding: 2px; border-radius: 999px; background: rgb(var(--ctl-fg) / 0.08); }
 .ctl-seg-btn {
   display: inline-flex;
   align-items: center;
@@ -548,7 +601,9 @@ body {
    glance, not the thing to read. Clicking in to fix one brings full ink. */
 .eavesy-control[data-phase="recording"] .ctl-words:not(:focus),
 .eavesy-control[data-phase="transcribing"] .ctl-words:not(:focus) { color: rgb(247 241 232 / 0.62); }
-.eavesy-control[data-translucent][data-size="wide"]:is([data-phase="recording"], [data-phase="transcribing"]) { background: rgb(28 28 30 / 0.72); }
+.eavesy-control[data-translucent][data-size="wide"]:is([data-phase="recording"], [data-phase="transcribing"]) { background: rgb(var(--ctl-bg) / calc(var(--ctl-alpha, 0.64) + 0.08)); }
+/* A menu is read, not glanced at: nearly solid while it is open, however see-through the pill is. */
+.eavesy-control[data-translucent][data-options] { background: rgb(var(--ctl-bg) / 0.94); }
 .ctl-hint { color: var(--ctl-ink-2); }
 
 .ctl-dots { display: inline-flex; gap: 2px; margin-left: 2px; }
@@ -594,7 +649,7 @@ body {
   padding: 0;
   overflow: hidden;
   border-radius: 12px;
-  background: rgb(255 248 238 / 0.05);
+  background: rgb(var(--ctl-fg) / 0.05);
   cursor: zoom-in;
 }
 .ctl-shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
@@ -766,15 +821,15 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
   height: 26px;
   padding: 0 10px;
   border-radius: 999px;
-  background: rgb(255 248 238 / 0.1);
+  background: rgb(var(--ctl-fg) / 0.1);
   color: var(--ev-hud-ink);
   font: inherit;
 }
-.mk-btn:hover { background: rgb(255 248 238 / 0.18); }
+.mk-btn:hover { background: rgb(var(--ctl-fg) / 0.18); }
 .mk-kbd {
   padding: 0 6px;
   border-radius: 5px;
-  background: rgb(255 248 238 / 0.1);
+  background: rgb(var(--ctl-fg) / 0.1);
   color: var(--ev-hud-ink-2);
   font: 600 11px/18px var(--ev-font-round);
 }

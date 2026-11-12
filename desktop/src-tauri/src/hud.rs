@@ -86,6 +86,10 @@ pub fn set_state_if(app: &AppHandle, state: HudState, allowed: impl FnOnce(&HudS
         if !keeps_peek || (peek.is_some() && *peek != state.session_id) {
             *peek = None;
         }
+        // The dictation options belong to the recording they were opened on.
+        if state.phase != Phase::Recording {
+            OPTIONS.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
     }
     // The sound and the red tray glyph mean the mic is live, not that a key
     // was pressed: a recording still starting has no session yet.
@@ -171,9 +175,13 @@ pub(crate) const STOPPING_TIMEOUT: std::time::Duration = std::time::Duration::fr
 const DEFAULT_SIZE: (f64, f64) = (244.0, 36.0);
 /// Recording and writing it down: controls above a scrollable transcript.
 const WIDE: (f64, f64) = (400.0, 142.0);
-/// Recording with the live words turned off: just the controls, with room
-/// for how the words are written and whether they are typed live.
-const BAR: (f64, f64) = (400.0, 40.0);
+/// Recording with the live words turned off: the light, the time, the voice
+/// bars, how the words are written, Cancel and Stop. Nothing is cut off at
+/// this width with the longest tone name.
+const BAR: (f64, f64) = (320.0, 40.0);
+/// The controls with the dictation options open under them: the six ways the
+/// words are written, then "Type as I talk". They take the live words' place.
+const OPTIONS_HEIGHT: f64 = 256.0;
 
 /// Recording or writing it down, with `lines` of live words under the controls.
 fn live_size(lines: u8) -> (f64, f64) {
@@ -193,7 +201,7 @@ const SHOT: (f64, f64) = (360.0, 172.0);
 /// The control's size in each phase, and with a finished dictation's drawer
 /// open (`peek`). The window takes it in one step when either changes and
 /// never measures its content.
-pub fn size_for(state: &HudState, lines: u8, peek: bool) -> (f64, f64) {
+pub fn size_for(state: &HudState, lines: u8, peek: bool, options: bool) -> (f64, f64) {
     let video = state.mode.as_deref() == Some("video");
     // Talking to Eavesy always shows your words as you say them, and its answer after.
     let eavesy = state.mode.as_deref() == Some(crate::assistant::voice::MODE);
@@ -205,6 +213,7 @@ pub fn size_for(state: &HudState, lines: u8, peek: bool) -> (f64, f64) {
         Phase::Recording if video => VIDEO_LIVE,
         Phase::Transcribing if video => DEFAULT_SIZE,
         Phase::Recording | Phase::Transcribing if eavesy => live_size(lines.max(1)),
+        Phase::Recording if options && state.mode.as_deref() == Some("audio") => (live_size(lines).0, OPTIONS_HEIGHT),
         Phase::Recording | Phase::Transcribing => live_size(lines),
         Phase::Failed | Phase::Prompt => WIDE,
         Phase::Done => match state.mode.as_deref() {
@@ -299,7 +308,7 @@ fn fit_for_on_main(app: &AppHandle, state: &HudState) {
     let Some(window) = app.get_webview_window("hud") else { return };
     let Some(from) = frame_of(&window) else { return };
     let prefs = prefs(app);
-    let size = size_for(state, prefs.lines, peeking(state) || opens_by_itself(state, prefs.preview));
+    let size = size_for(state, prefs.lines, peeking(state) || opens_by_itself(state, prefs.preview), options_open());
     // The NSPanel is resized through Cocoa below. Keep the embedded webview's
     // viewport in step too, including when the outer frame already matches.
     // Otherwise the toolbar can still render inside the resting pill's width.
@@ -311,6 +320,29 @@ fn fit_for_on_main(app: &AppHandle, state: &HudState) {
     let low = crate::placement::in_lower_half(app, from.0 + from.2 / 2.0, from.1, from.3);
     imp::resize(&window, size, low);
     note_placed(&window);
+}
+
+/// The dictation options are open under the recording controls.
+static OPTIONS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn options_open() -> bool {
+    OPTIONS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Opens or closes the dictation options under the recording controls, and
+/// gives the control their size. Returns once it has it.
+pub fn set_options(app: &AppHandle, open: bool) {
+    let recording = current().phase == Phase::Recording;
+    OPTIONS.store(open && recording, std::sync::atomic::Ordering::SeqCst);
+    let handle = app.clone();
+    let (done, fitted) = std::sync::mpsc::channel::<()>();
+    let dispatched = app.run_on_main_thread(move || {
+        fit_on_main(&handle);
+        let _ = done.send(());
+    });
+    if dispatched.is_ok() {
+        let _ = fitted.recv_timeout(std::time::Duration::from_millis(500));
+    }
 }
 
 /// The finished dictation whose transcript drawer is open under the pointer.
@@ -404,16 +436,42 @@ fn is_active(phase: &Phase) -> bool {
 struct Prefs {
     frame: Option<HudFrame>,
     hidden: bool,
+    quiet: bool,
     lines: u8,
     preview: bool,
+}
+
+impl Prefs {
+    fn of(config: &Settings) -> Self {
+        Prefs { frame: config.hud_frame, hidden: config.hud_hidden, quiet: config.hud_quiet, lines: config.hud_preview_lines(), preview: config.hud_result_preview() }
+    }
+
+    /// Whether the control is on screen for `state`. Hidden, it still shows
+    /// a capture and what came of it; quiet, only what needs an answer or
+    /// went wrong.
+    fn shows(&self, state: &HudState) -> bool {
+        if self.quiet {
+            return speaks_up(state);
+        }
+        !self.hidden || is_active(&state.phase)
+    }
+}
+
+/// What a pill kept off screen while recording still comes up for: a meeting
+/// about to be recorded, a failure, and words that could not be pasted.
+fn speaks_up(state: &HudState) -> bool {
+    match state.phase {
+        Phase::Prompt | Phase::Failed => true,
+        Phase::Done | Phase::Saved => state.notice.is_some(),
+        Phase::Idle | Phase::Recording | Phase::Transcribing => false,
+    }
 }
 static PREFS: std::sync::Mutex<Option<Prefs>> = std::sync::Mutex::new(None);
 
 fn prefs(app: &AppHandle) -> Prefs {
     let mut guard = PREFS.lock().unwrap_or_else(|error| error.into_inner());
     *guard.get_or_insert_with(|| {
-        let config = settings::load(app);
-        Prefs { frame: config.hud_frame, hidden: config.hud_hidden, lines: config.hud_preview_lines(), preview: config.hud_result_preview() }
+        Prefs::of(&settings::load(app))
     })
 }
 
@@ -426,7 +484,7 @@ fn update_prefs(app: &AppHandle, change: impl Fn(&mut Settings)) {
         config
     });
     *PREFS.lock().unwrap_or_else(|error| error.into_inner()) =
-        Some(Prefs { frame: config.hud_frame, hidden: config.hud_hidden, lines: config.hud_preview_lines(), preview: config.hud_result_preview() });
+        Some(Prefs::of(&config));
 }
 
 /// How the control looks: how many lines of live words while recording,
@@ -444,7 +502,43 @@ pub fn set_look(app: &AppHandle, lines: u8, translucent: bool, fast_live_words: 
             config.hud_result_preview = Some(preview);
         }
     });
-    let look = serde_json::json!({ "lines": lines, "translucent": translucent, "preview": prefs(app).preview });
+    send_look(app);
+}
+
+/// The pill's colour and how solid it is (30 to 100 percent), whichever is
+/// given. Takes effect at once.
+pub fn set_style(app: &AppHandle, tint: Option<String>, opacity: Option<u8>) {
+    update_prefs(app, |config| {
+        if let Some(tint) = &tint {
+            config.hud_tint = Some(tint.clone());
+        }
+        if let Some(percent) = opacity {
+            config.hud_opacity = Some(percent);
+            // Older builds read the switch: keep it saying the nearest thing.
+            config.hud_translucent = Some(percent < 100);
+        }
+    });
+    send_look(app);
+}
+
+/// When the pill is on screen: "always", "capturing" (not at rest) or
+/// "never" (only to ask about a meeting or say something went wrong).
+pub fn set_visibility_on_main(app: &AppHandle, hidden: bool, quiet: bool) {
+    update_prefs(app, |config| {
+        config.hud_hidden = hidden;
+        config.hud_quiet = quiet;
+    });
+    if prefs(app).shows(&current()) { show_on_main(app); } else { imp::hide(app); }
+}
+
+/// Refits the window for the saved look and tells the control about it.
+fn send_look(app: &AppHandle) {
+    let config = settings::load(app);
+    let opacity = config.hud_opacity();
+    let look = serde_json::json!({
+        "lines": prefs(app).lines, "translucent": opacity < 100, "preview": prefs(app).preview,
+        "tint": config.hud_tint(), "opacity": opacity,
+    });
     let handle = app.clone();
     let emitted = look.clone();
     // In line with set_state's tasks, so the state sent below is never
@@ -473,13 +567,11 @@ pub fn reset_frame(app: &AppHandle) {
     update_prefs(app, |config| config.hud_frame = None);
 }
 
+/// The pill's own close, and Show and Hide Capture Control in the menu.
+/// Showing it also ends "never": asking for the pill means wanting it back.
 pub fn set_hidden_on_main(app: &AppHandle, hidden: bool) {
-    update_prefs(app, |config| config.hud_hidden = hidden);
-    if hidden && !is_active(&current().phase) {
-        imp::hide(app);
-    } else {
-        show_on_main(app);
-    }
+    let quiet = hidden && prefs(app).quiet;
+    set_visibility_on_main(app, hidden, quiet);
 }
 
 fn on_screen(app: &AppHandle, frame: &HudFrame) -> bool {
@@ -498,6 +590,12 @@ fn show_on_main_for(app: &AppHandle, state: &HudState) {
 /// The panel folds back into the pill, even one the user closed earlier: the
 /// panel's close is "collapse", and the pill's own close is how to put it away.
 pub fn collapse_from_panel_on_main(app: &AppHandle) {
+    // Not one set to stay off screen while recording: that is a standing
+    // choice in Settings, not a pill put away for now.
+    if prefs(app).quiet {
+        show_unchecked(app, &current());
+        return;
+    }
     if prefs(app).hidden {
         update_prefs(app, |config| config.hud_hidden = false);
     }
@@ -510,7 +608,7 @@ fn show_unchecked(app: &AppHandle, state: &HudState) {
         return;
     };
     let prefs = prefs(app);
-    if prefs.hidden && !is_active(&state.phase) {
+    if !prefs.shows(state) {
         imp::hide(app);
         return;
     }
@@ -803,15 +901,15 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{anchored, is_active, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
+    use super::{Prefs, OPTIONS_HEIGHT, anchored, is_active, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
 
     #[test]
     fn saved_without_typing_has_room_to_say_why() {
         let saved = HudState { notice: Some("Saved. Sign in to have it typed for you".into()), ..state(Phase::Saved, Some("audio"), None) };
-        assert_eq!(size_for(&saved, 4, false), WIDE);
-        assert_eq!(size_for(&saved, 0, false), WIDE);
+        assert_eq!(size_for(&saved, 4, false, false), WIDE);
+        assert_eq!(size_for(&saved, 0, false, false), WIDE);
         let failed = HudState { notice: Some("x".into()), ..state(Phase::Failed, Some("audio"), Some("no mic")) };
-        assert_eq!(size_for(&saved, 4, false), size_for(&failed, 4, false));
+        assert_eq!(size_for(&saved, 4, false, false), size_for(&failed, 4, false, false));
     }
 
     #[test]
@@ -844,25 +942,25 @@ mod tests {
     #[test]
     fn talking_writing_and_the_pasted_words_share_one_width() {
         let talk = Some("audio");
-        assert_eq!(size_for(&state(Phase::Recording, talk, None), 4, false), WIDE);
-        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 4, false), WIDE);
-        assert_eq!(size_for(&state(Phase::Done, talk, Some("hello there")), 4, true), RESULT);
+        assert_eq!(size_for(&state(Phase::Recording, talk, None), 4, false, false), WIDE);
+        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 4, false, false), WIDE);
+        assert_eq!(size_for(&state(Phase::Done, talk, Some("hello there")), 4, true, false), RESULT);
         assert_eq!(RESULT.0, WIDE.0);
     }
 
     #[test]
     fn a_finished_dictation_rests_as_a_receipt_until_hovered() {
         let pasted = state(Phase::Done, Some("audio"), Some("hello there"));
-        assert_eq!(size_for(&pasted, 4, false), RECEIPT);
-        assert_eq!(size_for(&pasted, 4, true), RESULT);
+        assert_eq!(size_for(&pasted, 4, false, false), RECEIPT);
+        assert_eq!(size_for(&pasted, 4, true, false), RESULT);
         // The drawer is only ever a finished dictation's.
-        assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 4, true), WIDE);
+        assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 4, true, false), WIDE);
         // Talking to Eavesy shows your words even with live words off, then its answer.
-        assert_eq!(size_for(&state(Phase::Recording, Some("assistant"), None), 0, false), live_size(1));
+        assert_eq!(size_for(&state(Phase::Recording, Some("assistant"), None), 0, false, false), live_size(1));
         let answer = state(Phase::Done, Some("assistant"), Some("Six dev servers."));
-        assert_eq!(size_for(&answer, 0, false), RESULT);
+        assert_eq!(size_for(&answer, 0, false, false), RESULT);
         assert_eq!(receipt(&answer), None);
-        assert_eq!(size_for(&HudState::idle(), 4, true), DEFAULT_SIZE);
+        assert_eq!(size_for(&HudState::idle(), 4, true, false), DEFAULT_SIZE);
     }
 
     #[test]
@@ -890,10 +988,10 @@ mod tests {
     fn fewer_preview_lines_make_a_shorter_control() {
         let talk = Some("audio");
         assert_eq!(live_size(4), WIDE);
-        assert_eq!(size_for(&state(Phase::Recording, talk, None), 1, false), (WIDE.0, 82.0));
-        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 2, false), (WIDE.0, 102.0));
-        assert_eq!(size_for(&state(Phase::Recording, talk, None), 0, false), BAR);
-        assert_eq!(size_for(&state(Phase::Failed, talk, Some("no mic")), 0, false), WIDE);
+        assert_eq!(size_for(&state(Phase::Recording, talk, None), 1, false, false), (WIDE.0, 82.0));
+        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 2, false, false), (WIDE.0, 102.0));
+        assert_eq!(size_for(&state(Phase::Recording, talk, None), 0, false, false), BAR);
+        assert_eq!(size_for(&state(Phase::Failed, talk, Some("no mic")), 0, false, false), WIDE);
     }
 
     #[test]
@@ -909,21 +1007,49 @@ mod tests {
 
     #[test]
     fn resting_saved_and_video_stay_a_small_pill() {
-        assert_eq!(size_for(&HudState::idle(), 4, false), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Saved, Some("audio"), None), 4, false), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Transcribing, Some("video"), None), 4, false), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Done, Some("audio"), Some("  ")), 4, false), DEFAULT_SIZE);
+        assert_eq!(size_for(&HudState::idle(), 4, false, false), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Saved, Some("audio"), None), 4, false, false), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Transcribing, Some("video"), None), 4, false, false), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Done, Some("audio"), Some("  ")), 4, false, false), DEFAULT_SIZE);
     }
 
     #[test]
     fn a_screen_recording_makes_room_for_clicks_and_marking() {
-        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 4, false), VIDEO_LIVE);
+        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 4, false, false), VIDEO_LIVE);
         assert_eq!(VIDEO_LIVE, (420.0, 76.0));
     }
 
     #[test]
     fn a_screenshot_makes_room_for_its_thumbnail() {
-        assert_eq!(size_for(&state(Phase::Done, Some("image"), None), 4, false), SHOT);
+        assert_eq!(size_for(&state(Phase::Done, Some("image"), None), 4, false, false), SHOT);
+    }
+
+    #[test]
+    fn the_dictation_options_open_under_a_recording_only() {
+        let talk = state(Phase::Recording, Some("audio"), None);
+        assert_eq!(size_for(&talk, 0, false, true), (BAR.0, OPTIONS_HEIGHT));
+        assert_eq!(size_for(&talk, 2, false, true), (WIDE.0, OPTIONS_HEIGHT));
+        assert_eq!(size_for(&state(Phase::Transcribing, Some("audio"), None), 0, false, true), BAR);
+        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 0, false, true), VIDEO_LIVE);
+        assert_eq!(live_size(8), (WIDE.0, 222.0));
+    }
+
+    #[test]
+    fn a_quiet_pill_only_comes_up_to_ask_or_to_say_what_went_wrong() {
+        let quiet = Prefs { frame: None, hidden: true, quiet: true, lines: 0, preview: false };
+        assert!(!quiet.shows(&state(Phase::Recording, Some("audio"), None)));
+        assert!(!quiet.shows(&state(Phase::Transcribing, Some("audio"), None)));
+        assert!(!quiet.shows(&state(Phase::Done, Some("audio"), Some("words"))));
+        assert!(!quiet.shows(&HudState::idle()));
+        assert!(quiet.shows(&state(Phase::Prompt, None, Some("Design review"))));
+        assert!(quiet.shows(&state(Phase::Failed, Some("audio"), Some("no mic"))));
+        let unpasted = HudState { notice: Some("Allow Accessibility".into()), ..state(Phase::Done, Some("audio"), Some("words")) };
+        assert!(quiet.shows(&unpasted));
+        // Hidden only at rest: a capture and its result still show.
+        let hidden = Prefs { quiet: false, ..quiet };
+        assert!(hidden.shows(&state(Phase::Recording, Some("audio"), None)) && !hidden.shows(&HudState::idle()));
+        let shown = Prefs { hidden: false, ..hidden };
+        assert!(shown.shows(&HudState::idle()));
     }
 
     #[test]

@@ -89,8 +89,9 @@ try {
   await page.reload();
   await openDrawer();
   const original = 'Original first sentence. Original last sentence.';
-  const toneSelect = page.getByLabel('Dictation tone');
-  const tone = (name) => ({ click: () => toneSelect.selectOption({ label: name }) });
+  // The chip names the tone in force and opens the menu, drawn in the drawer.
+  const toneChip = page.locator('.ctl-write-chip');
+  const tone = (name) => ({ click: async () => { await toneChip.click(); await page.getByRole('radio', { name: new RegExp(`^${name}`) }).click(); } });
   const forAi = page.getByRole('switch', { name: 'For AI' });
   await tone('Friendly').click();
   await page.waitForFunction(() => document.querySelector('textarea')?.value === 'friendly: Original first sentence. Original last sentence.');
@@ -129,7 +130,7 @@ try {
   await page.getByRole('button', { name: 'Collapse to the pill' }).waitFor();
   await forAi.waitFor();
   // The tone itself was kept, for the dictations to come.
-  assert.equal(await toneSelect.inputValue(), 'professional');
+  assert.equal((await toneChip.innerText()).trim(), 'Professional');
   assert.equal(await editor.inputValue(), original);
   await page.evaluate(() => { window.__qaFailRestyle = false; });
   await tone('Concise').click();
