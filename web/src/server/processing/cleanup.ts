@@ -61,7 +61,7 @@ export async function handlePurgeAccount(userId: string, db: Db, env: Processing
   await deletePrefix(env.AUDIO_BUCKET, `anonymous/${userId}/`);
 
   // Before the membership row goes: hand the team to someone else, or delete it when nobody is left.
-  for (const statement of DEPART_STATEMENTS) await env.DB.prepare(statement).bind(userId).run();
+  await env.DB.batch(DEPART_STATEMENTS.map((statement) => env.DB.prepare(statement).bind(userId)));
 
   // Every table whose user_id references users, children first: D1 enforces
   // foreign keys, so one missed table fails the final delete for good.

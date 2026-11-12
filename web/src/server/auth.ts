@@ -18,7 +18,9 @@ async function loadClerkIdentity(clerkId: string): Promise<{
     const primaryEmail = u.emailAddresses?.find(
       (e) => e.id === u.primaryEmailAddressId,
     )?.emailAddress;
-    const email = primaryEmail ?? u.emailAddresses?.[0]?.emailAddress ?? undefined;
+    // Only an address Clerk verified: team invitations go to whoever holds the account's email.
+    const email =
+      primaryEmail ?? u.emailAddresses?.find((e) => e.verification?.status === 'verified')?.emailAddress ?? undefined;
     const name = [u.firstName, u.lastName].filter(Boolean).join(' ').trim();
     const displayName = name || u.username || undefined;
     const primaryPhone = u.phoneNumbers?.find(
