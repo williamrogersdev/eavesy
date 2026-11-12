@@ -76,7 +76,7 @@ export const MEETING_SUMMARY_SCHEMA = {
 } as const;
 
 export interface MeetingSummaryRequest {
-  /** Told which model the API says wrote the final notes: another one after a decline. */
+  /** Told which model the API says wrote the notes: another one after a decline. */
   onAnswered?: (model: string) => void;
   /** The Claude model for the final notes (`plan.summary.model`); absent is the default. Rolling notes keep their own. */
   model?: string;
@@ -191,6 +191,7 @@ export async function requestMeetingSummary(client: Anthropic, args: MeetingSumm
         messages: [{ role: 'user', content: summaryUserContent(args) }],
       })
       .finalMessage();
+    args.onAnswered?.(message.model);
     return parseMeetingSummary(message);
   }
   const model = args.model ?? MEETING_SUMMARY_MODEL;
