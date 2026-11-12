@@ -7,7 +7,8 @@ import * as schema from './schema';
 
 export type AppDb = DrizzleD1Database<typeof schema>;
 
-export function getDb(): AppDb {
+/** The D1 binding itself, for the few statements written as plain SQL. */
+export function getD1(): D1Database {
   const { env } = getCloudflareContext();
   const d1 = (env as unknown as { DB?: D1Database }).DB;
   if (!d1) {
@@ -15,7 +16,11 @@ export function getDb(): AppDb {
       'D1 binding (DB) is missing. Did you provision the database with `bunx wrangler d1 create eavesy` and update wrangler.toml?',
     );
   }
-  return drizzle(timeD1(d1), { schema });
+  return timeD1(d1);
+}
+
+export function getDb(): AppDb {
+  return drizzle(getD1(), { schema });
 }
 
 export type { D1Database };

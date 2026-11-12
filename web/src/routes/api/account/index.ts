@@ -2,7 +2,8 @@ import { createFileRoute } from '@tanstack/react-router';
 import { clerkClient } from '@clerk/tanstack-react-start/server';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
-import { getDb } from '@/db/client';
+import { getD1, getDb } from '@/db/client';
+import * as teamsRepo from '@/db/repo/teams';
 import * as usersRepo from '@/db/repo/users';
 import { captures, deviceTokens, dictations, mcpTokens, meetings, personalDictionary, users } from '@/db/schema';
 import { resolveActor } from '@/server/auth';
@@ -73,6 +74,11 @@ export const Route = createFileRoute('/api/account/')({
             })
             .where(eq(users.id, actor.userId)),
         ]);
+
+        // The team loses this member now, not when the purge runs; the purge repeats it harmlessly.
+        await teamsRepo.depart(getD1(), actor.userId).catch((error: unknown) =>
+          reportError('team departure on account delete failed', error, { userId: actor.userId }),
+        );
 
         await enqueue({ kind: 'purge-account', userId: actor.userId }).catch((error: unknown) =>
           reportError('account purge enqueue failed', error, { userId: actor.userId }),
