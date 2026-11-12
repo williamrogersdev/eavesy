@@ -1034,3 +1034,52 @@ export const emailDeliveries = sqliteTable('email_deliveries', {
   index('email_deliveries_status_updated_idx').on(t.status, t.updatedAt),
   index('email_deliveries_meeting_idx').on(t.meetingId),
 ]);
+
+/** A company or team account: people who belong together. One person is in at most one. */
+export const teams = sqliteTable('teams', {
+  id: text('id').primaryKey(),
+  name: text('name').notNull(),
+  /** Who made it. Not a foreign key: the team outlives that account. */
+  createdBy: text('created_by').notNull(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+});
+
+export const teamMembers = sqliteTable(
+  'team_members',
+  {
+    teamId: text('team_id')
+      .notNull()
+      .references(() => teams.id),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id),
+    /** `owner` can do everything, `admin` manages people, `member` belongs. A team always has an owner. */
+    role: text('role', { enum: ['owner', 'admin', 'member'] }).notNull(),
+    createdAt: integer('created_at').notNull(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.teamId, t.userId] }),
+    // One team per person, for now.
+    uniqueIndex('team_members_user_uq').on(t.userId),
+  ],
+);
+
+/** An invitation to an email address. Whoever signs in with that address can accept it. */
+export const teamInvites = sqliteTable(
+  'team_invites',
+  {
+    id: text('id').primaryKey(),
+    teamId: text('team_id')
+      .notNull()
+      .references(() => teams.id),
+    /** Lower-cased. */
+    email: text('email').notNull(),
+    role: text('role', { enum: ['admin', 'member'] }).notNull(),
+    /** Who sent it. Not a foreign key: the invitation outlives that account. */
+    invitedBy: text('invited_by').notNull(),
+    createdAt: integer('created_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (t) => [uniqueIndex('team_invites_team_email_uq').on(t.teamId, t.email), index('team_invites_email_idx').on(t.email)],
+);
