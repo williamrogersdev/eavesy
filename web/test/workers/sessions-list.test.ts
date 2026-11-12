@@ -60,6 +60,10 @@ describe('GET /api/sessions', () => {
     expect(await ids()).toEqual(['m_other', 'm_web', 'm_this']);
   });
 
+  it('includes the asking device\'s own meetings with all=1, as a phone asks', async () => {
+    expect(await ids('?all=1')).toEqual(['m_other', 'm_web', 'm_this']);
+  });
+
   it('answers 401 without credentials', async () => {
     actor.userId = null;
     const response = await list({ request: new Request('https://eavesy.test/api/sessions'), params: {} });
