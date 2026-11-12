@@ -7,10 +7,17 @@ import { Route as AnswerRoute } from '../../src/routes/api/team/invites/answer';
 import { Route as MembersRoute } from '../../src/routes/api/team/members';
 import { handler, insertUser, resetTables, row, testEnv } from './support';
 
-const actor = vi.hoisted(() => ({ userId: 'user_ada' }));
-vi.mock('../../src/server/auth', () => ({
-  resolveActor: async () => ({ userId: actor.userId, isAnonymous: false }),
-  tryResolveActor: async () => ({ userId: actor.userId, isAnonymous: false }),
+const actor = vi.hoisted(() => ({
+  userId: 'user_ada',
+  /** Set to give the caller a sign-in whose provider reports these addresses. */
+  clerk: null as null | { emailAddresses: { id: string; emailAddress: string; verification: { status: string } }[]; primaryEmailAddressId: string },
+}));
+vi.mock('../../src/server/auth', () => {
+  const resolved = async () => ({ userId: actor.userId, isAnonymous: false, clerkUserId: actor.clerk ? 'clerk_1' : undefined });
+  return { resolveActor: resolved, tryResolveActor: resolved };
+});
+vi.mock('@clerk/tanstack-react-start/server', () => ({
+  clerkClient: () => ({ users: { getUser: async () => actor.clerk, deleteUser: async () => undefined } }),
 }));
 
 const ADA = 'user_ada';
@@ -52,6 +59,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  actor.clerk = null;
   await resetTables('team_invites', 'team_members', 'teams', 'users');
   await addUser(ADA, 'ada@example.com');
   await addUser(BO, 'bo@example.com');
@@ -86,6 +94,20 @@ describe('teams', () => {
     expect((await as(CY, AnswerRoute, 'POST', '/api/team/invites/answer', { id, accept: true })).status).toBe(404);
     expect(await roleOf(CY)).toBeNull();
     expect(await row('SELECT id FROM team_invites WHERE id = ?', id)).not.toBeNull();
+  });
+
+  it('only hands an invitation to a sign-in that proved the address, whatever the account row says', async () => {
+    const id = await teamWithInvite();
+    const address = (status: string) => ({ id: 'e1', emailAddress: 'Bo@example.com', verification: { status } });
+    actor.clerk = { emailAddresses: [address('unverified')], primaryEmailAddressId: 'e1' };
+    expect((await as(BO, TeamRoute, 'GET', '/api/team')).body.invitations).toEqual([]);
+    expect((await as(BO, AnswerRoute, 'POST', '/api/team/invites/answer', { id, accept: true })).status).toBe(404);
+    expect(await roleOf(BO)).toBeNull();
+
+    actor.clerk = { emailAddresses: [address('verified')], primaryEmailAddressId: 'e1' };
+    expect((await as(BO, TeamRoute, 'GET', '/api/team')).body.invitations).toHaveLength(1);
+    expect((await as(BO, AnswerRoute, 'POST', '/api/team/invites/answer', { id, accept: true })).status).toBe(200);
+    expect(await roleOf(BO)).toBe('member');
   });
 
   it('does not accept an expired invitation', async () => {
@@ -194,7 +216,7 @@ describe('teams', () => {
     await teamWithInvite();
     await testEnv.DB.exec(`CREATE TRIGGER stuck BEFORE DELETE ON team_members BEGIN SELECT RAISE(ABORT, 'stuck'); END`);
     try {
-      await expect(as(ADA, AccountRoute, 'DELETE', '/api/account', { confirm: 'ada@example.com' })).rejects.toThrow();
+      expect(await as(ADA, AccountRoute, 'DELETE', '/api/account', { confirm: 'ada@example.com' })).toEqual({ status: 500, body: { error: 'delete_failed' } });
     } finally {
       await testEnv.DB.exec(`DROP TRIGGER stuck`);
     }

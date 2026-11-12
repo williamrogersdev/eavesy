@@ -37,7 +37,7 @@ export const Route = createFileRoute('/api/account/')({
         // One D1 batch is one transaction: either the account is gone, and out of its team, or nothing changed.
         // Leaving the team is part of it on purpose: a scrubbed account must not stay a team's owner, so if
         // that step fails the delete fails whole and the person can try again.
-        await db.batch([
+        const scrubbed = await db.batch([
           db.delete(personalDictionary).where(eq(personalDictionary.userId, actor.userId)),
           db
             .update(deviceTokens)
@@ -77,7 +77,12 @@ export const Route = createFileRoute('/api/account/')({
             .where(eq(users.id, actor.userId)),
           // The team loses this member now, not when the purge runs; the purge repeats it harmlessly.
           ...teamsRepo.departQueries(db, actor.userId),
-        ]);
+        ]).then(() => true, (error: unknown) => {
+          reportError('account delete failed', error, { userId: actor.userId });
+          return false;
+        });
+        // Nothing was written; the settings page says so and offers another try.
+        if (!scrubbed) return Response.json({ error: 'delete_failed' }, { status: 500 });
 
         await enqueue({ kind: 'purge-account', userId: actor.userId }).catch((error: unknown) =>
           reportError('account purge enqueue failed', error, { userId: actor.userId }),

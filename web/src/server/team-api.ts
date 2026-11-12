@@ -1,7 +1,9 @@
+import { clerkClient } from '@clerk/tanstack-react-start/server';
 import { getDb } from '@/db/client';
 import * as teamsRepo from '@/db/repo/teams';
 import * as usersRepo from '@/db/repo/users';
 import { resolveActor } from '@/server/auth';
+import { verifiedEmail } from '@/server/verified-email';
 
 const STATUS: Record<teamsRepo.TeamError['code'], number> = {
   already_in_team: 409,
@@ -31,7 +33,9 @@ export function teamFailure(code: teamsRepo.TeamError['code']): Response {
  * Runs a team API handler for the signed-in caller: 401 without one, and a
  * `TeamError` thrown inside becomes its status and message.
  */
-export async function asCaller(run: (caller: { userId: string; db: ReturnType<typeof getDb> }) => Promise<Response>): Promise<Response> {
+export async function asCaller(
+  run: (caller: { userId: string; db: ReturnType<typeof getDb>; email: () => Promise<string | null> }) => Promise<Response>,
+): Promise<Response> {
   let actor;
   try {
     actor = await resolveActor();
@@ -39,7 +43,9 @@ export async function asCaller(run: (caller: { userId: string; db: ReturnType<ty
     return Response.json({ error: 'unauthenticated' }, { status: 401 });
   }
   try {
-    return await run({ userId: actor.userId, db: getDb() });
+    const db = getDb();
+    const { userId, clerkUserId } = actor;
+    return await run({ userId, db, email: () => callerEmail(db, userId, clerkUserId) });
   } catch (error) {
     if (error instanceof teamsRepo.TeamError) return teamFailure(error.code);
     throw error;
@@ -60,8 +66,18 @@ export async function requireManager(db: ReturnType<typeof getDb>, userId: strin
   return membership;
 }
 
-/** The caller's own address, which invitations are matched against; null when the account has none. */
-export async function callerEmail(db: ReturnType<typeof getDb>, userId: string): Promise<string | null> {
+/**
+ * The caller's own address, which invitations are matched against; null when they have none proven.
+ * Asked of the sign-in provider each time, verified addresses only: the copy on the account row
+ * may predate that rule, and an invitation must only reach someone who proved they hold the address.
+ * An account with no sign-in of its own (local test mode) uses its stored address.
+ */
+async function callerEmail(db: ReturnType<typeof getDb>, userId: string, clerkUserId: string | undefined): Promise<string | null> {
+  if (clerkUserId) {
+    const clerkUser = await clerkClient().users.getUser(clerkUserId);
+    const email = verifiedEmail(clerkUser.emailAddresses, clerkUser.primaryEmailAddressId);
+    return email ? teamsRepo.normalizeEmail(email) : null;
+  }
   const user = await usersRepo.getById(db, userId);
   return user?.email ? teamsRepo.normalizeEmail(user.email) : null;
 }

@@ -1,7 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
 import * as teamsRepo from '@/db/repo/teams';
-import { asCaller, callerEmail, requireManager, requireMembership } from '@/server/team-api';
+import { asCaller, requireManager, requireMembership } from '@/server/team-api';
 
 const nameSchema = z.object({ name: z.string().trim().min(1).max(teamsRepo.MAX_TEAM_NAME) });
 
@@ -10,10 +10,11 @@ export const Route = createFileRoute('/api/team')({
     handlers: {
       /** The caller's team with its people, or the invitations waiting for them. */
       GET: async () =>
-        asCaller(async ({ userId, db }) => {
+        asCaller(async (caller) => {
+          const { userId, db } = caller;
           const membership = await teamsRepo.membershipOf(db, userId);
           if (!membership) {
-            const email = await callerEmail(db, userId);
+            const email = await caller.email();
             return Response.json({ team: null, invitations: email ? await teamsRepo.invitesFor(db, email) : [] });
           }
           const [members, invites] = await Promise.all([
