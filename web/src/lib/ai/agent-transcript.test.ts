@@ -199,14 +199,35 @@ describe('hedged', () => {
     expect(result).toBe('answer 1');
   });
 
-  test('a failure is retried at once, and two failures fail', async () => {
+  test('a failure before the second request is due ends it there', async () => {
     let calls = 0;
     const started = Date.now();
-    expect(await hedged(() => { calls += 1; return calls === 1 ? Promise.reject(new Error('overloaded')) : after(5, 'tidied'); }, 5_000)).toBe('tidied');
-    expect(Date.now() - started).toBeLessThan(1_000);
+    await expect(hedged(() => { calls += 1; return Promise.reject(new Error('overloaded')); }, 300)).rejects.toThrow('overloaded');
+    expect(Date.now() - started).toBeLessThan(250);
+    await after(400, '');
+    expect(calls).toBe(1);
+  });
+
+  test('once both are out, one failing leaves the other to answer, and both failing fails', async () => {
+    let calls = 0;
+    const slowThenFails = (ms: number) => new Promise<string>((_, reject) => setTimeout(() => reject(new Error('timed out')), ms));
+    expect(await hedged(() => { calls += 1; return calls === 1 ? slowThenFails(80) : after(150, 'tidied'); }, 30)).toBe('tidied');
     calls = 0;
-    await expect(hedged(() => { calls += 1; return Promise.reject(new Error(`failed ${calls}`)); }, 5_000)).rejects.toThrow('failed 2');
+    await expect(hedged(() => { calls += 1; return slowThenFails(calls === 1 ? 80 : 20); }, 30)).rejects.toThrow('timed out');
     expect(calls).toBe(2);
+  });
+
+  test('an answer that is not accepted does not win over one still to come', async () => {
+    const aborted: number[] = [];
+    let calls = 0;
+    const result = await hedged((signal) => {
+      const call = (calls += 1);
+      signal.addEventListener('abort', () => aborted.push(call));
+      return after(call === 1 ? 80 : 120, call === 1 ? 'Sure! Done.' : 'tidied', signal);
+    }, 30, (value) => value === 'tidied');
+    expect(result).toBe('tidied');
+    expect(aborted).toEqual([]);
+    await expect(hedged(() => after(5, 'Sure! Done.'), 300, () => false)).rejects.toThrow('not accepted');
   });
 
   test('a longer dictation is given longer before the second request', () => {

@@ -646,9 +646,14 @@ mod tests {
         let pressed = || started.elapsed() >= ms(400);
         assert_eq!(wait_within(&answer_after(ms(8_000)), ms(6_000), ms(100), pressed), Err(NoAnswer::Hurried));
         assert!(started.elapsed() >= ms(400) && started.elapsed() < ms(3_000), "{:?}", started.elapsed());
-        // A Return let go of again leaves the wait hurried.
+        // A Return let go of again leaves the wait hurried: held only the
+        // second time it is asked about.
+        let asked = std::cell::Cell::new(0);
+        let briefly = || {
+            asked.set(asked.get() + 1);
+            asked.get() == 2
+        };
         let started = Instant::now();
-        let briefly = || (ms(100)..ms(200)).contains(&started.elapsed());
         assert_eq!(wait_within(&answer_after(ms(8_000)), ms(6_000), ms(500), briefly), Err(NoAnswer::Hurried));
         assert!(started.elapsed() < ms(3_000), "{:?}", started.elapsed());
     }

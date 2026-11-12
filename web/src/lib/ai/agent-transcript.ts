@@ -195,31 +195,50 @@ export function hedgeAfterMs(chars: number): number {
 }
 
 /**
- * `run`, asked a second time when the first answer is slow (or fails): the
- * first answer in wins and the other request is dropped. Fails only when
- * both do. A slow model call is usually slow by chance, not by its input, so
- * the second one mostly comes back at the usual speed.
+ * `run`, asked a second time alongside when the first answer is slow: the
+ * first answer `accept` passes wins, and the other request is dropped. A
+ * request that fails, or whose answer isn't accepted, before the second was
+ * due ends it there (the client has already retried what is worth retrying,
+ * and the caller's fallback is instant); once both are out, each is waited
+ * for until one is accepted. A slow model call is usually slow by chance,
+ * not by its input, so the second one mostly comes back at the usual speed.
  */
-export function hedged<T>(run: (signal: AbortSignal) => Promise<T>, afterMs: number): Promise<T> {
+export function hedged<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  afterMs: number,
+  accept: (value: T) => boolean = () => true,
+): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const aborts: AbortController[] = [];
-    let failed = 0;
-    let started = 0;
+    let pending = 0;
+    let settled = false;
+    const settle = (finish: () => void) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      for (const abort of aborts) abort.abort();
+      finish();
+    };
+    const lost = (error: unknown) => {
+      pending -= 1;
+      // The other request, if it is out, may still answer.
+      if (pending === 0) settle(() => reject(error instanceof Error ? error : new Error(String(error))));
+    };
     const start = () => {
-      if (started === 2) return;
-      started += 1;
       const abort = new AbortController();
       aborts.push(abort);
+      pending += 1;
+      // A request that has ended is no longer there to abort.
+      const ended = () => aborts.splice(aborts.indexOf(abort), 1);
       run(abort.signal).then(
         (value) => {
-          clearTimeout(timer);
-          resolve(value);
-          for (const other of aborts) if (other !== abort) other.abort();
+          ended();
+          if (accept(value)) settle(() => resolve(value));
+          else lost(new Error('answer not accepted'));
         },
         (error: unknown) => {
-          failed += 1;
-          if (failed === 2) reject(error instanceof Error ? error : new Error(String(error)));
-          else start();
+          ended();
+          lost(error);
         },
       );
     };
@@ -252,15 +271,16 @@ export async function polishDictation(
   const turns: Turn[] = [{ speaker: null, text: said }];
   try {
     const system = restyle ? styledDictationPrompt(style, !!args.forAgents, args.context) : dictationPrompt(args.context);
-    // The Mac app is holding a paste for this: a slow answer gets a second try alongside.
-    const candidate = await hedged((signal) => cleanChunk(client, turns, system, signal), hedgeAfterMs(said.length));
     const validationInput = known ? [...turns, { speaker: null, text: known }] : turns;
-    const shapeKept = restyle ? restyledIsValid(validationInput, candidate) : cleanedChunkIsValid(validationInput, candidate, 'solo');
     const terms = [...(args.terms ?? []), ...(args.confirmedSpellings ?? [])];
-    if (shapeKept && preservesSpellings(said, candidate, args.confirmedSpellings ?? [])
-      && inventedTerms(said, candidate, terms, args.corrections).length === 0) {
-      return { text: restyle ? withoutSwearing(candidate) : candidate, polished: true };
-    }
+    const usable = (candidate: string) =>
+      (restyle ? restyledIsValid(validationInput, candidate) : cleanedChunkIsValid(validationInput, candidate, 'solo'))
+      && preservesSpellings(said, candidate, args.confirmedSpellings ?? [])
+      && inventedTerms(said, candidate, terms, args.corrections).length === 0;
+    // The Mac app is holding a paste for this: a slow answer gets a second
+    // try alongside, and the first usable one is the dictation.
+    const candidate = await hedged((signal) => cleanChunk(client, turns, system, signal), hedgeAfterMs(said.length), usable);
+    return { text: restyle ? withoutSwearing(candidate) : candidate, polished: true };
   } catch {
     // The model-free cleanup below still beats the raw words.
   }
