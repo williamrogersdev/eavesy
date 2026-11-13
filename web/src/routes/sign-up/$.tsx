@@ -53,7 +53,7 @@ function AlreadySignedIn({ href }: { href: string }) {
       </p>
       <a
         href={href}
-        className="inline-flex items-center gap-2 rounded-full bg-ev-coat px-5 py-2.5 font-round text-sm font-bold text-ev-on-coat shadow-[var(--ev-e-2)] hover:bg-ev-coat-hover"
+        className="inline-flex items-center gap-2 rounded-full bg-ev-brand px-5 py-2.5 font-round text-sm font-bold text-ev-on-brand shadow-[var(--ev-e-2)] hover:bg-ev-brand-hover"
       >
         Go to your dashboard
         <ArrowRight className="h-4 w-4" />

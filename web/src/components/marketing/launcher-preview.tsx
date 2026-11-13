@@ -129,15 +129,15 @@ const LEVELS = [0.35, 0.7, 0.5, 0.95, 0.6, 0.8, 0.45, 0.65, 0.3];
 export function HudPreview({ className, words }: { className?: string; words?: [string, string] }) {
   return (
     <div aria-hidden className={cn('w-[300px] select-none', className)}>
-      <div className="flex h-[34px] items-center gap-2 rounded-full border border-[var(--ev-hud-line)] bg-[var(--ev-hud)] px-2 text-[var(--ev-hud-ink)] shadow-[var(--ev-e-3)] backdrop-blur-[30px] backdrop-saturate-[160%]">
+      <div className="flex h-[34px] items-center gap-2 rounded-full border border-[var(--ev-pill-line)] bg-[var(--ev-pill)] px-2 text-[var(--ev-pill-ink)] shadow-[var(--ev-e-3)] backdrop-blur-[30px] backdrop-saturate-[160%]">
         <Mascot size={18} state="listening" level={0.6} recording />
         <span className="font-round text-[12.5px] font-semibold">Listening</span>
-        <span className="font-round text-[12.5px] tabular-nums text-[var(--ev-hud-ink-2)]">0:07</span>
+        <span className="font-round text-[12.5px] tabular-nums text-[var(--ev-pill-ink-2)]">0:07</span>
         <span className="ml-1 flex h-3.5 items-center gap-[2px]">
           {LEVELS.map((h, i) => (
             <i
               key={i}
-              className="animate-eq block w-[2.5px] rounded-full bg-[var(--ev-hud-ink-2)]"
+              className="animate-eq block w-[2.5px] rounded-full bg-[var(--ev-pill-ink-2)]"
               style={{ height: `${h * 100}%`, animationDelay: `${i * 90}ms` }}
             />
           ))}
@@ -147,9 +147,9 @@ export function HudPreview({ className, words }: { className?: string; words?: [
         </span>
       </div>
       {words && (
-        <div className="mx-3 mt-1.5 rounded-[var(--ev-r-sheet)] border border-[var(--ev-hud-line)] bg-[var(--ev-hud)] px-3.5 py-2.5 text-[13.5px] leading-[19px] text-[var(--ev-hud-ink)] shadow-[var(--ev-e-3)] backdrop-blur-[30px]">
-          {words[0]} <span className="text-[var(--ev-hud-ink-2)]">{words[1]}</span>
-          <span className="ml-0.5 inline-block h-3.5 w-px translate-y-0.5 animate-recording-pulse bg-[var(--ev-hud-ink)]" />
+        <div className="mx-3 mt-1.5 rounded-[var(--ev-r-sheet)] border border-[var(--ev-pill-line)] bg-[var(--ev-pill)] px-3.5 py-2.5 text-[13.5px] leading-[19px] text-[var(--ev-pill-ink)] shadow-[var(--ev-e-3)] backdrop-blur-[30px]">
+          {words[0]} <span className="text-[var(--ev-pill-ink-2)]">{words[1]}</span>
+          <span className="ml-0.5 inline-block h-3.5 w-px translate-y-0.5 animate-recording-pulse bg-[var(--ev-pill-ink)]" />
         </div>
       )}
     </div>

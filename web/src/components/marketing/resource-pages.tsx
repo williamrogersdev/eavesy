@@ -202,7 +202,7 @@ function DownloadResource({ path, label }: { path: string; label: string }) {
         <button
           type="button"
           onClick={() => void copy()}
-          className="min-h-11 rounded-full bg-ev-coat px-5 py-2 font-semibold text-ev-on-coat"
+          className="min-h-11 rounded-full bg-ev-brand px-5 py-2 font-semibold text-ev-on-brand"
         >
           Copy Markdown
         </button>
@@ -287,7 +287,7 @@ export function ResourceArticle({
               <>
                 <a
                   href="#build-your-template"
-                  className="mb-5 inline-flex min-h-11 items-center rounded-full bg-ev-coat px-5 font-semibold text-ev-on-coat"
+                  className="mb-5 inline-flex min-h-11 items-center rounded-full bg-ev-brand px-5 font-semibold text-ev-on-brand"
                 >
                   Build your template ↓
                 </a>

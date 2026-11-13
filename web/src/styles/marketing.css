@@ -1,6 +1,6 @@
 /*
  * eavesy.com public pages. Same standard as the app (desktop/DESIGN.md):
- * cream surfaces, charcoal ink, the coat for actions, manila for warmth,
+ * warm paper, navy ink, marigold for actions, the navy coat for links,
  * coral only for "recording right now". The layout root carries `.ev .ev-site`.
  */
 
@@ -14,10 +14,10 @@
     --accent: var(--ev-coat);
     --accent-hover: var(--ev-coat-hover);
     --accent-soft: var(--ev-coat-soft);
-    --action: var(--ev-coat);
-    --action-hover: var(--ev-coat-hover);
-    --primary: var(--ev-coat);
-    --primary-foreground: var(--ev-on-coat);
+    --action: var(--ev-brand);
+    --action-hover: var(--ev-brand-hover);
+    --primary: var(--ev-brand);
+    --primary-foreground: var(--ev-on-brand);
 
     background: var(--ev-paper);
     color: var(--ev-ink);

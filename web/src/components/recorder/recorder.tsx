@@ -196,7 +196,7 @@ export function Recorder({ onSaved, captureSystemAudio: defaultCaptureSystemAudi
             onClick={() => void handleStart()}
             disabled={starting}
             aria-label={starting ? 'Requesting recording permission' : 'Start recording'}
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-action text-ev-on-coat transition hover:bg-action-hover active:scale-95 disabled:cursor-wait disabled:opacity-60"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-action text-ev-on-brand transition hover:bg-action-hover active:scale-95 disabled:cursor-wait disabled:opacity-60"
           >
             {starting ? <Loader2 className="h-5 w-5 animate-spin" /> : <Mic className="h-5 w-5" />}
           </button>
@@ -211,7 +211,7 @@ export function Recorder({ onSaved, captureSystemAudio: defaultCaptureSystemAudi
             checked={captureSystemAudio}
             onChange={(e) => setCaptureSystemAudio(e.target.checked)}
             disabled={starting}
-            className="h-3.5 w-3.5 rounded border-ev-line accent-[var(--accent)]"
+            className="h-3.5 w-3.5 rounded border-ev-line accent-[var(--ev-brand)]"
           />
           Also record audio from a shared tab or screen
         </label>

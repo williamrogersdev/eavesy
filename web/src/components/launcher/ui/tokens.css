@@ -6,32 +6,39 @@
 
 .launcher-scope,
 .ev {
-  /* surfaces: case-file cream, not white */
-  --ev-paper: #fbf7f0;
-  --ev-well: #f2ebdf;
-  --ev-raised: #fffdf8;
-  --ev-line: #e6ddcf;
-  --ev-line-strong: #d3c7b6;
-  /* ink: trench-coat charcoal, never #000 */
-  --ev-ink: #211c1a;
-  --ev-ink-2: #5f5751;
-  --ev-ink-3: #968d85;
-  /* brand: the coat carries actions, manila marks highlights */
-  --ev-coat: #2b2523;
-  --ev-coat-hover: #1a1614;
-  --ev-coat-soft: #ece6df;
-  --ev-on-coat: #fbf7f0;
+  /* surfaces: warm paper, not white */
+  --ev-paper: #fbf8f1;
+  --ev-well: #f1ede2;
+  --ev-raised: #fffefa;
+  --ev-line: #e4dfd2;
+  --ev-line-strong: #d0c9b8;
+  /* ink: deep navy, never #000 */
+  --ev-ink: #16213f;
+  --ev-ink-2: #505a75;
+  --ev-ink-3: #666d85;
+  /* brand: marigold fills (buttons, switches, the mascot). Too light for text or
+     hairlines on paper, so links, focus rings and selected text use the coat. */
+  --ev-brand: #f2b233;
+  --ev-brand-hover: #e5a31c;
+  --ev-brand-soft: #fbebc4;
+  --ev-on-brand: #16213f;
+  /* coat: the navy that carries links, focus and selection */
+  --ev-coat: #16213f;
+  --ev-coat-hover: #0b1330;
+  --ev-coat-soft: #e9e5d8;
+  --ev-on-coat: #fbf8f1;
   --ev-manila: #e2b866;
   --ev-manila-shade: #c99a45;
   --ev-manila-soft: #f6e8cc;
   --ev-manila-ink: #6e4a12;
-  --ev-mascot-body: #2b2523;
-  --ev-mascot-band: #4a403c;
-  --ev-mascot-eye: #fbf7f0;
+  --ev-mascot-body: #f2b233;
+  --ev-mascot-hat: #16213f;
+  --ev-mascot-band: #fbf8f1;
+  --ev-mascot-eye: #16213f;
   /* meaning */
   --ev-rec: #ff5a3c; /* the coral light: RECORDING ONLY */
   --ev-rec-soft: #ffe3da;
-  --ev-leaf: #2f8a5b;
+  --ev-leaf: #267a4f;
   --ev-leaf-soft: #ddf1e5;
   --ev-warn-ink: #9a5b00; /* errors use warn, not coral: coral means recording */
   --ev-warn-soft: #fff0d6;
@@ -42,9 +49,21 @@
   --ev-meeting-soft: #ece4f7;
   --ev-screen: #0a6772; /* screenshots and videos: teal */
   --ev-screen-soft: #dcf0f1;
-  --ev-note: #85580c; /* notes: the manila folder's own ink */
-  --ev-note-soft: #f6e8cc;
-  /* HUD glass (same in both modes: it sits over any app) */
+  --ev-note: #7a4a2a; /* notes: brown, so it never reads as the brand marigold */
+  --ev-note-soft: #f1e2d6;
+  /* Recording pill and its live card: a light capsule by day, navy by night. */
+  --ev-pill: rgb(255 254 250 / 0.97);
+  --ev-pill-glass: rgb(255 254 250 / 0.82);
+  --ev-pill-glass-strong: rgb(255 254 250 / 0.88);
+  --ev-pill-glass-solid: rgb(255 254 250 / 0.94);
+  --ev-pill-raised: #f1ede2;
+  --ev-pill-line: rgb(22 33 63 / 0.18);
+  --ev-pill-ink: #16213f;
+  --ev-pill-ink-rgb: 22 33 63;
+  --ev-pill-ink-2: rgb(22 33 63 / 0.74);
+  --ev-pill-ink-3: rgb(22 33 63 / 0.64);
+  --ev-pill-text-shadow: 0 1px 2px rgb(255 255 255 / 0.5);
+  /* Overlays drawn on top of screen content (markers, agent cards): dark in both modes. */
   --ev-hud: rgb(22 19 18 / 0.97);
   --ev-hud-line: rgb(255 240 220 / 0.14);
   --ev-hud-ink: #f6efe4;
@@ -76,10 +95,10 @@
   --ev-r-hud: 999px;
   --ev-r-sheet: 16px;
 
-  /* elevation: charcoal-tinted, never neutral grey */
-  --ev-e-1: inset 0 1px 0 rgb(33 28 26 / 0.05);
-  --ev-e-2: 0 1px 2px rgb(33 28 26 / 0.08), 0 4px 14px -6px rgb(33 28 26 / 0.18);
-  --ev-e-3: 0 0 0 0.5px rgb(33 28 26 / 0.14), 0 24px 60px -22px rgb(33 28 26 / 0.45);
+  /* elevation: navy-tinted, never neutral grey */
+  --ev-e-1: inset 0 1px 0 rgb(22 33 63 / 0.05);
+  --ev-e-2: 0 1px 2px rgb(22 33 63 / 0.08), 0 4px 14px -6px rgb(22 33 63 / 0.18);
+  --ev-e-3: 0 0 0 0.5px rgb(22 33 63 / 0.14), 0 24px 60px -22px rgb(22 33 63 / 0.45);
 
   /* spacing: 4pt grid */
   --ev-s-1: 4px;
@@ -103,45 +122,61 @@
   /* after hours */
   .launcher-scope,
   .ev {
-    /* warm charcoal: a hint of the coat's brown, not a sepia wash */
-    --ev-paper: #1c1b1a;
-    --ev-well: #232220; /* lighter than paper after hours: raised, not sunken */
-    --ev-raised: #282725;
-    --ev-line: #353331;
-    --ev-line-strong: #46433f;
-    --ev-ink: #f2efea;
-    --ev-ink-2: #aea9a2;
-    --ev-ink-3: #7c7771;
-    --ev-coat: #f2efea; /* in the dark the coat turns to cream paper */
+    /* night blue: the navy ink turned into the page, never a black slab */
+    --ev-paper: #111830;
+    --ev-well: #18203c; /* lighter than paper after hours: raised, not sunken */
+    --ev-raised: #1e2848;
+    --ev-line: #2c3759;
+    --ev-line-strong: #3d4a73;
+    --ev-ink: #eef0f7;
+    --ev-ink-2: #a7aecb;
+    --ev-ink-3: #8a93b3;
+    --ev-brand: #f5c04e;
+    --ev-brand-hover: #ffd06a;
+    --ev-brand-soft: #3a3320;
+    --ev-on-brand: #16213f;
+    --ev-coat: #eef0f7; /* in the dark the coat turns to paper white */
     --ev-coat-hover: #ffffff;
-    --ev-coat-soft: #302e2c;
-    --ev-on-coat: #1c1b1a;
+    --ev-coat-soft: #263058;
+    --ev-on-coat: #111830;
     --ev-manila: #f0c879;
     --ev-manila-shade: #d9ab55;
-    --ev-manila-soft: #3a2f1c;
+    --ev-manila-soft: #3a3320;
     --ev-manila-ink: #f5d9a0;
-    --ev-mascot-body: #3b3836;
-    --ev-mascot-band: #57524e;
-    --ev-mascot-eye: #f2efea;
+    --ev-mascot-body: #f5c04e;
+    --ev-mascot-hat: #4a5c9e;
+    --ev-mascot-band: #eef0f7;
+    --ev-mascot-eye: #16213f;
     --ev-voice: #86aef5;
-    --ev-voice-soft: #1f2a40;
+    --ev-voice-soft: #1c2c52;
     --ev-meeting: #bc9af0;
-    --ev-meeting-soft: #2d2440;
+    --ev-meeting-soft: #2d2752;
     --ev-screen: #5fc7d2;
-    --ev-screen-soft: #173236;
-    --ev-note: #f0c879;
-    --ev-note-soft: #3a2f1c;
+    --ev-screen-soft: #15344a;
+    --ev-note: #d9a37c;
+    --ev-note-soft: #3a2c30;
     --ev-rec: #ff6a4d;
-    --ev-rec-soft: #3a1d16;
+    --ev-rec-soft: #3d2030;
     --ev-leaf: #6fcf97;
-    --ev-leaf-soft: #1f3328;
+    --ev-leaf-soft: #17363a;
     --ev-warn-ink: #ffc870;
-    --ev-warn-soft: #3a2c17;
+    --ev-warn-soft: #3a3320;
+    --ev-pill: rgb(30 40 72 / 0.97);
+    --ev-pill-glass: rgb(22 30 56 / 0.7);
+    --ev-pill-glass-strong: rgb(22 30 56 / 0.78);
+    --ev-pill-glass-solid: rgb(22 30 56 / 0.88);
+    --ev-pill-raised: #2a3560;
+    --ev-pill-line: rgb(255 255 255 / 0.14);
+    --ev-pill-ink: #eef0f7;
+    --ev-pill-ink-rgb: 238 240 247;
+    --ev-pill-ink-2: rgb(238 240 247 / 0.74);
+    --ev-pill-ink-3: rgb(238 240 247 / 0.52);
+    --ev-pill-text-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
 
     --ev-e-1: inset 0 1px 0 rgb(0 0 0 / 0.1);
-    --ev-e-2: 0 1px 2px rgb(8 6 5 / 0.16), 0 4px 14px -6px rgb(8 6 5 / 0.36),
+    --ev-e-2: 0 1px 2px rgb(4 8 22 / 0.16), 0 4px 14px -6px rgb(4 8 22 / 0.36),
       inset 0 1px 0 rgb(255 240 220 / 0.06);
-    --ev-e-3: 0 0 0 0.5px rgb(8 6 5 / 0.28), 0 24px 60px -22px rgb(8 6 5 / 0.9),
+    --ev-e-3: 0 0 0 0.5px rgb(4 8 22 / 0.28), 0 24px 60px -22px rgb(4 8 22 / 0.9),
       inset 0 1px 0 rgb(255 240 220 / 0.06);
   }
 }
@@ -167,6 +202,6 @@
   --border: var(--ev-line);
   --accent: var(--ev-rec);
   --accent-soft: var(--ev-rec-soft);
-  --primary: var(--ev-coat);
-  --primary-foreground: var(--ev-on-coat);
+  --primary: var(--ev-brand);
+  --primary-foreground: var(--ev-on-brand);
 }

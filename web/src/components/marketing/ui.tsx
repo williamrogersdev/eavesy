@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 export const DOWNLOAD_HREF = '/download/mac?start=1';
 
 const PRIMARY =
-  'inline-flex items-center justify-center gap-2 rounded-full bg-ev-coat px-5 py-2.5 font-round text-sm font-bold text-ev-on-coat shadow-[var(--ev-e-2)] transition duration-150 hover:bg-ev-coat-hover active:scale-[0.97]';
+  'inline-flex items-center justify-center gap-2 rounded-full bg-ev-brand px-5 py-2.5 font-round text-sm font-bold text-ev-on-brand shadow-[var(--ev-e-2)] transition duration-150 hover:bg-ev-brand-hover active:scale-[0.97]';
 
 export function DownloadButton({
   className,

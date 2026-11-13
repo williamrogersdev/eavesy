@@ -59,7 +59,7 @@ export function DropButton() {
         <Inbox className="h-4 w-4" />
         <span className="hidden sm:inline">Drop</span>
         {unseen > 0 ? (
-          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-action px-1 text-[10px] font-semibold text-ev-on-coat">
+          <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-action px-1 text-[10px] font-semibold text-ev-on-brand">
             {unseen > 9 ? '9+' : unseen}
           </span>
         ) : null}
@@ -123,14 +123,14 @@ function DropPanel() {
           }}
           rows={3}
           placeholder="Paste or type anything…"
-          className="w-full resize-y rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 py-2 text-sm text-ev-ink outline-none placeholder:text-ev-ink-2 focus:border-action"
+          className="w-full resize-y rounded-[var(--ev-r-ctl)] border border-ev-line bg-ev-paper px-3 py-2 text-sm text-ev-ink outline-none placeholder:text-ev-ink-2 focus:border-ev-coat"
         />
         <div className="mt-2 flex items-center gap-2">
           <button
             type="button"
             onClick={submit}
             disabled={!draft.trim()}
-            className="flex h-8 items-center gap-1.5 rounded-full bg-action font-round font-bold px-3 text-[13px] text-ev-on-coat hover:bg-action-hover disabled:opacity-50"
+            className="flex h-8 items-center gap-1.5 rounded-full bg-action font-round font-bold px-3 text-[13px] text-ev-on-brand hover:bg-action-hover disabled:opacity-50"
           >
             <Send className="h-3.5 w-3.5" /> Send
           </button>
@@ -255,7 +255,7 @@ function DropRow({ drop }: { drop: LocalDrop }) {
           <a
             href={downloadUrl(drop)}
             download={drop.filename ?? true}
-            className="flex h-7 items-center gap-1 rounded-full bg-action font-round font-bold px-2 text-xs text-ev-on-coat hover:bg-action-hover"
+            className="flex h-7 items-center gap-1 rounded-full bg-action font-round font-bold px-2 text-xs text-ev-on-brand hover:bg-action-hover"
           >
             <Download className="h-3.5 w-3.5" /> Download
           </a>
@@ -292,7 +292,7 @@ function RowButton({
       onClick={onClick}
       className={cn(
         'flex h-7 items-center gap-1 rounded-[var(--ev-r-ctl)] px-2 text-xs font-medium',
-        primary ? 'bg-action text-ev-on-coat hover:bg-action-hover' : 'border border-ev-line text-ev-ink-2 hover:bg-[var(--ev-hover)]',
+        primary ? 'bg-action text-ev-on-brand hover:bg-action-hover' : 'border border-ev-line text-ev-ink-2 hover:bg-[var(--ev-hover)]',
       )}
     >
       <Icon className="h-3.5 w-3.5" /> {label}

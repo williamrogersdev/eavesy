@@ -232,7 +232,7 @@ function PositionPicker({ value, custom, disabled, onPick }: {
               <span
                 className={cn(
                   'h-2.5 w-12 rounded-full transition-colors',
-                  selected ? 'bg-[var(--ev-coat)]' : 'bg-[var(--ev-line-strong)] group-hover:bg-[var(--ev-ink-3)]',
+                  selected ? 'bg-[var(--ev-brand)]' : 'bg-[var(--ev-line-strong)] group-hover:bg-[var(--ev-ink-3)]',
                 )}
               />
             </button>

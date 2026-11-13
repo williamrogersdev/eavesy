@@ -128,7 +128,7 @@ function DictationPage() {
             type="button"
             onClick={() => void start()}
             aria-label="Start dictation"
-            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-action text-ev-on-coat transition hover:bg-action-hover active:scale-95"
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-action text-ev-on-brand transition hover:bg-action-hover active:scale-95"
           >
             <Mic className="h-5 w-5" />
           </button>

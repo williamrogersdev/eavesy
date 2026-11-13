@@ -37,8 +37,8 @@
 .ev-wt-row:hover .ev-wt-actions, .ev-wt-row:focus-within .ev-wt-actions { opacity: 1; }
 .ev-wt-row[data-picked] .ev-wt-branch { color: var(--ev-ink); }
 .ev-machine-check:disabled { opacity: 0.5; cursor: default; }
-.ev-machine-check:indeterminate { background: var(--ev-coat); box-shadow: none; }
-.ev-machine-check:indeterminate::after { content: ''; width: 8px; height: 1.75px; background: var(--ev-on-coat); }
+.ev-machine-check:indeterminate { background: var(--ev-brand); box-shadow: none; }
+.ev-machine-check:indeterminate::after { content: ''; width: 8px; height: 1.75px; background: var(--ev-on-brand); }
 
 /* Ports put their number where the box would be. */
 .ev-port-row { grid-template-columns: 52px minmax(0, 1fr); }
