@@ -34,6 +34,7 @@ mod stray_copies;
 #[cfg(target_os = "macos")]
 mod cf;
 mod cmd;
+mod clipboard;
 mod cloud_pull;
 mod dictate;
 mod dictation;
@@ -210,6 +211,15 @@ pub fn run() {
             imports::paste_to_composer,
             imports::delete_capture,
             imports::open_recordings_folder,
+            clipboard::clipboard_list,
+            clipboard::clipboard_item,
+            clipboard::clipboard_use,
+            clipboard::clipboard_use_capture,
+            clipboard::clipboard_delete,
+            clipboard::clipboard_clear,
+            clipboard::show_clipboard,
+            clipboard::hide_clipboard,
+            clipboard::set_clipboard_history,
             screenshot_watcher::get_screenshot_folder,
             screenshot_watcher::set_auto_import_screenshots,
             fs_writer::write_meeting_folder,
@@ -346,6 +356,10 @@ pub fn run() {
                 }
             }
             screenshot_watcher::start(&handle);
+            if let Err(e) = clipboard::install(&handle) {
+                telemetry::capture("clipboard.install", &e);
+            }
+            clipboard::start(&handle);
             walkthrough::recover(&handle);
             // A spare capture engine, so the first dictation does not wait for one.
             audio::prepare_standby(&handle);

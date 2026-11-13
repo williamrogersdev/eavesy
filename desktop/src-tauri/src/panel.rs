@@ -303,7 +303,10 @@ mod imp {
         super::remember_size(app);
         crate::hud::collapse_from_panel_on_main(app);
         panel.order_out(None);
-        crate::app_menu::return_focus();
+        // The clipboard panel taking the keyboard closes this one: it keeps the focus.
+        if !crate::clipboard::is_visible(app) {
+            crate::app_menu::return_focus();
+        }
         Ok(())
     }
 
