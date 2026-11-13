@@ -165,7 +165,7 @@ fn slot(action: Action) -> usize {
         Action::Toggle => 0,
         Action::Dictation => 1,
         Action::Assistant => 2,
-        Action::Screen => unreachable!("Record screen is never bound to fn"),
+        Action::Screen | Action::Control => unreachable!("only the open and talk shortcuts are ever bound to fn"),
     }
 }
 

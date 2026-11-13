@@ -5,9 +5,10 @@ import * as activityRepo from '@/db/repo/activity';
 import * as meetingsRepo from '@/db/repo/meetings';
 import * as usersRepo from '@/db/repo/users';
 import { chatWithMeeting } from '@/lib/ai/chat-meeting';
+import { MAX_HEARD, meetingChatContext, meetingIsLive } from '@/lib/ai/meeting-chat-context';
 import { guardUserQuota } from '@/server/rate-limit';
 import { resolveModelPlan } from '@/lib/providers/router';
-import { resolveActor } from '@/server/auth';
+import { resolveIngestActor } from '@/server/device-auth';
 
 const schema = z.object({
   messages: z
@@ -19,6 +20,12 @@ const schema = z.object({
     )
     .min(1)
     .max(40),
+  /**
+   * From the recorder's Mac, while the meeting is still going on: what it has
+   * heard that the transcript may not hold yet (the cloud writes a line about
+   * a minute after it is said).
+   */
+  heard: z.string().max(MAX_HEARD).optional(),
 });
 
 export const Route = createFileRoute('/api/meetings/$id/chat')({
@@ -27,9 +34,12 @@ export const Route = createFileRoute('/api/meetings/$id/chat')({
       POST: async ({ request, params }) => {
         const { id } = params;
 
+        // The website's session, or the Mac that is recording the meeting. A
+        // Mac's token stands for its own account and nothing else, and the
+        // meeting is read by that account below: another account's is a 404.
         let actor;
         try {
-          actor = await resolveActor();
+          actor = await resolveIngestActor(request);
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
@@ -49,7 +59,10 @@ export const Route = createFileRoute('/api/meetings/$id/chat')({
         const db = getDb();
         const data = await meetingsRepo.getFull(db, { meetingId: id, userId: actor.userId });
         if (!data) return Response.json({ error: 'not_found' }, { status: 404 });
-        if (data.meeting.status !== 'complete' && !data.segments.length) {
+        // Before any transcript, only a meeting still going on can be asked
+        // about, from what its recorder has just heard.
+        const heardLive = meetingIsLive(data.meeting.status) && Boolean(body.heard?.trim());
+        if (data.meeting.status !== 'complete' && !data.segments.length && !heardLive) {
           return Response.json(
             { error: 'not_ready', message: 'This meeting is still processing.' },
             { status: 409 },
@@ -62,7 +75,7 @@ export const Route = createFileRoute('/api/meetings/$id/chat')({
         let reply: string;
         try {
           reply = await chatWithMeeting({
-            context: buildContext(data),
+            context: meetingChatContext(data, { heard: body.heard, now: Date.now() }),
             history: body.messages,
             openRouter: plan.openRouter,
             byoApiKey: plan.summary.apiKey,
@@ -78,63 +91,3 @@ export const Route = createFileRoute('/api/meetings/$id/chat')({
     },
   },
 });
-
-function buildContext(data: Awaited<ReturnType<typeof meetingsRepo.getFull>>): string {
-  if (!data) return '';
-  const { meeting, summary, segments, notes } = data;
-  const out: string[] = [`Title: ${meeting.title}`, `When: ${new Date(meeting.startedAt).toISOString()}`];
-
-  if (meeting.contextBlurb?.trim()) {
-    out.push(
-      '',
-      'User-supplied meeting context (ground truth; substitutes for absent speaker labels):',
-      meeting.contextBlurb.trim(),
-    );
-  }
-
-  if (meeting.summaryOverrideMd?.trim()) {
-    out.push('', 'User-edited brief:', meeting.summaryOverrideMd.trim());
-  } else if (summary) {
-    if (summary.tldr) out.push('', `TL;DR: ${summary.tldr}`);
-    if (summary.decisions?.length) {
-      out.push('', 'Decisions:', ...summary.decisions.map((d) => `- ${d.text}`));
-    }
-    if (summary.actionItems?.length) {
-      out.push(
-        '',
-        'Action items:',
-        ...summary.actionItems.map(
-          (a) => `- ${a.owner ? a.owner + ': ' : ''}${a.text}${a.due ? ` (due ${a.due})` : ''}`,
-        ),
-      );
-    }
-    if (summary.openQuestions?.length) {
-      out.push('', 'Open questions:', ...summary.openQuestions.map((q) => `- ${q.text}`));
-    }
-  }
-
-  if (notes?.contentMd?.trim()) out.push('', 'User notes:', notes.contentMd.trim());
-
-  if (meeting.transcriptOverrideMd?.trim()) {
-    const transcript = meeting.transcriptOverrideMd.trim();
-    const MAX = 18000;
-    out.push('', 'User-edited transcript:', transcript.length > MAX ? transcript.slice(-MAX) : transcript);
-  } else if (segments?.length) {
-    const transcript = segments
-      .map((s) => `${s.speakerId ? humanizeSpeaker(s.speakerId) + ': ' : ''}${s.text}`)
-      .join('\n');
-    const MAX = 18000;
-    out.push(
-      '',
-      'Transcript:',
-      transcript.length > MAX ? transcript.slice(-MAX) : transcript,
-    );
-  }
-
-  return out.join('\n');
-}
-
-function humanizeSpeaker(id: string): string {
-  const m = id.match(/^speaker_(\d+)$/);
-  return m ? `Speaker ${Number(m[1]) + 1}` : id;
-}

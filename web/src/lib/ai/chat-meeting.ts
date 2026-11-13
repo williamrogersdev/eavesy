@@ -21,6 +21,8 @@ Rules:
 - Be concise and direct. Use short paragraphs or bullets.
 - When useful, attribute points to the speaker who made them.
 - You may summarize, extract action items, draft follow-up messages, or answer specific questions — all based on this meeting.
+- The meeting may still be going on, and the person asking may be in it: then answer in a line or two they can read at a glance, and put the answer first.
+- Transcript lines carry their time into the meeting. Use them for questions about when something was said ("an hour ago", "at the start"), and give the time when it helps.
 
 === MEETING CONTEXT ===
 ${context}
