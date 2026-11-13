@@ -25,7 +25,7 @@ const PRINCIPLES = [
   },
   {
     title: 'Capture from your own device',
-    body: 'No bot joins the participant list. Eavesy captures from your Mac when you start it, whether the work is a call, a walkthrough, or a screenshot.',
+    body: 'Eavesy captures from your Mac when you start it, whether the work is a call, a walkthrough, or a screenshot.',
   },
   {
     title: 'Private by default',

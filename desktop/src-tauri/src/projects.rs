@@ -5,7 +5,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
 use crate::front_window::FrontWindow;
@@ -270,6 +270,158 @@ fn contains_word(text: &str, needle: &str) -> bool {
     })
 }
 
+/// The account's meeting for a recording on this Mac, once the first part of
+/// it has reached eavesy.com (a few seconds into the recording).
+fn remote_meeting(app: &AppHandle, session_id: &str) -> Result<Option<String>, String> {
+    let id = crate::sqlite::remote_meeting_id(app, session_id).map_err(|error| {
+        tracing::warn!("meeting panel: could not read the meeting's account id: {error}");
+        "Eavesy couldn’t read this recording on your Mac.".to_string()
+    })?;
+    Ok(id.filter(|id| is_plain_id(id)))
+}
+
+/// The notes written so far for a meeting that is still recording: the
+/// cloud rewrites them every few minutes of talk. None until the first are
+/// written, or while the meeting hasn't reached the account.
+#[tauri::command]
+pub async fn meeting_overview(app: AppHandle, session_id: String) -> Result<Option<Value>, String> {
+    let Some(credential) = settings::device_credential(&app) else { return Ok(None) };
+    // Asked again every so often by the panel. One failed read of the local
+    // recording is "nothing yet"; a read that keeps failing is shown.
+    let remote = remote_meeting(&app, &session_id);
+    let failed_before = count_read(&mut OVERVIEW_READ_FAILURES.lock().unwrap_or_else(|error| error.into_inner()), &session_id, remote.is_err());
+    let Some(remote_id) = overview_read(remote, failed_before)? else { return Ok(None) };
+    let response = client()
+        .ok_or("Could not reach eavesy.com")?
+        .get(crate::base_url::join(&credential.base, &format!("/api/sessions/{remote_id}/result")))
+        .bearer_auth(credential.token)
+        .timeout(ACCOUNT_TIMEOUT)
+        .send()
+        .await
+        .map_err(|_| "Could not reach eavesy.com".to_string())?;
+    let status = response.status().as_u16();
+    if not_written_yet(status) {
+        return Ok(None);
+    }
+    if !response.status().is_success() {
+        return Err(format!("eavesy.com said {status}"));
+    }
+    let body: Value = response.json().await.map_err(|_| "eavesy.com sent an answer Eavesy couldn't read".to_string())?;
+    Ok(overview_from(&body))
+}
+
+/// The recording whose overview was last read here, and how many times in a
+/// row that read has failed. One recording has a panel at a time.
+static OVERVIEW_READ_FAILURES: std::sync::Mutex<(String, u32)> = std::sync::Mutex::new((String::new(), 0));
+
+/// Books one read for `session_id` and answers how many had failed in a row
+/// before it. Another recording's count is never carried over.
+fn count_read(count: &mut (String, u32), session_id: &str, failed: bool) -> u32 {
+    if count.0 != session_id {
+        *count = (session_id.to_string(), 0);
+    }
+    let before = count.1;
+    count.1 = if failed { before + 1 } else { 0 };
+    before
+}
+
+/// A read that failed this many times running is no passing hiccup.
+const OVERVIEW_READ_PATIENCE: u32 = 2;
+
+/// What the overview makes of reading the local recording: a failure is
+/// "nothing yet" until it has happened `OVERVIEW_READ_PATIENCE` times before.
+fn overview_read(remote: Result<Option<String>, String>, failed_before: u32) -> Result<Option<String>, String> {
+    match remote {
+        Err(error) if failed_before >= OVERVIEW_READ_PATIENCE => Err(error),
+        Err(_) => Ok(None),
+        ok => ok,
+    }
+}
+
+/// The result endpoint's answers for a meeting it has nothing for yet: the
+/// panel asks again later, and that is not an error to show.
+fn not_written_yet(status: u16) -> bool {
+    matches!(status, 404 | 409)
+}
+
+/// The overview the panel shows, from a session's result: the lists arrive
+/// as JSON text, and one that can't be read is left empty.
+fn overview_from(body: &Value) -> Option<Value> {
+    let summary = body.get("summary").filter(|summary| summary.is_object())?;
+    let list = |key: &str| -> Value {
+        summary.get(key).and_then(Value::as_str).and_then(|text| serde_json::from_str::<Value>(text).ok()).filter(Value::is_array).unwrap_or_else(|| json!([]))
+    };
+    let tldr = summary.get("tldr").and_then(Value::as_str).unwrap_or("").trim().to_string();
+    let overview = json!({
+        "title": body.get("title").and_then(Value::as_str).unwrap_or(""),
+        "tldr": tldr,
+        "decisions": list("decisionsJson"),
+        "actionItems": list("actionItemsJson"),
+        "openQuestions": list("openQuestionsJson"),
+    });
+    let empty = tldr.is_empty() && ["decisions", "actionItems", "openQuestions"].iter().all(|key| overview[*key].as_array().is_some_and(Vec::is_empty));
+    (!empty).then_some(overview)
+}
+
+/// Why a question about a meeting got no answer, in words for the panel.
+fn ask_failure(status: u16, reason: &str) -> String {
+    match (status, reason) {
+        (401, _) => "Sign in to Eavesy to ask about this meeting.".into(),
+        (404, _) => "This meeting isn’t in your account.".into(),
+        (409, _) => "Nothing has been heard yet. Ask again in a moment.".into(),
+        (429, _) => "You’ve asked a lot in a short time. Try again in a minute.".into(),
+        _ => "Eavesy couldn’t answer that. Try again?".into(),
+    }
+}
+
+/// Asks about the meeting being recorded, from its panel: typed, answered
+/// from everything said so far. `messages` is the conversation so far, the
+/// question last; `heard` is what this Mac heard that the cloud may not have
+/// written down yet.
+#[tauri::command]
+pub async fn ask_meeting(app: AppHandle, session_id: String, messages: Value, heard: Option<String>) -> Result<String, String> {
+    let credential = settings::device_credential(&app).ok_or("Sign in to Eavesy to ask about this meeting.")?;
+    let remote_id = remote_meeting(&app, &session_id)?.ok_or("This meeting hasn’t reached your account yet. Ask again in a moment.")?;
+    let mut body = json!({ "messages": messages });
+    if let Some(heard) = heard.map(|text| tail_chars(text.trim(), MAX_HEARD)).filter(|text| !text.is_empty()) {
+        body["heard"] = Value::String(heard);
+    }
+    let response = client()
+        .ok_or("Could not reach eavesy.com")?
+        .post(crate::base_url::join(&credential.base, &format!("/api/meetings/{remote_id}/chat")))
+        .bearer_auth(credential.token)
+        .timeout(MODEL_CALL_TIMEOUT)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|_| "Could not reach eavesy.com".to_string())?;
+    let status = response.status();
+    let value: Value = response.json().await.unwrap_or(Value::Null);
+    if !status.is_success() {
+        return Err(ask_failure(status.as_u16(), value.get("error").and_then(Value::as_str).unwrap_or("")));
+    }
+    value.get("reply").and_then(Value::as_str).map(|reply| reply.trim().to_string()).filter(|reply| !reply.is_empty()).ok_or_else(|| ask_failure(502, ""))
+}
+
+/// The most the chat endpoint takes of what was just heard (`MAX_HEARD` in
+/// web/src/lib/ai/meeting-chat-context.ts).
+const MAX_HEARD: usize = 12_000;
+
+/// The end of `text` that fits in `max` UTF-16 units, never splitting a
+/// character. The server counts a string's length that way, so an emoji is two.
+fn tail_chars(text: &str, max: usize) -> String {
+    let mut units = 0;
+    let mut start = text.len();
+    for (at, c) in text.char_indices().rev() {
+        units += c.len_utf16();
+        if units > max {
+            break;
+        }
+        start = at;
+    }
+    text[start..].to_string()
+}
+
 /// Ids are interpolated into an authenticated URL path: letters, digits, `-` and `_` only.
 fn is_plain_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 128 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
@@ -290,6 +442,52 @@ fn agent_markdown(body: &Value) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_overview_reads_the_lists_and_is_none_until_something_is_written() {
+        let body = json!({ "title": "Pricing", "summary": { "tldr": " Pricing is agreed. ", "decisionsJson": "[{\"text\":\"Annual plan\"}]", "actionItemsJson": "not json", "openQuestionsJson": "[]" } });
+        let overview = overview_from(&body).unwrap();
+        assert_eq!(overview["tldr"], "Pricing is agreed.");
+        assert_eq!(overview["decisions"][0]["text"], "Annual plan");
+        assert_eq!(overview["actionItems"], json!([]));
+        assert!(overview_from(&json!({ "summary": null })).is_none());
+        assert!(overview_from(&json!({ "summary": { "tldr": "", "decisionsJson": "[]", "actionItemsJson": "[]", "openQuestionsJson": "[]" } })).is_none());
+    }
+
+    #[test]
+    fn what_was_heard_is_cut_to_its_end_on_a_character() {
+        assert_eq!(tail_chars("héllo wörld", 5), "wörld");
+        assert_eq!(tail_chars("short", 50), "short");
+        // The server counts UTF-16 units: an emoji is two, and is never cut in half.
+        assert_eq!(tail_chars("a😀b😀", 2), "😀");
+        assert_eq!(tail_chars("a😀b😀", 3), "b😀");
+        assert_eq!(tail_chars("a😀b😀", 4), "b😀");
+        assert_eq!(tail_chars("a😀b😀", 1), "");
+        assert_eq!(tail_chars("", 4), "");
+        // A local read that fails once or twice is quiet; one that keeps failing is shown.
+        assert_eq!(overview_read(Err("no".into()), 0), Ok(None));
+        assert_eq!(overview_read(Err("no".into()), 1), Ok(None));
+        assert_eq!(overview_read(Err("no".into()), 2), Err("no".into()));
+        assert_eq!(overview_read(Ok(Some("m1".into())), 5), Ok(Some("m1".into())));
+        assert_eq!(overview_read(Ok(None), 0), Ok(None));
+        // Counted per recording, in a row: a good read or another recording starts over.
+        let mut count = (String::new(), 0);
+        assert_eq!(count_read(&mut count, "a", true), 0);
+        assert_eq!(count_read(&mut count, "a", true), 1);
+        assert_eq!(count_read(&mut count, "a", true), 2);
+        assert_eq!(count_read(&mut count, "b", true), 0);
+        assert_eq!(count_read(&mut count, "b", false), 1);
+        assert_eq!(count_read(&mut count, "b", true), 0);
+        assert!(not_written_yet(404) && not_written_yet(409));
+        assert!(!not_written_yet(401) && !not_written_yet(500) && !not_written_yet(200));
+    }
+
+    #[test]
+    fn a_failed_question_says_what_to_do() {
+        assert!(ask_failure(409, "not_ready").contains("Nothing has been heard yet"));
+        assert!(ask_failure(429, "").contains("Try again in a minute"));
+        assert!(ask_failure(502, "chat_failed").contains("Try again?"));
+    }
 
     #[test]
     fn the_panel_reaches_only_settings_and_projects() {

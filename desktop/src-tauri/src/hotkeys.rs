@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 use crate::panel;
-use crate::settings::{self, Settings, DEFAULT_ASSISTANT_HOTKEY, DEFAULT_CLIPBOARD_HOTKEY, DEFAULT_DICTATION_HOTKEY, DEFAULT_SCREENSHOTS_HOTKEY, DEFAULT_SCREEN_HOTKEY, DEFAULT_TOGGLE_HOTKEY, OLD_ASSISTANT_HOTKEY};
+use crate::settings::{self, Settings, DEFAULT_ASSISTANT_HOTKEY, DEFAULT_CLIPBOARD_HOTKEY, DEFAULT_CONTROL_HOTKEY, DEFAULT_DICTATION_HOTKEY, DEFAULT_SCREENSHOTS_HOTKEY, DEFAULT_SCREEN_HOTKEY, DEFAULT_TOGGLE_HOTKEY, OLD_ASSISTANT_HOTKEY};
 
 pub const EVENT_LAUNCHER_OPENED: &str = "launcher:opened";
 /// A lone fn tap while shortcuts are suspended for recording one in Settings.
@@ -27,6 +27,8 @@ pub enum Action {
     Assistant,
     /// Record the screen: press to start, press again to stop.
     Screen,
+    /// Hide the capture control, or bring it back.
+    Control,
     /// Open the clipboard history.
     Clipboard,
     /// Open the screenshot history.
@@ -34,7 +36,7 @@ pub enum Action {
 }
 
 impl Action {
-    pub const ALL: [Action; 6] = [Action::Toggle, Action::Dictation, Action::Assistant, Action::Screen, Action::Clipboard, Action::Screenshots];
+    pub const ALL: [Action; 7] = [Action::Toggle, Action::Dictation, Action::Assistant, Action::Screen, Action::Control, Action::Clipboard, Action::Screenshots];
 
     pub fn parse(s: &str) -> Result<Self, HotkeyError> {
         match s {
@@ -42,6 +44,7 @@ impl Action {
             "dictation" => Ok(Action::Dictation),
             "assistant" => Ok(Action::Assistant),
             "screen" => Ok(Action::Screen),
+            "control" => Ok(Action::Control),
             "clipboard" => Ok(Action::Clipboard),
             "screenshots" => Ok(Action::Screenshots),
             other => Err(HotkeyError::invalid(format!("unknown shortcut action '{other}'"))),
@@ -55,6 +58,7 @@ impl Action {
             Action::Dictation => "Talk",
             Action::Assistant => "Talk to Eavesy",
             Action::Screen => "Record screen",
+            Action::Control => "Show or hide Eavesy",
             Action::Clipboard => "Clipboard history",
             Action::Screenshots => "Screenshot history",
         }
@@ -67,6 +71,7 @@ impl Action {
             Action::Dictation => "dictation",
             Action::Assistant => "assistant",
             Action::Screen => "screen",
+            Action::Control => "control",
             Action::Clipboard => "clipboard",
             Action::Screenshots => "screenshots",
         }
@@ -74,7 +79,7 @@ impl Action {
 
     /// Pressed, not held: fn belongs to talking, so these never take it.
     fn press_only(self) -> bool {
-        matches!(self, Action::Screen | Action::Clipboard | Action::Screenshots)
+        matches!(self, Action::Screen | Action::Control | Action::Clipboard | Action::Screenshots)
     }
 
     /// What Settings says when one of those is given fn.
@@ -88,6 +93,7 @@ impl Action {
             Action::Dictation => DEFAULT_DICTATION_HOTKEY,
             Action::Assistant => DEFAULT_ASSISTANT_HOTKEY,
             Action::Screen => DEFAULT_SCREEN_HOTKEY,
+            Action::Control => DEFAULT_CONTROL_HOTKEY,
             Action::Clipboard => DEFAULT_CLIPBOARD_HOTKEY,
             Action::Screenshots => DEFAULT_SCREENSHOTS_HOTKEY,
         }
@@ -102,6 +108,7 @@ pub enum TakenBy {
     Dictation,
     Assistant,
     Screen,
+    Control,
     Clipboard,
     Screenshots,
     /// Another app or macOS registered it first.
@@ -115,6 +122,7 @@ impl From<Action> for TakenBy {
             Action::Dictation => TakenBy::Dictation,
             Action::Assistant => TakenBy::Assistant,
             Action::Screen => TakenBy::Screen,
+            Action::Control => TakenBy::Control,
             Action::Clipboard => TakenBy::Clipboard,
             Action::Screenshots => TakenBy::Screenshots,
         }
@@ -129,6 +137,7 @@ impl TakenBy {
             TakenBy::Dictation => Some(Action::Dictation),
             TakenBy::Assistant => Some(Action::Assistant),
             TakenBy::Screen => Some(Action::Screen),
+            TakenBy::Control => Some(Action::Control),
             TakenBy::Clipboard => Some(Action::Clipboard),
             TakenBy::Screenshots => Some(Action::Screenshots),
             TakenBy::Other => None,
@@ -303,6 +312,7 @@ pub struct Bindings {
     pub dictation: String,
     pub assistant: String,
     pub screen: String,
+    pub control: String,
     pub clipboard: String,
     pub screenshots: String,
 }
@@ -314,6 +324,7 @@ impl Bindings {
             dictation: DEFAULT_DICTATION_HOTKEY.into(),
             assistant: DEFAULT_ASSISTANT_HOTKEY.into(),
             screen: DEFAULT_SCREEN_HOTKEY.into(),
+            control: DEFAULT_CONTROL_HOTKEY.into(),
             clipboard: DEFAULT_CLIPBOARD_HOTKEY.into(),
             screenshots: DEFAULT_SCREENSHOTS_HOTKEY.into(),
         }
@@ -325,6 +336,7 @@ impl Bindings {
             dictation: settings.dictation_hotkey.clone(),
             assistant: settings.assistant_hotkey.clone(),
             screen: settings.screen_hotkey.clone(),
+            control: settings.control_hotkey.clone(),
             clipboard: settings.clipboard_hotkey.clone(),
             screenshots: settings.screenshots_hotkey.clone(),
         }
@@ -336,6 +348,7 @@ impl Bindings {
             Action::Dictation => &self.dictation,
             Action::Assistant => &self.assistant,
             Action::Screen => &self.screen,
+            Action::Control => &self.control,
             Action::Clipboard => &self.clipboard,
             Action::Screenshots => &self.screenshots,
         }
@@ -347,6 +360,7 @@ impl Bindings {
             Action::Dictation => self.dictation = accelerator,
             Action::Assistant => self.assistant = accelerator,
             Action::Screen => self.screen = accelerator,
+            Action::Control => self.control = accelerator,
             Action::Clipboard => self.clipboard = accelerator,
             Action::Screenshots => self.screenshots = accelerator,
         }
@@ -408,6 +422,7 @@ fn register(app: &AppHandle, action: Action, accelerator: &str) -> Result<(), Ho
     if action != Action::Toggle { crate::dictate::reset_key(); }
     let shortcut = match keys(accelerator).map_err(HotkeyError::invalid)? {
         None => return Ok(()),
+        // On load as on edit: a saved fn binding for one of these is never bound as Talk.
         Some(Keys::Fn | Keys::FnChord { .. }) if action.press_only() => return Err(HotkeyError::invalid(action.press_rule())),
         Some(Keys::Fn) => {
             #[cfg(target_os = "macos")]
@@ -450,6 +465,12 @@ fn register(app: &AppHandle, action: Action, accelerator: &str) -> Result<(), Ho
         }),
         Action::Screenshots => app.global_shortcut().on_shortcut(shortcut, move |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed { crate::clipboard::toggle(app, crate::clipboard::View::Screenshots); }
+        }),
+        Action::Control => app.global_shortcut().on_shortcut(shortcut, move |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed {
+                let handle = app.clone();
+                let _ = app.run_on_main_thread(move || crate::hud::toggle_visible_on_main(&handle));
+            }
         }),
     };
     // macOS refuses a hotkey another app already registered.
@@ -595,6 +616,7 @@ fn apply(app: &AppHandle, settings: &mut Settings, current: &Bindings, next: &Bi
         config.dictation_hotkey = next.dictation.clone();
         config.assistant_hotkey = next.assistant.clone();
         config.screen_hotkey = next.screen.clone();
+        config.control_hotkey = next.control.clone();
         config.clipboard_hotkey = next.clipboard.clone();
         config.screenshots_hotkey = next.screenshots.clone();
         // Someone who chose their Talk to Eavesy shortcut keeps it.
@@ -684,7 +706,7 @@ mod tests {
     use super::*;
 
     fn bindings(toggle: &str, dictation: &str) -> Bindings {
-        Bindings { toggle: toggle.into(), dictation: dictation.into(), ..Bindings::defaults() }
+        Bindings { toggle: toggle.into(), dictation: dictation.into(), control: String::new(), ..Bindings::defaults() }
     }
 
     #[test]
@@ -813,7 +835,7 @@ mod tests {
         assert!(same_keys("Fn+Shift+Ctrl+K", "fn+ctrl+shift+k"));
         assert!(!same_keys("Fn+Space", "Space"));
         assert!(!same_keys("Fn", "Fn+Space"));
-        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Fn".into(), assistant: "Fn+Space".into(), screen: String::new(), ..Bindings::defaults() };
+        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Fn".into(), assistant: "Fn+Space".into(), screen: String::new(), control: String::new(), ..Bindings::defaults() };
         assert_eq!(plan(&now, Action::Toggle, "fn+space", false), Err(HotkeyError::Taken { by: TakenBy::Assistant }));
         assert_eq!(plan(&now, Action::Toggle, "Fn+K", false).map(|b| b.toggle), Ok("Fn+K".to_string()));
         assert!(is_fn_chord("Fn+Space") && !is_fn_chord("Fn") && !is_fn_chord("Alt+Space"));

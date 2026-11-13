@@ -509,14 +509,51 @@ fn clear_prompt(app: &AppHandle, key: &str) {
     hud::set_state_if(app, HudState::idle(), |now| now.phase == Phase::Prompt && now.session_id.as_deref() == Some(&session));
 }
 
+/// A meeting recording is starting. The control only says Recording once the
+/// capture is up, so every way to start one (the prompt, the menu bar) goes
+/// through this: a second start before then is dropped, not raced.
+static STARTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Holds [`STARTING`] for one start and gives it back when dropped, so a
+/// start that panics doesn't block every later one.
+struct Starting;
+
+impl Starting {
+    /// None while another start is under way. There is one capture and one
+    /// recording at a time, not one per meeting, so a second start has
+    /// nothing to add: the caller drops its own.
+    fn claim() -> Option<Self> {
+        (!STARTING.swap(true, std::sync::atomic::Ordering::SeqCst)).then_some(Self)
+    }
+}
+
+impl Drop for Starting {
+    fn drop(&mut self) {
+        STARTING.store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 /// Starts the Meeting recording the prompt was for. It goes through the
 /// `mixed` source, so the cloud links it to the calendar event and names it.
 /// On its own thread: the engine can take a while to start.
 fn record(app: &AppHandle, prompt: &Prompt) {
+    let claim = Starting::claim();
+    // Answered either way: the prompt never stays on screen behind a start.
     clear_prompt(app, &prompt.key);
+    // One capture, so one recording at a time: while a start is under way a
+    // second one is dropped and logged. Which call a start is "for" is not
+    // tracked anywhere; the capture records whatever call is on. The start
+    // under way shows Recording when it is up and reports its own failure.
+    let Some(starting) = claim else {
+        tracing::info!(key = %prompt.key, "meeting watch: a recording is already starting, this start is dropped");
+        return;
+    };
     let handle = app.clone();
     std::thread::spawn(move || {
         let started = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now());
+        // Held until the recording is on the watch's books (or has failed),
+        // so no other start runs in between.
+        let _starting = starting;
         match started {
             Ok(session) => with_watch(|watch| {
                 let bundle = watch.call.as_ref().map(|(signal, _)| signal.bundle().to_string()).unwrap_or_default();
@@ -566,16 +603,11 @@ pub fn record_now(app: &AppHandle) {
         record(app, &prompt);
         return;
     }
-    // One start at a time: the control only says Recording once the capture
-    // is up, so a second click before then is dropped, not raced.
-    static STARTING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if STARTING.swap(true, std::sync::atomic::Ordering::SeqCst) {
-        return;
-    }
+    let Some(starting) = Starting::claim() else { return };
     let handle = app.clone();
     std::thread::spawn(move || {
         let started = crate::audio::start_audio_capture(&handle, &handle.state::<Captures>(), Some("mixed".into()), None, None, None, Instant::now());
-        STARTING.store(false, std::sync::atomic::Ordering::SeqCst);
+        let _starting = starting;
         if let Err(error) = started {
             tracing::warn!("tray: could not start a meeting recording: {error}");
             // A second click loses to the first one's start: that is not a failure.
@@ -629,6 +661,20 @@ pub fn set_auto_record_meetings(app: AppHandle, enabled: bool) -> Result<(), Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_start_at_a_time_and_a_failed_one_frees_the_next() {
+        let first = Starting::claim().expect("nothing is starting");
+        assert!(Starting::claim().is_none(), "a second start is dropped while the first is under way");
+        // A start that panics gives the claim back as it unwinds.
+        let panicked = std::thread::spawn(move || {
+            let _held = first;
+            panic!("the capture failed to start");
+        })
+        .join();
+        assert!(panicked.is_err());
+        assert!(Starting::claim().is_some());
+    }
 
     const T: i64 = 1_800_000_000_000;
 

@@ -759,6 +759,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
           <ShortcutRow shortcuts={shortcuts} action="screen" hint="Start a screen recording with your microphone. Press it again to stop." />
           <ShortcutRow shortcuts={shortcuts} action="clipboard" hint="Open what you copied. Press return to paste it where you were." />
           <ShortcutRow shortcuts={shortcuts} action="screenshots" hint="Open your screenshots. Press return to paste one where you were." />
+          <ShortcutRow shortcuts={shortcuts} action="control" hint="Hide the pill while it records, for when you share your screen, and bring it back. The recording carries on." />
           <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Show or hide this panel." />
           {shortcuts.bindings ? <RestoreDefaultShortcuts shortcuts={shortcuts} /> : null}
         </Card>

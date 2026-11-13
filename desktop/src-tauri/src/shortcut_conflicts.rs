@@ -358,7 +358,7 @@ mod tests {
 
     #[test]
     fn fn_is_never_a_conflict_and_common_combos_are_named() {
-        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Cmd+Shift+D".into(), assistant: "Alt+Shift+Space".into(), screen: String::new(), ..Bindings::defaults() };
+        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Cmd+Shift+D".into(), assistant: "Alt+Shift+Space".into(), screen: String::new(), control: String::new(), ..Bindings::defaults() };
         assert_eq!(check(&now, Action::Dictation, "Fn"), Ok(None));
         assert_eq!(check(&now, Action::Dictation, ""), Ok(None));
         assert_eq!(common_name(Modifiers::SUPER, Code::KeyC), Some("Copy"));
@@ -369,7 +369,7 @@ mod tests {
 
     #[test]
     fn fn_chords_on_macos_globe_shortcuts_are_named() {
-        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Fn".into(), assistant: "Alt+Shift+Space".into(), screen: String::new(), ..Bindings::defaults() };
+        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "Fn".into(), assistant: "Alt+Shift+Space".into(), screen: String::new(), control: String::new(), ..Bindings::defaults() };
         assert_eq!(check(&now, Action::Assistant, "Fn+E"), Ok(Some(Conflict::Globe { name: "Emoji & Symbols".into() })));
         assert_eq!(check(&now, Action::Assistant, "Fn+Space"), Ok(None));
         assert_eq!(check(&now, Action::Assistant, "Fn+Shift+E"), Ok(None));
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn startup_says_once_which_saved_shortcut_another_app_uses() {
-        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "".into(), assistant: "Alt+Space".into(), screen: String::new(), clipboard: String::new(), screenshots: String::new() };
+        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "".into(), assistant: "Alt+Space".into(), screen: String::new(), control: String::new(), clipboard: String::new(), screenshots: String::new() };
         let raycast = |accelerator: &str| (accelerator == "Alt+Space").then(|| "Raycast".to_string());
         let mut noted = Vec::new();
         let first = new_app_conflicts(&now, &mut noted, raycast);

@@ -43,15 +43,15 @@ describe('liveView', () => {
   it('shows the last stored lines, then what is still being heard', () => {
     const view = liveView([line(0, 'A.'), line(2_000, 'B.', true)], [partial(5_000, 'and then')]);
     expect(view).toEqual([
-      { text: 'A.', provisional: false, label: 'You' },
-      { text: 'B.', provisional: true, label: 'You' },
-      { text: 'and then', provisional: true, label: 'You' },
+      { text: 'A.', provisional: false, label: 'You', startMs: 0 },
+      { text: 'B.', provisional: true, label: 'You', startMs: 2_000 },
+      { text: 'and then', provisional: true, label: 'You', startMs: 5_000 },
     ]);
   });
 
   it('keeps a final visible until its stored row arrives', () => {
     const view = liveView([line(5_000, 'Stored.')], [partial(4_000, 'old'), partial(7_000, 'final', true)]);
-    expect(view).toEqual([{ text: 'Stored.', provisional: false, label: 'You' }, { text: 'final', provisional: true, label: 'You' }]);
+    expect(view).toEqual([{ text: 'Stored.', provisional: false, label: 'You', startMs: 5_000 }, { text: 'final', provisional: true, label: 'You', startMs: 7_000 }]);
   });
 
   it('does not hide mic captions when computer audio is further ahead', () => {
@@ -60,7 +60,7 @@ describe('liveView', () => {
   });
 
   it('replaces the live final with its persisted row without duplicating it', () => {
-    expect(liveView([line(7_000, 'Final.')], [partial(7_000, 'Final.', true)])).toEqual([{ text: 'Final.', provisional: false, label: 'You' }]);
+    expect(liveView([line(7_000, 'Final.')], [partial(7_000, 'Final.', true)])).toEqual([{ text: 'Final.', provisional: false, label: 'You', startMs: 7_000 }]);
   });
 
   it('keeps only the most recent few', () => {

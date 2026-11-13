@@ -706,6 +706,14 @@ pub fn hud_painted(app: AppHandle) {
     let _ = app.run_on_main_thread(move || crate::hud::repainted_on_main(&handle));
 }
 
+/// Hides the capture control while its capture keeps recording.
+#[tauri::command]
+pub fn tuck_hud(app: AppHandle) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || { crate::hud::tuck_on_main(&handle); })
+        .map_err(|error| format!("could not hide the capture control: {error}"))
+}
+
 #[tauri::command]
 pub fn close_hud(app: AppHandle) -> Result<(), String> {
     let handle = app.clone();

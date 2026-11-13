@@ -11,6 +11,9 @@ pub const DEFAULT_DICTATION_HOTKEY: &str = "Cmd+Shift+D";
 pub const DEFAULT_ASSISTANT_HOTKEY: &str = "Alt+Shift+Space";
 /// Starts a screen recording, and stops the one running.
 pub const DEFAULT_SCREEN_HOTKEY: &str = "Alt+Shift+R";
+/// Hides the capture control, and brings it back: for a recording that
+/// shouldn't be on a shared screen.
+pub const DEFAULT_CONTROL_HOTKEY: &str = "Alt+Shift+H";
 /// Clipboard history: V as in paste, in the ⌥⇧ family the other panel
 /// shortcuts use. ⌘⇧V would take Paste and Match Style from every app.
 pub const DEFAULT_CLIPBOARD_HOTKEY: &str = "Alt+Shift+V";
@@ -60,6 +63,8 @@ pub struct Settings {
     pub assistant_hotkey: String,
     #[serde(default = "default_screen_hotkey")]
     pub screen_hotkey: String,
+    #[serde(default = "default_control_hotkey")]
+    pub control_hotkey: String,
     #[serde(default = "default_clipboard_hotkey")]
     pub clipboard_hotkey: String,
     #[serde(default = "default_screenshots_hotkey")]
@@ -263,6 +268,10 @@ fn default_assistant_hotkey() -> String {
     DEFAULT_ASSISTANT_HOTKEY.to_string()
 }
 
+fn default_control_hotkey() -> String {
+    DEFAULT_CONTROL_HOTKEY.to_string()
+}
+
 fn default_screen_hotkey() -> String {
     DEFAULT_SCREEN_HOTKEY.to_string()
 }
@@ -286,6 +295,7 @@ impl Default for Settings {
             dictation_hotkey: DEFAULT_DICTATION_HOTKEY.to_string(),
             assistant_hotkey: DEFAULT_ASSISTANT_HOTKEY.to_string(),
             screen_hotkey: DEFAULT_SCREEN_HOTKEY.to_string(),
+            control_hotkey: DEFAULT_CONTROL_HOTKEY.to_string(),
             clipboard_hotkey: DEFAULT_CLIPBOARD_HOTKEY.to_string(),
             screenshots_hotkey: DEFAULT_SCREENSHOTS_HOTKEY.to_string(),
             device_id: new_device_id(),

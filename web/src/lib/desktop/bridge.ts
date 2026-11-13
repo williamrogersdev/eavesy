@@ -941,6 +941,8 @@ export interface Settings {
   assistant_hotkey: string;
   /** Missing from Mac apps older than the Record screen shortcut. */
   screen_hotkey?: string;
+  /** Shows or hides the pill, so a recording can run out of sight while you share your screen. */
+  control_hotkey?: string;
   clipboard_hotkey?: string;
   screenshots_hotkey?: string;
   device_id: string;
@@ -1061,7 +1063,7 @@ export async function setupStepShown(step: number): Promise<void> {
   await invoke('setup_step_shown', { step }).catch(() => undefined);
 }
 
-export type HotkeyAction = 'toggle' | 'dictation' | 'assistant' | 'screen' | 'clipboard' | 'screenshots';
+export type HotkeyAction = 'toggle' | 'dictation' | 'assistant' | 'screen' | 'control' | 'clipboard' | 'screenshots';
 /** Every shortcut; "" means unbound, "Fn" the fn / 🌐 key on its own, "Fn+Space" fn held with a key. */
 export type HotkeyBindings = Record<HotkeyAction, string>;
 /** Why the Mac app refused a shortcut (Rust `HotkeyError`). */
@@ -1104,7 +1106,7 @@ export async function checkAllHotkeys(): Promise<Partial<Record<HotkeyAction, Ho
 }
 
 export async function getHotkeyDefaults(): Promise<HotkeyBindings> {
-  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space', screen: 'Alt+Shift+R', clipboard: 'Alt+Shift+V', screenshots: 'Alt+Shift+S' };
+  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space', screen: 'Alt+Shift+R', control: 'Alt+Shift+H', clipboard: 'Alt+Shift+V', screenshots: 'Alt+Shift+S' };
   if (!isDesktop()) return fallback;
   return (await invoke<HotkeyBindings | null>('get_hotkey_defaults').catch(() => null)) ?? fallback;
 }

@@ -36,6 +36,17 @@ export function legacyRecordChoice(choice: CaptureMode | null, accountDefault: C
   return choice || effectiveMode(choice, accountDefault) === 'notetaker' ? 'record' : null;
 }
 
+/**
+ * The choice to save when the Notetaker page's button is pressed for one
+ * meeting. Sending it makes the Notetaker the recorder. Taking it back
+ * returns the meeting to the account default (null), or to the Mac when the
+ * default itself would send the Notetaker again.
+ */
+export function notetakerToggle(mode: CaptureMode, accountDefault: CaptureDefault): CaptureMode | null {
+  if (!wantsNotetaker(mode)) return 'notetaker';
+  return wantsNotetaker(accountDefault) ? 'mac' : null;
+}
+
 export const MAX_NOTETAKER_NAME = 60;
 export const FALLBACK_NOTETAKER_NAME = 'Eavesy Notetaker';
 

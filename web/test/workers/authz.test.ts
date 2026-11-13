@@ -74,6 +74,9 @@ const BOT = 'bot_owner';
 const PROMPT = 'prm_owner';
 const WEBHOOK = 'whk_owner';
 const FEEDBACK = 'afb_owner';
+const TEAM = 'team_owner';
+const TEAMMATE = 'user_teammate';
+const TEAM_INVITE = 'tinv_owner';
 const AUDIO_KEY = `users/${OWNER}/meetings/${MEETING}/audio.m4a`;
 
 type Method = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
@@ -553,6 +556,53 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/sessions' }, excludes: [MEETING] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a session owned by the caller' },
   },
+  '/api/team': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/team' }, excludes: [TEAM] } },
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a team owned by the caller; refused while they are in one' },
+    PATCH: {
+      unauthenticated: SIGNED_IN,
+      crossUser: { call: { path: '/api/team', body: json({ name: 'Mine now' }) }, unchanged: () => row('SELECT name FROM teams WHERE id = ?', TEAM) },
+    },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: { call: { path: '/api/team?everyone=1' }, unchanged: () => row('SELECT id FROM teams WHERE id = ?', TEAM) },
+    },
+  },
+  '/api/team/members': {
+    PATCH: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: '/api/team/members', body: json({ userId: TEAMMATE, role: 'admin' }) },
+        unchanged: () => row('SELECT role FROM team_members WHERE user_id = ?', TEAMMATE),
+      },
+    },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: '/api/team/members', body: json({ userId: TEAMMATE }) },
+        unchanged: () => row('SELECT team_id FROM team_members WHERE user_id = ?', TEAMMATE),
+      },
+    },
+  },
+  '/api/team/invites': {
+    POST: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: '/api/team/invites', body: json({ email: 'new@example.com' }) },
+        unchanged: () => row('SELECT count(*) AS n FROM team_invites'),
+      },
+    },
+    DELETE: {
+      unauthenticated: SIGNED_IN,
+      crossUser: {
+        call: { path: '/api/team/invites', body: json({ id: TEAM_INVITE }) },
+        unchanged: () => row('SELECT id FROM team_invites WHERE id = ?', TEAM_INVITE),
+      },
+    },
+  },
+  '/api/team/invites/answer': {
+    POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'answers only an invitation addressed to the caller’s own email (team.test.ts covers another address)' },
+  },
   '/api/templates': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/templates' }, excludes: [TEMPLATE] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'creates a template owned by the caller' },
@@ -657,6 +707,9 @@ beforeEach(async () => {
     'device_pairing_codes',
     'device_tokens',
     'devices',
+    'team_invites',
+    'team_members',
+    'teams',
     'users',
   );
   await seedOwner();
@@ -666,10 +719,17 @@ async function seedOwner() {
   const now = Date.now();
   await insertDeviceActor(OWNER, 'device_owner');
   await insertUser(OTHER);
+  await insertUser(TEAMMATE);
   await insertMeeting({ id: MEETING, userId: OWNER, status: 'complete', audioR2Key: AUDIO_KEY });
   await insertMeeting({ id: RECORDING, userId: OWNER, status: 'recording' });
   await testEnv.AUDIO_BUCKET.put(AUDIO_KEY, new Uint8Array([1, 2, 3]));
   await testEnv.AUDIO_BUCKET.put(`users/${OWNER}/captures/${CAPTURE}.png`, new Uint8Array([1, 2, 3]), { httpMetadata: { contentType: 'image/png' } });
+  await testEnv.DB.batch([
+    testEnv.DB.prepare("INSERT INTO teams (id, name, created_by, created_at, updated_at) VALUES (?, 'Owner team', ?, ?, ?)").bind(TEAM, OWNER, now, now),
+    testEnv.DB.prepare("INSERT INTO team_members (team_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)").bind(TEAM, OWNER, now),
+    testEnv.DB.prepare("INSERT INTO team_members (team_id, user_id, role, created_at) VALUES (?, ?, 'member', ?)").bind(TEAM, TEAMMATE, now),
+    testEnv.DB.prepare("INSERT INTO team_invites (id, team_id, email, role, invited_by, created_at, expires_at) VALUES (?, ?, 'invitee@example.com', 'member', ?, ?, ?)").bind(TEAM_INVITE, TEAM, OWNER, now, now + 86_400_000),
+  ]);
   await testEnv.DB.batch([
     testEnv.DB.prepare("INSERT INTO recording_imports(meeting_id,user_id,fingerprint,segment_count,duration_ms,state,created_at) VALUES (?,?,'owner-file',1,1000,'processing',?)").bind(MEETING,OWNER,now),
     testEnv.DB.prepare(

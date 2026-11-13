@@ -4,6 +4,7 @@ import { getDb } from '@/db/client';
 import { ensureClerkUser, getByClerkId } from '@/db/repo/users';
 import type { users } from '@/db/schema';
 import { LOCAL_TEST } from '@/lib/local-test';
+import { verifiedEmail } from '@/server/verified-email';
 import { ensureLocalTestUser, LOCAL_TEST_USER_ID } from '@/server/local-test-seed';
 
 async function loadClerkIdentity(clerkId: string): Promise<{
@@ -15,10 +16,7 @@ async function loadClerkIdentity(clerkId: string): Promise<{
     const client = clerkClient();
     const u = await client.users.getUser(clerkId);
     if (!u) return {};
-    const primaryEmail = u.emailAddresses?.find(
-      (e) => e.id === u.primaryEmailAddressId,
-    )?.emailAddress;
-    const email = primaryEmail ?? u.emailAddresses?.[0]?.emailAddress ?? undefined;
+    const email = verifiedEmail(u.emailAddresses, u.primaryEmailAddressId);
     const name = [u.firstName, u.lastName].filter(Boolean).join(' ').trim();
     const displayName = name || u.username || undefined;
     const primaryPhone = u.phoneNumbers?.find(
