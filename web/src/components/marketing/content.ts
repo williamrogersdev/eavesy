@@ -29,6 +29,7 @@ export const PRIMARY_NAV: NavItem[] = [
   { label: 'Guides', href: '/guides' },
   { label: 'Templates', href: '/templates' },
   { label: 'Docs', href: '/docs' },
+  { label: 'Security', href: '/security' },
 ];
 
 export const INTEGRATIONS = [
