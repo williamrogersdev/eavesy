@@ -142,7 +142,7 @@ export function HudPreview({ className, words }: { className?: string; words?: [
             />
           ))}
         </span>
-        <span className="ml-auto grid h-6 w-6 place-items-center rounded-full bg-[rgb(255_240_220/0.1)]">
+        <span className="ml-auto grid h-6 w-6 place-items-center rounded-full bg-[rgb(var(--ev-pill-ink-rgb)/0.1)]">
           <span className="h-2.5 w-2.5 rounded-[2px] bg-ev-rec" />
         </span>
       </div>

@@ -133,7 +133,7 @@
     --ev-ink-3: #8a93b3;
     --ev-brand: #f5c04e;
     --ev-brand-hover: #ffd06a;
-    --ev-brand-soft: #3a3320;
+    --ev-brand-soft: #40371a;
     --ev-on-brand: #16213f;
     --ev-coat: #eef0f7; /* in the dark the coat turns to paper white */
     --ev-coat-hover: #ffffff;
@@ -144,7 +144,7 @@
     --ev-manila-soft: #3a3320;
     --ev-manila-ink: #f5d9a0;
     --ev-mascot-body: #f5c04e;
-    --ev-mascot-hat: #4a5c9e;
+    --ev-mascot-hat: #7186c9;
     --ev-mascot-band: #eef0f7;
     --ev-mascot-eye: #16213f;
     --ev-voice: #86aef5;
@@ -158,9 +158,9 @@
     --ev-rec: #ff6a4d;
     --ev-rec-soft: #3d2030;
     --ev-leaf: #6fcf97;
-    --ev-leaf-soft: #17363a;
+    --ev-leaf-soft: #173a2c;
     --ev-warn-ink: #ffc870;
-    --ev-warn-soft: #3a3320;
+    --ev-warn-soft: #432f1c;
     --ev-pill: rgb(30 40 72 / 0.97);
     --ev-pill-glass: rgb(22 30 56 / 0.7);
     --ev-pill-glass-strong: rgb(22 30 56 / 0.78);

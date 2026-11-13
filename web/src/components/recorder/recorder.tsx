@@ -211,7 +211,7 @@ export function Recorder({ onSaved, captureSystemAudio: defaultCaptureSystemAudi
             checked={captureSystemAudio}
             onChange={(e) => setCaptureSystemAudio(e.target.checked)}
             disabled={starting}
-            className="h-3.5 w-3.5 rounded border-ev-line accent-[var(--ev-brand)]"
+            className="h-3.5 w-3.5 rounded border-ev-line accent-[var(--ev-coat)]"
           />
           Also record audio from a shared tab or screen
         </label>

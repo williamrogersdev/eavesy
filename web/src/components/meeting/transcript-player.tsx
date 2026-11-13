@@ -231,7 +231,7 @@ export function TranscriptPlayer({
                 step={250}
                 value={Math.min(nowMs, durationMs || nowMs)}
                 onChange={(e) => seek(Number(e.target.value), playing)}
-                className="w-full accent-[var(--ev-brand)]"
+                className="w-full accent-[var(--ev-coat)]"
                 aria-label="Seek"
               />
               {durationMs

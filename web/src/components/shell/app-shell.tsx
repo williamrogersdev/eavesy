@@ -304,7 +304,7 @@ function RecentRow({ item, onNavigate }: { item: LibItem; onNavigate?: () => voi
       <KindIcon item={item} size={14} className="shrink-0 text-ev-ink-3 group-hover:text-ev-coat" />
       <span className="min-w-0 flex-1 truncate">{item.title}</span>
       {item.kind === 'meeting' && item.status && item.status !== 'complete' ? (
-        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ev-brand" title="Writing it down…" />
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ev-coat" title="Writing it down…" />
       ) : null}
     </Link>
   );

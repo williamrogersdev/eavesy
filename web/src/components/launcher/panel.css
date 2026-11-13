@@ -552,7 +552,7 @@
 .ev-onb-bubble { margin-top: 18px; }
 .ev-steps { display: flex; align-items: center; gap: 6px; margin: 14px 2px 6px; font: 650 11.5px var(--ev-font-round); color: var(--ev-ink-3); }
 .ev-steps i { width: 6px; height: 6px; border-radius: 999px; background: var(--ev-line-strong); transition: width var(--ev-d-state) var(--ev-ease-out), background var(--ev-d-state); }
-.ev-steps i[data-state='on'] { width: 16px; background: var(--ev-brand); }
+.ev-steps i[data-state='on'] { width: 16px; background: var(--ev-coat); }
 .ev-steps i[data-state='done'] { background: var(--ev-leaf); }
 .ev-steps span { margin-left: 6px; }
 .ev-onb-title { margin: 0 2px 4px; font: var(--ev-t-title); color: var(--ev-ink); }
@@ -739,5 +739,5 @@
 .ev-action-warn { margin: 0; padding: 6px 8px; border-radius: var(--ev-r-ctl); background: var(--ev-warn-soft); color: var(--ev-warn-ink); font: var(--ev-t-small); }
 .ev-action-rows { display: flex; flex-direction: column; gap: 6px; }
 .ev-action-row { display: flex; gap: 8px; align-items: flex-start; font: var(--ev-t-small); color: var(--ev-ink); overflow-wrap: anywhere; }
-.ev-action-row input { flex: none; margin-top: 2px; accent-color: var(--ev-brand); }
+.ev-action-row input { flex: none; margin-top: 2px; accent-color: var(--ev-coat); }
 .ev-action-buttons { display: flex; justify-content: flex-end; gap: 6px; }
