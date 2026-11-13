@@ -77,7 +77,7 @@ const PREVIEW_OPTIONS: { value: string; label: string }[] = [
   { value: '8', label: '8 lines' },
 ];
 
-const TINT_LABELS: Record<HudTint, string> = { charcoal: 'Charcoal', ink: 'Ink', forest: 'Forest', plum: 'Plum', slate: 'Slate', paper: 'Paper' };
+const TINT_LABELS: Record<HudTint, string> = { auto: 'Follows the appearance', charcoal: 'Charcoal', ink: 'Ink', forest: 'Forest', plum: 'Plum', slate: 'Slate', paper: 'Paper' };
 
 /** How solid the pill is, in percent, as the levels Settings offers. */
 const OPACITY_OPTIONS: { value: string; label: string }[] = [
@@ -498,7 +498,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
   const previewLines: HudPreviewLines = savedLines === 1 || savedLines === 2 || savedLines === 4 || savedLines === 8 ? savedLines : 0;
   const opacity = settings?.hud_opacity ?? (settings?.hud_translucent === false ? 100 : 64);
   const translucent = opacity < 100;
-  const tint: HudTint = HUD_TINTS.find((known) => known === settings?.hud_tint) ?? 'charcoal';
+  const tint: HudTint = HUD_TINTS.find((known) => known === settings?.hud_tint) ?? 'auto';
   const visibility: HudVisibility = settings?.hud_quiet ? 'never' : settings?.hud_hidden ? 'capturing' : 'always';
   // The nearest level on offer, for a value saved by hand or by an older build.
   const opacityLevel = OPACITY_OPTIONS.reduce((best, option) => Math.abs(Number(option.value) - opacity) < Math.abs(Number(best.value) - opacity) ? option : best).value;

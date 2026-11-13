@@ -32,7 +32,7 @@ const MAX_SEGMENT_SEC: u32 = 600;
 /// Line counts of live words the pill is drawn for.
 pub const HUD_LINES: [u8; 5] = [0, 1, 2, 4, 8];
 /// The pill's colours (`.eavesy-control[data-tint]` in the HUD's styles); the first is the default.
-pub const HUD_TINTS: [&str; 6] = ["charcoal", "ink", "forest", "plum", "slate", "paper"];
+pub const HUD_TINTS: [&str; 7] = ["auto", "charcoal", "ink", "forest", "plum", "slate", "paper"];
 /// The least and most solid the pill can be, in percent.
 pub const HUD_OPACITY: (u8, u8) = (30, 100);
 
@@ -123,7 +123,7 @@ pub struct Settings {
     /// say something went wrong.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hud_quiet: bool,
-    /// The pill's colour: one of `HUD_TINTS` (charcoal unless chosen).
+    /// The pill's colour: one of `HUD_TINTS` (auto unless chosen: paper by day, navy by night).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hud_tint: Option<String>,
     /// How solid the pill is, in percent (30 to 100). Unset reads
@@ -876,9 +876,9 @@ mod tests {
     }
 
     #[test]
-    fn the_pill_is_charcoal_and_see_through_unless_chosen() {
+    fn the_pill_follows_the_appearance_and_is_see_through_unless_chosen() {
         let mut settings = Settings::default();
-        assert_eq!((settings.hud_tint(), settings.hud_opacity()), ("charcoal", 64));
+        assert_eq!((settings.hud_tint(), settings.hud_opacity()), ("auto", 64));
         let saved = serde_json::to_string(&settings).unwrap();
         assert!(!saved.contains("hud_tint") && !saved.contains("hud_opacity") && !saved.contains("hud_quiet"));
         // The switch this level replaced still reads as it was saved.
@@ -891,7 +891,7 @@ mod tests {
         settings.hud_tint = Some("forest".into());
         assert_eq!(settings.hud_tint(), "forest");
         settings.hud_tint = Some("neon".into());
-        assert_eq!(settings.hud_tint(), "charcoal");
+        assert_eq!(settings.hud_tint(), "auto");
         settings.hud_preview_lines = Some(8);
         assert_eq!(settings.hud_preview_lines(), 8);
     }

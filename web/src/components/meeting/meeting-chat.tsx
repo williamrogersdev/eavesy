@@ -84,7 +84,7 @@ export function MeetingChat({ meetingId, ready }: { meetingId: string; ready: bo
                 <div
                   className={cn(
                     'max-w-[85%] whitespace-pre-wrap rounded-[var(--ev-r-panel)] px-3.5 py-2 text-sm leading-relaxed',
-                    m.role === 'user' ? 'rounded-br-md bg-ev-coat text-ev-on-coat' : 'rounded-bl-md bg-ev-well text-ev-ink',
+                    m.role === 'user' ? 'rounded-br-md bg-ev-brand text-ev-on-brand' : 'rounded-bl-md bg-ev-well text-ev-ink',
                   )}
                 >
                   {m.content}
@@ -121,7 +121,7 @@ export function MeetingChat({ meetingId, ready }: { meetingId: string; ready: bo
           <button
             type="submit"
             disabled={!ready || busy || !input.trim()}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-action font-round font-bold text-ev-on-coat transition hover:bg-action-hover disabled:opacity-50"
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-action font-round font-bold text-ev-on-brand transition hover:bg-action-hover disabled:opacity-50"
             aria-label="Send"
           >
             <Send className="h-3.5 w-3.5" />

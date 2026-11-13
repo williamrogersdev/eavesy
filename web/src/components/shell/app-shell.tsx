@@ -91,7 +91,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div className="flex h-dvh min-h-[560px] w-full overflow-hidden bg-ev-paper">
         <a
           href="#app-content"
-          className="fixed left-4 top-3 z-[70] -translate-y-20 rounded-full bg-ev-coat px-3 py-2 font-round text-sm font-bold text-ev-on-coat transition focus:translate-y-0"
+          className="fixed left-4 top-3 z-[70] -translate-y-20 rounded-full bg-ev-brand px-3 py-2 font-round text-sm font-bold text-ev-on-brand transition focus:translate-y-0"
         >
           Skip to content
         </a>
@@ -170,7 +170,7 @@ function MobileHeader({
       <Link
         href="/app/record"
         aria-label="New recording"
-        className="grid h-9 w-9 place-items-center rounded-full bg-ev-coat text-ev-on-coat hover:bg-ev-coat-hover"
+        className="grid h-9 w-9 place-items-center rounded-full bg-ev-brand text-ev-on-brand hover:bg-ev-brand-hover"
       >
         <Mic className="h-4 w-4" />
       </Link>

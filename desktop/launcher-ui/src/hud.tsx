@@ -72,7 +72,7 @@ type Size = 'pill' | 'receipt' | 'bar' | 'wide' | 'result' | 'shot' | 'video' | 
 /** How the control looks, from Settings → Pill: lines of live words, its colour, and how solid it is (percent). */
 type Look = { lines: 0 | 1 | 2 | 4 | 8; tint: string; opacity: number };
 
-const DEFAULT_LOOK: Look = { lines: 0, tint: 'charcoal', opacity: 64 };
+const DEFAULT_LOOK: Look = { lines: 0, tint: 'auto', opacity: 64 };
 /** The window's height with the dictation options open (`OPTIONS_HEIGHT` in hud.rs). */
 const OPTIONS_HEIGHT = 256;
 

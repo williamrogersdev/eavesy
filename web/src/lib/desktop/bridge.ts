@@ -755,7 +755,7 @@ export async function setHudLook(lines: HudPreviewLines, translucent: boolean, f
 }
 
 /** The pill's colours (`HUD_TINTS` in settings.rs); the first is the default. */
-export const HUD_TINTS = ['charcoal', 'ink', 'forest', 'plum', 'slate', 'paper'] as const;
+export const HUD_TINTS = ['auto', 'charcoal', 'ink', 'forest', 'plum', 'slate', 'paper'] as const;
 export type HudTint = (typeof HUD_TINTS)[number];
 
 /** The pill's colour, and how solid it is in percent (30 to 100); either may be left out. */
@@ -979,7 +979,7 @@ export interface Settings {
   /** Absent means off. */
   hud_preview_lines?: HudPreviewLines;
   hud_translucent?: boolean;
-  /** The pill's colour. Absent means charcoal. */
+  /** The pill's colour. Absent means auto: paper by day, navy by night. */
   hud_tint?: string;
   /** How solid the pill is, in percent. Absent reads `hud_translucent`: see-through (64) unless that is false. */
   hud_opacity?: number;

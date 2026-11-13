@@ -129,7 +129,7 @@ export function ContactForm() {
       <button
         type="submit"
         disabled={status === 'submitting'}
-        className="inline-flex items-center justify-center gap-2 rounded-full bg-ev-coat px-5 py-3 text-sm font-round font-bold text-ev-on-coat shadow-[var(--ev-e-2)] transition hover:bg-ev-coat-hover disabled:opacity-60"
+        className="inline-flex items-center justify-center gap-2 rounded-full bg-ev-brand px-5 py-3 text-sm font-round font-bold text-ev-on-brand shadow-[var(--ev-e-2)] transition hover:bg-ev-brand-hover disabled:opacity-60"
       >
         {status === 'submitting' && <Loader2 className="h-4 w-4 animate-spin" />}
         {status === 'submitting' ? 'Sending…' : 'Send message'}
