@@ -9,11 +9,12 @@ import zlib
 
 import numpy as np
 
-COAT = (0x2B, 0x25, 0x23)
-BAND = (0x4A, 0x40, 0x3C)
-EYE = (0xFB, 0xF7, 0xF0)
+BODY = (0xF2, 0xB2, 0x33)
+HAT = (0x16, 0x21, 0x3F)
+BAND = (0xFB, 0xF8, 0xF1)
+EYE = (0x16, 0x21, 0x3F)
 REC = (0xFF, 0x5A, 0x3C)
-PAPER = (0xFB, 0xF7, 0xF0)
+PAPER = (0xFB, 0xF8, 0xF1)
 
 
 def cubic(p0, p1, p2, p3, steps=32):
@@ -143,13 +144,13 @@ def paint_hat(cv, color, band=None, brim_ry=5.0, clip=None):
 
 def paint_full_mascot(cv, clip=None, lens=True):
     """Full-detail idle mascot (no ground shadow: the icon crops the body)."""
-    cv.paint(cv.d_ellipse(32, 41, 21, 17), COAT, clip=clip)
+    cv.paint(cv.d_ellipse(32, 41, 21, 17), BODY, clip=clip)
     for cx in (25, 39):
         cv.paint(cv.d_ellipse(cx, 42, 3.8, 5.4), EYE, clip=clip)
-    paint_hat(cv, COAT, band=BAND, clip=clip)
+    paint_hat(cv, HAT, band=BAND, clip=clip)
     if lens:
-        cv.paint(cv.d_segment((53, 56), (59, 63), 1.7), BAND, clip=clip)
-        cv.paint(cv.d_circle(49.5, 51.5, 7.6), COAT, clip=clip)
+        cv.paint(cv.d_segment((53, 56), (59, 63), 1.7), HAT, clip=clip)
+        cv.paint(cv.d_circle(49.5, 51.5, 7.6), HAT, clip=clip)
         cv.paint(cv.d_circle(49.5, 51.5, 5), REC, clip=clip)
         cv.paint(cv.d_circle(47.8, 49.8, 1.3), (255, 255, 255), 0.7, clip=clip)
 

@@ -26,10 +26,12 @@ warm, slightly odd companion would do. Don't fall back to a generic dev tool.
    microcopy and small details, not from loud visuals. During normal use
    nothing bounces, pulses for attention or pops up. The mascot gets more
    room to be expressive only in empty states and onboarding.
-2. **Your AI's inside guy.** Eavesy isn't a dashboard. It's a small snoop
-   that sits on your Mac and writes things down for you. Every surface
-   should feel like its case file: cream paper, charcoal ink, manila folders,
-   one coral light. Screens shouldn't feel like empty containers.
+2. **A notebook, not a dashboard.** Eavesy sits on your Mac and writes
+   things down for you. Every surface should feel like a well-kept notebook:
+   warm paper, navy ink, one marigold brand colour, one coral light. Screens
+   shouldn't feel like empty containers. The product records, so nothing in
+   the look or the words should hint at spying: no "snoop", no case files,
+   no trench coats.
 3. **You can always see when it's listening.** The mascot tips its hat up
    only while the mic is live, and its coral lens shows only while recording. In every other state its eyes
    are calm, closed or looking elsewhere. The character *is* the privacy
@@ -92,11 +94,10 @@ Rules:
 | Copy toast | Transcript copied | Copied |
 | Panel title | Capture history | (no title: the date groups are the structure) |
 
-## 3. The mascot: Eavesy, the Little Snoop
+## 3. The mascot: Eavesy
 
-**Form.** A small charcoal bean in a fedora, the shape of a trench-coated spy
-seen from the hat up. Two plain cream oval eyes peek out under the brim. The
-hat has a slightly lighter band and a pinched crown. While a capture is
+**Form.** A small marigold bean in a navy fedora. Two plain navy oval eyes
+peek out under the brim. The hat has a paper-white band and a pinched crown. While a capture is
 recording it raises a magnifying glass whose lens is the coral recording
 light. There are no limbs, antennae, mechanical parts or screens for a face,
 and no mouth: it says everything with its eyes and its hat. It's a creature,
@@ -146,12 +147,12 @@ never animates to ask for attention.
   Recording uses a non-template variant: the same glyph in a mid-tone plus
   one coral dot. Paused/mic off uses closed-eye dashes. It is never a
   microphone.
-- **App icon:** cream `#FBF7F0` squircle with the Little Snoop at 78% scale,
-  lens raised. Coat `#2B2523`, band `#4A403C`, lens `#FF5A3C`. The static
+- **App icon:** cream `#FBF8F1` squircle with the mascot at 78% scale,
+  lens raised. Body `#F2B233`, hat `#16213F`, band `#FBF8F1`, lens `#FF5A3C`. The static
   brand mark (app icon, favicon `web/public/icon.svg`, OG image) is the one
   place the coral shows without a recording. Anything live, the `Mascot`
   component included, shows it only while recording.
-- **Wordmark:** "eavesy" in charcoal with a coral full stop.
+- **Wordmark:** "Eavesy" in navy ink beside the mascot.
 - **Toasts:** 16px happy/confused glyph before the text.
 
 **Not allowed:** a mascot that talks during errors, that pops up uninvited
@@ -166,40 +167,47 @@ alias block so old classes still work.
 
 ```css
 .launcher-scope, .ev {
-  /* surfaces: case-file cream, not white */
-  --ev-paper:      #FBF7F0;  /* panel background */
-  --ev-well:       #F2EBDF;  /* sunken: search, toolbar shelf, kbd */
-  --ev-raised:     #FFFDF8;  /* menus, popovers, thumbnails frame */
-  --ev-line:       #E6DDCF;  /* hairlines */
-  --ev-line-strong:#D3C7B6;
-  /* ink: trench-coat charcoal, never #000 */
-  --ev-ink:        #211C1A;
-  --ev-ink-2:      #5F5751;  /* secondary text */
-  --ev-ink-3:      #968D85;  /* placeholders, timestamps */
-  /* brand */
-  --ev-coat:       #2B2523;  /* primary actions, focus, selection */
-  --ev-coat-hover: #1A1614;
-  --ev-coat-soft:  #ECE6DF;
-  --ev-on-coat:    #FBF7F0;
-  --ev-manila:      #E2B866;  /* folder tan: highlights. Never text */
+  /* surfaces: warm paper, not white */
+  --ev-paper:      #FBF8F1;  /* panel background */
+  --ev-well:       #F1EDE2;  /* sunken: search, toolbar shelf, kbd */
+  --ev-raised:     #FFFEFA;  /* menus, popovers, thumbnails frame */
+  --ev-line:       #E4DFD2;  /* hairlines */
+  --ev-line-strong:#D0C9B8;
+  /* ink: deep navy, never #000 */
+  --ev-ink:        #16213F;
+  --ev-ink-2:      #505A75;  /* secondary text */
+  --ev-ink-3:      #666D85;  /* placeholders, timestamps */
+  /* brand: marigold, for fills only (primary buttons, switches, the mascot).
+     On paper it is about 1.8:1, so it is never text, a hairline or a small mark. */
+  --ev-brand:       #F2B233;
+  --ev-brand-hover: #E5A31C;
+  --ev-brand-soft:  #FBEBC4;
+  --ev-on-brand:    #16213F;  /* text and icons on a marigold fill */
+  /* coat: the navy that carries links, focus, selection, checkboxes and dots */
+  --ev-coat:       #16213F;
+  --ev-coat-hover: #0B1330;
+  --ev-coat-soft:  #E9E5D8;  /* selection wash: neutral, so it never reads as a warning */
+  --ev-on-coat:    #FBF8F1;
+  --ev-manila:      #E2B866;  /* highlights. Never text */
   --ev-manila-shade:#C99A45;
   --ev-manila-soft: #F6E8CC;  /* highlight wash, search hits */
   --ev-manila-ink:  #6E4A12;  /* text on manila-soft */
-  --ev-mascot-body:#2B2523; --ev-mascot-band:#4A403C; --ev-mascot-eye:#FBF7F0;
+  --ev-mascot-body:#F2B233; --ev-mascot-hat:#16213F; --ev-mascot-band:#FBF8F1; --ev-mascot-eye:#16213F;
   /* kinds: index-tab inks, one per kind of capture (dark values in tokens.css) */
   --ev-voice:   #2A5CB8;  --ev-voice-soft:   #E3EBFA;  /* voice notes, dictation */
   --ev-meeting: #7A4BB5;  --ev-meeting-soft: #ECE4F7;  /* meetings */
   --ev-screen:  #0A6772;  --ev-screen-soft:  #DCF0F1;  /* screenshots, videos */
-  --ev-note:    #85580C;  --ev-note-soft:    #F6E8CC;  /* notes */
+  --ev-note:    #7A4A2A;  --ev-note-soft:    #F1E2D6;  /* notes: brown, never the brand marigold */
   /* meaning */
   --ev-rec:        #FF5A3C;  /* the coral light: RECORDING ONLY. Same as web --signal */
   --ev-rec-soft:   #FFE3DA;
-  --ev-leaf:       #2F8A5B;  /* granted / done */
+  --ev-leaf:       #267A4F;  /* granted / done */
   --ev-leaf-soft:  #DDF1E5;
   --ev-warn-ink:   #9A5B00;  /* errors use warn, not coral: coral means recording */
   --ev-warn-soft:  #FFF0D6;
-  /* HUD pill (same in both modes: it sits over any app) */
-  --ev-hud:        rgb(22 19 18 / 0.97);  /* solid pill, no vibrancy */
+  /* Dark glass for overlays that sit on screen content (marker, agent cards):
+     the same in both modes. The pill has its own colours (see HUD). */
+  --ev-hud:        rgb(22 19 18 / 0.97);
   --ev-hud-line:   rgb(255 240 220 / 0.14);
   --ev-hud-ink:    #F6EFE4;
   --ev-hud-ink-2:  rgb(246 239 228 / 0.62);
@@ -208,29 +216,33 @@ alias block so old classes still work.
   --ev-focus-field: 0 0 0 1px var(--ev-ink-3), 0 0 0 4px color-mix(in srgb, var(--ev-ink-3) 18%, transparent);
 }
 @media (prefers-color-scheme: dark) { .launcher-scope, .ev { /* after hours */
-  --ev-paper:      #1F1A18;  /* warm paper after hours, never a black slab */
-  --ev-well:       #29231F;  /* lighter than paper: raised, not sunken */
-  --ev-raised:     #2E2724;
-  --ev-line:       #3A322D;
-  --ev-line-strong:#4D433D;
-  --ev-ink:        #F2EBDF;
-  --ev-ink-2:      #B5ABA0;
-  --ev-ink-3:      #82786F;
-  --ev-coat:       #F2EBDF;  /* in the dark the coat turns to cream paper */
+  --ev-paper:      #111830;  /* night blue, never a black slab */
+  --ev-well:       #18203C;  /* lighter than paper: raised, not sunken */
+  --ev-raised:     #1E2848;
+  --ev-line:       #2C3759;
+  --ev-line-strong:#3D4A73;
+  --ev-ink:        #EEF0F7;
+  --ev-ink-2:      #A7AECB;
+  --ev-ink-3:      #8A93B3;
+  --ev-brand:       #F5C04E;
+  --ev-brand-hover: #FFD06A;
+  --ev-brand-soft:  #40371A;
+  --ev-on-brand:    #16213F;
+  --ev-coat:       #EEF0F7;  /* in the dark the coat turns to paper white */
   --ev-coat-hover: #FFFFFF;
-  --ev-coat-soft:  #352D29;
-  --ev-on-coat:    #1F1A18;
+  --ev-coat-soft:  #263058;
+  --ev-on-coat:    #111830;
   --ev-manila:      #F0C879;
   --ev-manila-shade:#D9AB55;
-  --ev-manila-soft: #3A2F1C;
+  --ev-manila-soft: #3A3320;
   --ev-manila-ink:  #F5D9A0;
-  --ev-mascot-body:#3D3431; --ev-mascot-band:#5A4F4A; --ev-mascot-eye:#F2EBDF;
+  --ev-mascot-body:#F5C04E; --ev-mascot-hat:#7186C9; --ev-mascot-band:#EEF0F7; --ev-mascot-eye:#16213F;
   --ev-rec:        #FF6A4D;
-  --ev-rec-soft:   #3A1D16;
+  --ev-rec-soft:   #3D2030;
   --ev-leaf:       #6FCF97;
-  --ev-leaf-soft:  #1F3328;
+  --ev-leaf-soft:  #173A2C;
   --ev-warn-ink:   #FFC870;
-  --ev-warn-soft:  #3A2C17;
+  --ev-warn-soft:  #432F1C;
 }}
 /* migration aliases: delete once no class references them */
 .launcher-scope {
@@ -250,14 +262,15 @@ slab).
 
 **Colour says what a thing is.** Paper and ink carry the text; colour is
 kept for the index tabs. Each kind of capture has one ink (voice blue, meeting
-violet, screen teal, note manila) and wears it in three places only: the small
+violet, screen teal, note brown) and wears it in three places only: the small
 tab that holds a row's icon and its kind label, the dot on its filter chip
 (the chip fills with the soft tint while chosen), and the rule beside a
 meeting's details. Settings files its sections in four groups (Recording, Your
 words, Connected, This app) that borrow the same four inks for their icon
 tiles; the open section's tile is filled. A kind ink never marks a state:
 coral is still only "recording now", leaf "granted", warn "needs attention".
-Body text, buttons and switches stay ink and coat.
+Body text stays ink; primary buttons and switches are the marigold brand
+fill with navy on it; links, focus rings, checkboxes and small marks are coat.
 
 A meeting row leads with the meeting's name and its summary's overview;
 decisions and action items sit behind one line, the transcript behind
@@ -269,7 +282,7 @@ another, and the name opens the meeting on eavesy.com.
   carries the capture's state (hat up while the mic is live); nothing below
   repeats it.
 - A live capture shows in the panel as the **live card**: the pill carried
-  in, in `--ev-hud` charcoal with the coral light, the label, the time,
+  in, in the pill colours with the coral light, the label, the time,
   Stop, and the same number of lines the pill shows (newest in full ink,
   older in `--ev-hud-ink-2`). Nothing shrinks to one line.
 - Opening the panel fades it in over the pill (the native animator, about
@@ -287,8 +300,9 @@ another, and the name opens the meeting on eavesy.com.
   with a "‹ Captures" way back.
 
 **Type.** `--ev-font-round: ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif`
-for the voice of the product: headings, date groups, buttons, chips, mascot
-bubbles, kbd. `--ev-font-text: -apple-system, BlinkMacSystemFont, system-ui, sans-serif`
+for the voice of the Mac app: headings, date groups, buttons, chips, mascot
+bubbles, kbd. The public website is set in Geist instead (`marketing.css`);
+pictures of the app on it keep the rounded face (`.ev-app-type`). `--ev-font-text: -apple-system, BlinkMacSystemFont, system-ui, sans-serif`
 for transcripts and long text (SF Pro reads better at length). Numbers use
 `font-variant-numeric: tabular-nums`. Don't use monospace anywhere in the UI.
 
@@ -306,10 +320,10 @@ for transcripts and long text (SF Pro reads better at length). Numbers use
 `--ev-r-pop: 12px`, `--ev-r-panel: 16px`, `--ev-r-hud: 999px` (bars); the HUD
 pill itself is r20, r22 when wide.
 
-**Elevation** (always charcoal-tinted, never neutral grey):
-`--ev-e-1: 0 1px 0 rgb(33 28 26 / .05)` (pressed-in well, inset),
-`--ev-e-2: 0 1px 2px rgb(33 28 26 / .08), 0 4px 14px -6px rgb(33 28 26 / .18)` (menus, thumbnails),
-`--ev-e-3: 0 0 0 .5px rgb(33 28 26 / .14), 0 24px 60px -22px rgb(33 28 26 / .45)` (panel, HUD).
+**Elevation** (always navy-tinted, never neutral grey):
+`--ev-e-1: 0 1px 0 rgb(22 33 63 / .05)` (pressed-in well, inset),
+`--ev-e-2: 0 1px 2px rgb(22 33 63 / .08), 0 4px 14px -6px rgb(22 33 63 / .18)` (menus, thumbnails),
+`--ev-e-3: 0 0 0 .5px rgb(22 33 63 / .14), 0 24px 60px -22px rgb(22 33 63 / .45)` (panel, HUD).
 In dark mode, multiply the alpha by 2 and add `inset 0 1px 0 rgb(255 240 220 / .06)`.
 
 **Spacing:** 4-pt grid. `--ev-s-1: 4px`, `-2: 8px`, `-3: 12px`, `-4: 16px`,
@@ -429,7 +443,7 @@ Every tile is visually equal: no lead button and no colour fill. Hover
 darkens the surface a touch and strengthens the line. While a capture runs,
 the label row goes and the tiles become the live bar in place: a 28px head
 row (status, elapsed time, cancel and Stop) over up to four lines of the
-newest words, on the HUD's charcoal. The title bar's mascot is the only
+newest words, on the pill colours. The title bar's mascot is the only
 mascot while it runs. Starting and writing use the same bar without Stop.
 There is no second listening card or expandable text box above search. The
 bar's height follows its lines, not the 90px of label and tiles it replaces,
@@ -545,7 +559,7 @@ row enters recording mode: the keys become a dashed coat outline reading
 480), independent of the capture panel and HUD. It uses the same tokens as the
 rest of the app: a well-tinted sidebar (the open section is a raised paper tab
 with a manila notch), cream index cards on paper (one level, never nested),
-and charcoal coat actions and switches. Dark mode uses the plain dark tokens;
+and marigold primary actions and switches. Dark mode uses the plain dark tokens;
 there is no extra manila mixing. Manila stays a highlight (the notch, step
 numbers, tags). All of it lives in `preferences.css`; coral stays for
 recording only.
@@ -580,9 +594,10 @@ Preserve drafts when switching sections. Show errors beside the affected
 controls. Use reduced-motion behavior. The capture panel and pill retain their
 geometry when Settings opens or closes.
 
-**HUD (floating pill, one fixed size per phase).** A solid charcoal pill
-(`--ev-hud`), not vibrancy glass: it has to read the same over any app, and
-CSS draws its corners so the shadow and the shape always match. Rust picks the
+**HUD (floating pill, one fixed size per phase).** A pill in its own colour
+(Settings → Pill), not vibrancy glass. Unless a colour is chosen it follows
+the appearance: paper with navy ink by day, navy by night; Charcoal, Ink,
+Forest, Plum, Slate and Paper are fixed choices. CSS draws its corners so the shadow and the shape always match. Rust picks the
 window size from the phase (`hud::size_for`) and animates the native frame
 once per phase change, or when a receipt's drawer opens (`peek_hud`). Content never measures itself or resizes the window, so
 the pill can't jitter or flip while words arrive.
@@ -647,14 +662,13 @@ the next recording.
 There is no mascot or logo on the control: it opens Eavesy from a click on
 its surface. The five voice bars follow the mic level. The coral dot, the
 coral ring (solid look only) and the coral Stop are the only red, and only
-while the mic is live. Live words, when on, are in a quieter ink (62%) on a lighter charcoal (neutral
-grey at 72% when see-through) so they don't pull the eye while you talk; clicking in to
+while the mic is live. Live words, when on, are in a quieter ink (62%) on a slightly stronger fill so they don't pull the eye while you talk; clicking in to
 fix one brings it to full ink. The ticker is one line of 12.5/18 text, clipped from
 the start with a soft left fade so the newest words stay in view. Before the
 first word it shows the hint ("Go ahead, I'm listening", plus the paste shortcut).
 
 After stop the top row reads "Writing it down…" and the ticker shimmers. The
-control stays charcoal the whole way: stopping never turns it into another
+control keeps its colour the whole way: stopping never turns it into another
 object. A dictation ends as a **receipt**, the pill with a stamp that lands
 with a short spring: **Pasted · 16 words** (leaf), **Copied** with "⌘V to
 paste" (manila) or **Not pasted** (warn, with an Allow button for

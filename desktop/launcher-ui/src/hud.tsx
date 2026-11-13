@@ -1806,7 +1806,7 @@ function Marking({ state, act }: { state: MarkingState; act: (cmd: string, args?
   );
 }
 
-/** A rubber stamp on the case file: what just happened to the capture. */
+/** A rubber stamp: what just happened to the capture. */
 function Stamp({ tone, fit, title, children }: { tone: 'leaf' | 'manila' | 'warn'; fit?: boolean; title?: string; children: ReactNode }) {
   return <span className="ctl-stamp" data-tone={tone} data-fit={fit || undefined} title={title} role="status">{tone === 'leaf' && <Check className="h-3 w-3" strokeWidth={3} />}{fit ? <span className="ctl-stamp-text">{children}</span> : children}</span>;
 }
