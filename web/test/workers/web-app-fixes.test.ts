@@ -138,7 +138,7 @@ describe('regenerate', () => {
       // transcript rebuilt, as after the pipeline's own brief.
       expect(queued.messages.filter((m) => m.meetingId === id).map((m) => m.kind)).toEqual(['embed', 'agent-transcript']);
       expect(await row('SELECT generated_by_model, template_id FROM summaries WHERE meeting_id = ?', id)).toEqual({
-        generated_by_model: 'claude-sonnet-4-6',
+        generated_by_model: 'claude-sonnet-5-5',
         template_id: 'standard',
       });
     }

@@ -385,7 +385,7 @@ describe('processing queue orchestration', () => {
         'SELECT generated_by_model FROM summaries WHERE meeting_id = ?',
         'meet_byo',
       ),
-    ).toEqual({ generated_by_model: 'byo-anthropic:claude-sonnet-4-6' });
+    ).toEqual({ generated_by_model: 'byo-anthropic:claude-sonnet-5-5' });
   });
 
   it('processes a browser recording asynchronously and makes replay a no-op', async () => {
