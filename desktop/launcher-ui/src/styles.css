@@ -632,7 +632,7 @@ body {
 .ctl-breathe { animation: ctl-breathe 1.2s ease-in-out infinite; }
 @keyframes ctl-breathe { 50% { opacity: 0.5; } }
 
-/* A rubber stamp on the case file: what just happened to the capture. */
+/* A rubber stamp: what just happened to the capture. */
 .ctl-stamp {
   --stamp: #7fd8a4;
   display: inline-flex;
@@ -768,7 +768,7 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
   color: #2b1d05;
   font: 700 12px/22px var(--ev-font-round);
 }
-/* "Tagged #2" lands like a rubber stamp on the case file, then lifts off. */
+/* "Tagged #2" lands like a rubber stamp, then lifts off. */
 .mk-stamp {
   position: absolute;
   padding: 2px 10px;
@@ -805,9 +805,11 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
 }
 .mk-hint[data-top] { top: 72px; bottom: auto; }
 .mk-mascot {
-  --ev-mascot-body: #f2ebdf;
-  --ev-mascot-band: #9e9389;
-  --ev-mascot-eye: #161312;
+  /* On the dark glass in both appearances, so the night colours always. */
+  --ev-mascot-body: #f5c04e;
+  --ev-mascot-hat: #7186c9;
+  --ev-mascot-band: #eef0f7;
+  --ev-mascot-eye: #16213f;
   display: grid;
   flex: none;
   place-items: center;
