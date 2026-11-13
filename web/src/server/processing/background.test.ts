@@ -446,6 +446,20 @@ function seedRow(sqlite: Database, table: string, parents: Record<string, string
 }
 
 describe('deleting an account', () => {
+  test('hands a sole owner’s team to its admin before the membership goes', async () => {
+    const t = setup();
+    for (const id of ['u2', 'u3']) t.sqlite.run(`INSERT INTO users (id, created_at, updated_at) VALUES (?, 1, 1)`, [id]);
+    t.sqlite.run(`INSERT INTO teams (id, name, created_by, created_at, updated_at) VALUES ('team1', 'Team', 'u1', 1, 1)`);
+    for (const [user, role, at] of [['u1', 'owner', 1], ['u2', 'member', 2], ['u3', 'admin', 3]] as const) {
+      t.sqlite.run(`INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('team1', ?, ?, ?)`, [user, role, at]);
+    }
+    expect(await deliver(t.env, { kind: 'purge-account', userId: 'u1' })).toMatchObject({ acked: true });
+    expect(t.sqlite.query(`SELECT user_id, role FROM team_members ORDER BY user_id`).all()).toEqual([
+      { user_id: 'u2', role: 'member' },
+      { user_id: 'u3', role: 'owner' },
+    ]);
+  });
+
   test('clears a row in every table that references users, with foreign keys on', async () => {
     const t = setup();
     expect(t.sqlite.query('PRAGMA foreign_keys').get()).toEqual({ foreign_keys: 1 });
@@ -453,7 +467,9 @@ describe('deleting an account', () => {
     t.sqlite.run(`INSERT INTO users (id, created_at, updated_at) VALUES ('u2', ?, ?)`, [now, now]);
 
     const referencing = [...new Set(tablesReferencingUsers(t.sqlite))];
-    const parents: Record<string, string> = { users: 'u1', meetings: 'm1' };
+    // A membership needs its team, which references no user itself.
+    t.sqlite.run(`INSERT INTO teams (id, name, created_by, created_at, updated_at) VALUES ('team1', 'Team', 'u1', ?, ?)`, [now, now]);
+    const parents: Record<string, string> = { users: 'u1', meetings: 'm1', teams: 'team1' };
     // Parents first: a child's other foreign keys need their row to exist.
     const order = ['devices', 'calendar_connections', ...referencing.filter((x) => x !== 'meetings')];
     const seeded = new Set<string>(['meetings']);
@@ -479,6 +495,8 @@ describe('deleting an account', () => {
     }
     expect(t.sqlite.query(`SELECT id FROM users ORDER BY id`).all()).toEqual([{ id: 'u2' }]);
     expect(t.sqlite.query(`SELECT code_hash FROM oauth_codes`).all()).toEqual([{ code_hash: 'other' }]);
+    // The team had only that member, so it went with them.
+    expect(t.sqlite.query(`SELECT id FROM teams`).all()).toEqual([]);
     // Purged by name, or by the helpers for bots and emails, or as the meeting rows themselves.
     const handledElsewhere = new Set(['meetings', 'meeting_bots', 'email_deliveries']);
     for (const table of referencing) {

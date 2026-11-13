@@ -48,12 +48,14 @@ export interface LiveRow {
   provisional: boolean;
   /** "You" or "Others" when the line's track is known. */
   label: string | null;
+  /** When it was said, in milliseconds from the start of the recording. */
+  startMs: number;
 }
 
 export function liveView(lines: LiveLine[], partials: LiveCaption[], keep = 3): LiveRow[] {
   const recent = lines
     .slice(-keep)
-    .map(({ text, provisional, track }) => ({ text, provisional, label: trackLabel(track) }));
+    .map(({ text, provisional, track, startMs }) => ({ text, provisional, label: trackLabel(track), startMs }));
   // Keep the last final on screen until its persisted row arrives. Tracks
   // advance independently: computer audio must not hide newer mic words.
   const hearing = partials
@@ -62,7 +64,7 @@ export function liveView(lines: LiveLine[], partials: LiveCaption[], keep = 3): 
       return caption.text.trim() && caption.endMs > lastEnd;
     })
     .sort((a, b) => a.startMs - b.startMs)
-    .map((caption) => ({ text: caption.text, provisional: true, label: trackLabel(caption.track) }));
+    .map((caption) => ({ text: caption.text, provisional: true, label: trackLabel(caption.track), startMs: caption.startMs }));
   return [...recent, ...hearing].slice(-keep);
 }
 

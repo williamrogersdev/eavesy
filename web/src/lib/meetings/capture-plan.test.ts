@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { cleanNotetakerName, effectiveMode, legacyRecordChoice, notetakerName, wantsNotetaker } from './capture-plan';
+import { cleanNotetakerName, effectiveMode, legacyRecordChoice, notetakerName, notetakerToggle, wantsNotetaker } from './capture-plan';
 
 describe('capture plan', () => {
   test('a meeting’s own choice wins over the account default', () => {
@@ -33,5 +33,20 @@ describe('capture plan', () => {
     expect(notetakerName('  Will’s   notes ', 'William Rogers')).toBe('Will’s notes');
     expect(cleanNotetakerName('\u0007  ')).toBeNull();
     expect(cleanNotetakerName('x'.repeat(100))).toHaveLength(60);
+  });
+});
+
+describe('notetakerToggle', () => {
+  test('sends the Notetaker to a meeting it was not going to', () => {
+    expect(notetakerToggle('mac', 'mac')).toBe('notetaker');
+    expect(notetakerToggle('skip', 'both')).toBe('notetaker');
+  });
+  test('taking it back returns to a default that does not send it', () => {
+    expect(notetakerToggle('notetaker', 'mac')).toBeNull();
+    expect(notetakerToggle('both', 'mac')).toBeNull();
+  });
+  test('taking it back from a Notetaker default leaves the Mac recording', () => {
+    expect(notetakerToggle('notetaker', 'notetaker')).toBe('mac');
+    expect(notetakerToggle('both', 'both')).toBe('mac');
   });
 });

@@ -3,6 +3,7 @@ import { clerkClient } from '@clerk/tanstack-react-start/server';
 import { and, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
+import * as teamsRepo from '@/db/repo/teams';
 import * as usersRepo from '@/db/repo/users';
 import { captures, deviceTokens, dictations, mcpTokens, meetings, personalDictionary, users } from '@/db/schema';
 import { resolveActor } from '@/server/auth';
@@ -33,7 +34,9 @@ export const Route = createFileRoute('/api/account/')({
         }
 
         const now = Date.now();
-        // One D1 batch is one transaction: either the account is gone or nothing changed.
+        // One D1 batch is one transaction: either the account is gone, and out of its team, or nothing changed.
+        // Leaving the team is part of it on purpose: a scrubbed account must not stay a team's owner, so if
+        // that step fails the delete fails whole and the person can try again.
         await db.batch([
           db.delete(personalDictionary).where(eq(personalDictionary.userId, actor.userId)),
           db
@@ -72,6 +75,8 @@ export const Route = createFileRoute('/api/account/')({
               updatedAt: now,
             })
             .where(eq(users.id, actor.userId)),
+          // The team loses this member now, not when the purge runs; the purge repeats it harmlessly.
+          ...teamsRepo.departQueries(db, actor.userId),
         ]);
 
         await enqueue({ kind: 'purge-account', userId: actor.userId }).catch((error: unknown) =>

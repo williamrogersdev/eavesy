@@ -11,6 +11,9 @@ pub const DEFAULT_DICTATION_HOTKEY: &str = "Cmd+Shift+D";
 pub const DEFAULT_ASSISTANT_HOTKEY: &str = "Alt+Shift+Space";
 /// Starts a screen recording, and stops the one running.
 pub const DEFAULT_SCREEN_HOTKEY: &str = "Alt+Shift+R";
+/// Hides the capture control, and brings it back: for a recording that
+/// shouldn't be on a shared screen.
+pub const DEFAULT_CONTROL_HOTKEY: &str = "Alt+Shift+H";
 /// What Talk to Eavesy defaulted to before; `hotkeys::migrate_assistant_default`
 /// moves it when another app also uses it.
 pub const OLD_ASSISTANT_HOTKEY: &str = "Alt+Space";
@@ -62,6 +65,8 @@ pub struct Settings {
     pub assistant_hotkey: String,
     #[serde(default = "default_screen_hotkey")]
     pub screen_hotkey: String,
+    #[serde(default = "default_control_hotkey")]
+    pub control_hotkey: String,
     #[serde(default = "new_device_id")]
     pub device_id: String,
     #[serde(default)]
@@ -280,6 +285,10 @@ fn default_assistant_hotkey() -> String {
     DEFAULT_ASSISTANT_HOTKEY.to_string()
 }
 
+fn default_control_hotkey() -> String {
+    DEFAULT_CONTROL_HOTKEY.to_string()
+}
+
 fn default_screen_hotkey() -> String {
     DEFAULT_SCREEN_HOTKEY.to_string()
 }
@@ -295,6 +304,7 @@ impl Default for Settings {
             dictation_hotkey: DEFAULT_DICTATION_HOTKEY.to_string(),
             assistant_hotkey: DEFAULT_ASSISTANT_HOTKEY.to_string(),
             screen_hotkey: DEFAULT_SCREEN_HOTKEY.to_string(),
+            control_hotkey: DEFAULT_CONTROL_HOTKEY.to_string(),
             device_id: new_device_id(),
             setup_completed: false,
             recordings_root: None,

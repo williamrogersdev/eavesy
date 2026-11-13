@@ -8,13 +8,14 @@ import { isRecord } from '@/lib/json';
 import { narrowByKind, type KindFilter } from '@/lib/search/kind-filter';
 
 export const Route = createFileRoute('/app/search')({
+  validateSearch: (search: Record<string, unknown>): { q?: string } =>
+    typeof search.q === 'string' && search.q ? { q: search.q } : {},
   component: SearchPage,
 });
 
 function SearchPage() {
-  const [q, setQ] = useState(() =>
-    typeof window !== 'undefined' ? (new URLSearchParams(window.location.search).get('q') ?? '') : '',
-  );
+  const { q: urlQuery } = Route.useSearch();
+  const [q, setQ] = useState(urlQuery ?? '');
   const [items, setItems] = useState<SearchItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -43,14 +44,11 @@ function SearchPage() {
     }
   }, []);
 
+  // The top bar's search lands here with ?q=, also while this page is already open.
   useEffect(() => {
-    const initial = new URLSearchParams(window.location.search).get('q');
-    if (!initial) return;
-    const t = window.setTimeout(() => {
-      void runQuery(initial);
-    }, 0);
-    return () => window.clearTimeout(t);
-  }, [runQuery]);
+    setQ(urlQuery ?? '');
+    void runQuery(urlQuery ?? '');
+  }, [urlQuery, runQuery]);
 
   const { counts, mixed, shown } = narrowByKind(items, kind);
 
@@ -61,10 +59,7 @@ function SearchPage() {
 
   return (
     <AppPage width="compact">
-      <AppPageHeader
-        title="Search"
-        description="Search by meaning across your transcripts and dictations."
-      />
+      <AppPageHeader title="Search" />
 
       <form onSubmit={run} role="search" className="relative">
         <label htmlFor="semantic-search" className="sr-only">Search recordings and dictations</label>

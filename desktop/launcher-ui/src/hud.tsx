@@ -1,6 +1,7 @@
 import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, Camera, Check, ChevronDown, Clapperboard, Copy, History, House, Languages, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Users, Volume2, X } from 'lucide-react';
+import { AudioLines, ArrowDown, ArrowUp, Camera, Check, ChevronDown, Clapperboard, Copy, EyeOff, History, House, Languages, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Users, Volume2, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
+import type { LiveRow } from '@/lib/desktop/live-captions';
 import { clock } from '@/components/launcher/history-model';
 import { DISCARD_ASKS_AFTER_SEC, DISCARD_CONFIRM_MS } from '@/components/launcher/discard';
 import { errMsg } from '@/lib/desktop/errors';
@@ -66,7 +67,7 @@ document.body.style.background = 'transparent';
  * The control's shape in each phase, the same as `size_for` in hud.rs: the
  * window takes that size when the phase changes, and this lays it out.
  */
-type Size = 'pill' | 'receipt' | 'bar' | 'wide' | 'result' | 'shot' | 'video';
+type Size = 'pill' | 'receipt' | 'bar' | 'wide' | 'result' | 'shot' | 'video' | 'meeting';
 
 /** How the control looks, from Settings → Pill: lines of live words, its colour, and how solid it is (percent). */
 type Look = { lines: 0 | 1 | 2 | 4 | 8; tint: string; opacity: number };
@@ -159,6 +160,8 @@ function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
       return state.notice ? 'wide' : 'pill';
     case 'recording':
       if (video) return 'video';
+      // Same as `size_for` in hud.rs: a meeting always has its transcript.
+      if (state.mode === 'meeting') return 'meeting';
       return lines === 0 ? 'bar' : 'wide';
     case 'transcribing':
       return video ? 'pill' : lines === 0 ? 'bar' : 'wide';
@@ -174,7 +177,7 @@ function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [272, 36], receipt: [248, 36], bar: [340, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [272, 36], receipt: [248, 36], bar: [340, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76], meeting: [400, 380] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -248,6 +251,32 @@ function browserPreviewWords(): string {
 }
 const PREVIEW_WORDS = browserPreviewWords();
 
+/** In the browser preview (`?meeting`; `&quiet` before anyone has spoken), a call a few minutes in. */
+function browserPreviewMeeting(): LiveRow[] {
+  const params = new URLSearchParams(window.location.search);
+  if (tauri() || !params.has('meeting') || params.has('quiet')) return [];
+  const said: [LiveRow['label'], string][] = [
+    ['Others', 'Thanks for making time. I wanted to walk through where the pilot stands before we talk about pricing.'],
+    ['You', 'Sure. We have had it with the support team for three weeks now.'],
+    ['Others', 'And how has that gone? Last time you mentioned the hand-off notes were the sticking point.'],
+    ['You', 'Better. The notes land in the ticket now, so nobody retypes them. The one gap is search across older calls.'],
+    ['Others', 'That is on the list for this quarter. I can send you the date once engineering confirms it.'],
+    ['You', 'That would help. If search is there by January we would move the whole team over.'],
+    ['Others', 'Understood. On pricing, the annual plan comes to eighteen a seat, and we would hold that for two years.'],
+    ['You', 'Let me take that to finance. Can you put it in writing along with the search date?'],
+    ['Others', 'I will send both by Friday.'],
+    ['You', 'Great. Then let us meet again the week after and'],
+  ];
+  return said.map(([label, text], i) => ({ label, text, startMs: i * 21_000, provisional: i === said.length - 1 }));
+}
+const PREVIEW_MEETING = browserPreviewMeeting();
+const PREVIEW_OVERVIEW: MeetingOverview = {
+  tldr: 'The pilot with the support team is going well. Moving the whole team over depends on search across older calls, and pricing is on the table at eighteen a seat.',
+  decisions: [{ text: 'Meet again the week after next to decide.' }],
+  actionItems: [{ text: 'Send the annual price and the search date in writing by Friday', owner: 'Others' }, { text: 'Take the price to finance', owner: 'You' }],
+  openQuestions: [{ text: 'Will search across older calls ship by January?' }],
+};
+
 /**
  * The window's own size. Rust sizes it for each phase before the renderer
  * hears of the phase, but the drawer can be asked for here first (editing,
@@ -299,9 +328,10 @@ function useMicSignal(sessionId: string | null, active: boolean, now: number): {
  * change made in Settings meanwhile. The shortcut is read again when the look
  * or the hotkeys change, never on hover.
  */
-function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: string; look: Look; typeLive: boolean; setTypeLive: (on: boolean) => void } {
+function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: string; hideShortcut: string; look: Look; typeLive: boolean; setTypeLive: (on: boolean) => void } {
   const [shortcut, setShortcut] = useState('');
   const [talkShortcut, setTalkShortcut] = useState('');
+  const [hideShortcut, setHideShortcut] = useState('');
   const [look, setLook] = useState<Look>(() => {
     const params = new URLSearchParams(window.location.search);
     return tauri() ? DEFAULT_LOOK : lookFrom({ lines: params.has('lines') ? Number(params.get('lines')) : undefined, translucent: !params.has('solid'), tint: params.get('tint') ?? undefined, opacity: params.has('opacity') ? Number(params.get('opacity')) : undefined });
@@ -310,9 +340,10 @@ function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: s
   // "Type as I talk" (Settings → Dictation), shown and changed on the recording control.
   const [typeLive, setTypeLive] = useState(() => !tauri() && new URLSearchParams(window.location.search).has('typelive'));
   const shortcutFrom = (settings: unknown) => {
-    const { dictation_hotkey: accel, assistant_hotkey: talk, type_as_you_talk: live } = (settings ?? {}) as { dictation_hotkey?: string; assistant_hotkey?: string; type_as_you_talk?: boolean };
+    const { dictation_hotkey: accel, assistant_hotkey: talk, control_hotkey: hide, type_as_you_talk: live } = (settings ?? {}) as { dictation_hotkey?: string; assistant_hotkey?: string; control_hotkey?: string; type_as_you_talk?: boolean };
     setShortcut(accel ? prettyAccel(accel) : '');
     setTalkShortcut(talk ? prettyAccel(talk) : '');
+    setHideShortcut(hide ? prettyAccel(hide) : '');
     setTypeLive(live === true);
   };
   const reloadShortcut = () => { void invoke('get_settings').then(shortcutFrom).catch(() => {}); };
@@ -334,7 +365,7 @@ function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: s
   }, []);
   // Settings may have changed it since: each recording starts from what is saved.
   useEffect(() => { if (recording && tauri()) reloadShortcut(); }, [recording]);
-  return { shortcut, talkShortcut, look, typeLive, setTypeLive };
+  return { shortcut, talkShortcut, hideShortcut, look, typeLive, setTypeLive };
 }
 
 /**
@@ -398,7 +429,7 @@ function Hud() {
   const [actionError, setActionError] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
-  const { shortcut, talkShortcut, look: settingsLook, typeLive, setTypeLive } = useHudSettings(state?.phase === 'recording');
+  const { shortcut, talkShortcut, hideShortcut, look: settingsLook, typeLive, setTypeLive } = useHudSettings(state?.phase === 'recording');
   // How lively the voice is right now, 0–1: a caption arriving lifts it, quiet lets it settle.
   const [voice, setVoice] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -1359,6 +1390,10 @@ function Hud() {
         {meeting && !opening && <span className="ctl-say" role="status">Recording meeting</span>}
         <span className="ctl-fill" />
         {dictating && !opening && writeChip(prefs ?? PLAIN, cancelDisabled, () => void showOptions(!choosing))}
+        {meeting && !opening && (
+          <button type="button" disabled={!state.sessionId} onClick={() => { if (tauri()) void invoke('tuck_hud').catch((error: unknown) => setActionError(hudError(error, 'Couldn’t hide Eavesy. Try again?'))); }}
+            aria-label="Hide Eavesy while it records" title={`Hide this while you share your screen. The recording carries on${hideShortcut ? `; ${hideShortcut} brings it back` : '; Eavesy in the menu bar brings it back'}.`} className="ctl-btn ctl-icon"><EyeOff className="h-3.5 w-3.5" /></button>
+        )}
         {discarding === state.sessionId
           ? <button type="button" disabled={cancelDisabled} onClick={() => cancelRecording(state.sessionId, elapsedSec)} aria-label="Discard this recording" title="Click again to throw this recording away" className="ctl-btn ctl-discard">Discard</button>
           : <button type="button" disabled={cancelDisabled} onClick={() => cancelRecording(state.sessionId, elapsedSec)} aria-label="Cancel recording" title="Cancel: throw this recording away without saving" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>}
@@ -1366,7 +1401,7 @@ function Hud() {
       </>
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
-    const doneHint = meeting ? 'press Stop to save the meeting' : eavesy ? (talkShortcut ? `tap ${talkShortcut} to send` : 'press Stop to send') : shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
+    const doneHint = eavesy ? (talkShortcut ? `tap ${talkShortcut} to send` : 'press Stop to send') : shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
     if (video) below = <div className="ctl-video-help">
       {!opening && !marking.tool && !actionError && <span className="ctl-video-count" title="Clicks are saved automatically. Highlights are tags you added."><MousePointerClick className="h-3 w-3" />{clicksLabel(marking.clicks)}{marking.marks.length > 0 ? ` · ${marking.marks.length} tags` : ''}</span>}
       <span role={actionError ? 'alert' : 'status'} className={actionError ? 'ctl-warn' : undefined} title={actionError ?? undefined}>
@@ -1374,7 +1409,8 @@ function Hud() {
       </span>
       {actionError ? <button className="ctl-btn" onClick={() => setActionError(null)}>Dismiss</button> : marking.tool && <button className="ctl-btn" onClick={() => act('stop_marking')}>Done · esc</button>}
     </div>;
-    if (dictating && choosing && !opening && !rowOnly) below = (
+    if (meeting) below = <MeetingPanel sessionId={state.sessionId ?? null} rows={lines.length ? lines : PREVIEW_MEETING} startedAtMs={state.startedAtMs ?? null} releaseKeys={() => void releaseEditor(state.sessionId)} empty={actionError ?? (opening ? 'Opening the mic…' : noLiveWords ? 'Live words are off on this Mac. The meeting is still recording, and its transcript is written when you press Stop.' : 'Recording both sides of the call. What is said shows up here.')} />;
+    else if (dictating && choosing && !opening && !rowOnly) below = (
       <div className="ctl-options">
         {writeMenu(prefs ?? PLAIN, cancelDisabled, (next) => { void pickWhileRecording(next); void showOptions(false); })}
         <button type="button" role="switch" aria-checked={typeLive} disabled={cancelDisabled} className="ctl-switch-row ctl-option-switch"
@@ -1384,9 +1420,9 @@ function Hud() {
         </button>
       </div>
     );
-    else if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : meeting ? `Recording both sides of the call… ${doneHint}` : `${eavesy ? 'Eavesy’s listening' : 'Listening'}… ${doneHint}`);
+    else if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `${eavesy ? 'Eavesy’s listening' : 'Listening'}… ${doneHint}`);
   } else if (state.phase === 'transcribing') {
-    top = <>{errorSay ?? <span className="ctl-say">{video ? 'Saving' : eavesy ? 'Eavesy’s thinking' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>}<span className="ctl-fill" /></>;
+    top = <>{errorSay ?? <span className="ctl-say">{video ? 'Saving' : state.mode === 'meeting' ? 'Saving the meeting' : eavesy ? 'Eavesy’s thinking' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>}<span className="ctl-fill" /></>;
     if (!video && look.lines) below = transcriptEditor(eavesy ? 'Sending what you said…' : 'Turning your words into text…');
   } else if (state.phase === 'done' && eavesy) {
     // Eavesy's answer: in full here, a sentence or two out loud (assistant.md B4).
@@ -1549,6 +1585,177 @@ function Hud() {
       {below && <div className="ctl-below" data-busy={rewriting || undefined} data-finding={finding || choosing || undefined} onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
       {foot && <div className="ctl-foot" onMouseDown={(event) => event.stopPropagation()}>{foot}</div>}
     </div>
+  );
+}
+
+type MeetingOverview = { tldr: string; decisions: { text: string }[]; actionItems: { text: string; owner?: string | null; due?: string | null }[]; openQuestions: { text: string }[] };
+type AskTurn = { role: 'user' | 'assistant'; content: string };
+type MeetingTab = 'transcript' | 'overview' | 'ask';
+
+/** An overview as the Mac app hands it over; anything that isn't a list of items with text is dropped. */
+function overviewFrom(value: unknown): MeetingOverview | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const items = <T extends { text: string }>(list: unknown): T[] => Array.isArray(list)
+    ? list.filter((item): item is T => !!item && typeof item === 'object' && typeof (item as { text?: unknown }).text === 'string' && !!(item as { text: string }).text.trim())
+    : [];
+  return { tldr: typeof raw.tldr === 'string' ? raw.tldr : '', decisions: items(raw.decisions), actionItems: items(raw.actionItems), openQuestions: items(raw.openQuestions) };
+}
+
+/** What was said in the last two minutes, for a question: the cloud's transcript runs about a minute behind. */
+function justHeard(rows: LiveRow[]): string {
+  const last = rows[rows.length - 1]?.startMs ?? 0;
+  return rows.filter((row) => row.startMs >= last - 120_000 && row.text.trim()).map((row) => `${row.label ? `${row.label}: ` : ''}${row.text.trim()}`).join('\n');
+}
+
+/** How often the overview is read again while it is open: the cloud rewrites it every few minutes of talk. */
+const OVERVIEW_EVERY_MS = 45_000;
+
+/**
+ * The meeting's box: everything said so far, the notes written so far, and
+ * a place to type a question about any of it. Typed, never spoken: the
+ * microphone is in the meeting.
+ */
+function MeetingPanel({ sessionId, rows, startedAtMs, empty, releaseKeys }: { sessionId: string | null; rows: LiveRow[]; startedAtMs: number | null; empty: string; releaseKeys: () => void }) {
+  const [tab, setTab] = useState<MeetingTab>('transcript');
+  const [overview, setOverview] = useState<MeetingOverview | null>(null);
+  const [overviewError, setOverviewError] = useState<string | null>(null);
+  const [overviewLoaded, setOverviewLoaded] = useState(false);
+  const [thread, setThread] = useState<AskTurn[]>([]);
+  const [asking, setAsking] = useState(false);
+  const [askError, setAskError] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+  const input = useRef<HTMLInputElement>(null);
+  const answers = useRef<HTMLDivElement>(null);
+  const session = useRef(sessionId);
+  session.current = sessionId;
+
+  useEffect(() => {
+    if (tab !== 'overview' || !sessionId) return;
+    let disposed = false;
+    const load = () => {
+      if (!tauri()) { setOverview(new URLSearchParams(window.location.search).has('quiet') ? null : PREVIEW_OVERVIEW); setOverviewLoaded(true); return; }
+      void invoke('meeting_overview', { sessionId })
+        .then((value) => { if (!disposed) { setOverview(overviewFrom(value)); setOverviewError(null); setOverviewLoaded(true); } })
+        .catch((error: unknown) => { if (!disposed) { setOverviewError(hudError(error, 'Couldn’t read the notes. Trying again shortly.')); setOverviewLoaded(true); } });
+    };
+    load();
+    const timer = window.setInterval(load, OVERVIEW_EVERY_MS);
+    return () => { disposed = true; window.clearInterval(timer); };
+  }, [tab, sessionId]);
+
+  useLayoutEffect(() => { if (answers.current) answers.current.scrollTop = answers.current.scrollHeight; }, [thread, asking, askError, tab]);
+
+  const ask = () => {
+    const question = draft.trim();
+    if (!question || asking || !sessionId) return;
+    const messages: AskTurn[] = [...thread, { role: 'user', content: question }];
+    setThread(messages);
+    setDraft('');
+    setTab('ask');
+    setAsking(true);
+    setAskError(null);
+    const answer = tauri()
+      ? invoke('ask_meeting', { sessionId, messages: messages.slice(-20), heard: justHeard(rows) }) as Promise<unknown>
+      : new Promise<unknown>((resolve, reject) => window.setTimeout(() => new URLSearchParams(window.location.search).has('askfails') ? reject(new Error('Eavesy couldn’t answer that. Try again?')) : resolve('At 2:06 they said the annual plan comes to eighteen a seat, held for two years.'), 700));
+    void answer
+      .then((reply) => { if (session.current === sessionId) setThread((was) => [...was, { role: 'assistant', content: String(reply) }]); })
+      .catch((error: unknown) => {
+        if (session.current !== sessionId) return;
+        // The question goes back in the box, so trying again is one press.
+        setThread((was) => was.slice(0, -1));
+        setDraft((now) => now || question);
+        setAskError(hudError(error, 'Eavesy couldn’t answer that. Try again?'));
+      })
+      .finally(() => { if (session.current === sessionId) setAsking(false); });
+  };
+
+  const tabs: [MeetingTab, string][] = [['transcript', 'Transcript'], ['overview', 'Overview'], ['ask', 'Ask']];
+  return (
+    <>
+      <div className="ctl-tabs" role="tablist" aria-label="Meeting">
+        {tabs.map(([id, label]) => <button key={id} type="button" role="tab" aria-selected={tab === id} className="ctl-tab" onClick={() => setTab(id)}>{label}</button>)}
+      </div>
+      <div className="ctl-pane" role="tabpanel">
+        {tab === 'transcript' && <MeetingTranscript rows={rows} startedAtMs={startedAtMs} empty={empty} />}
+        {tab === 'overview' && (overview && (overview.tldr || overview.decisions.length || overview.actionItems.length || overview.openQuestions.length)
+          ? <div className="ctl-meeting ctl-overview" tabIndex={0}>
+              {overview.tldr && <p>{overview.tldr}</p>}
+              {overview.decisions.length > 0 && <><h3>Decisions</h3><ul>{overview.decisions.map((item, i) => <li key={i}>{item.text}</li>)}</ul></>}
+              {overview.actionItems.length > 0 && <><h3>Action items</h3><ul>{overview.actionItems.map((item, i) => <li key={i}>{item.owner ? <b>{item.owner}: </b> : null}{item.text}{item.due ? ` (${item.due})` : ''}</li>)}</ul></>}
+              {overview.openQuestions.length > 0 && <><h3>Open questions</h3><ul>{overview.openQuestions.map((item, i) => <li key={i}>{item.text}</li>)}</ul></>}
+            </div>
+          : <p className="ctl-meeting-empty" role="status">{overviewError ?? (overviewLoaded ? 'The first notes are written a few minutes into the meeting, then kept up to date as it goes.' : 'Reading the notes…')}</p>)}
+        {tab === 'ask' && (thread.length || asking || askError
+          ? <div ref={answers} className="ctl-meeting ctl-asks" role="log" aria-label="Questions and answers" tabIndex={0}>
+              {thread.map((turn, i) => <p key={i} className="ctl-ask" data-role={turn.role}>{turn.content}</p>)}
+              {asking && <p className="ctl-ask ctl-quiet" data-role="assistant" role="status">Looking through the meeting<span className="ctl-dots" aria-hidden><i /><i /><i /></span></p>}
+              {askError && <p className="ctl-ask ctl-warn" role="alert">{askError}</p>}
+            </div>
+          : <p className="ctl-meeting-empty">Type a question about this meeting, such as “What did they say about pricing?” or “What have I agreed to do?”. It is answered from everything said so far.</p>)}
+      </div>
+      <form className="ctl-askbar" onSubmit={(event) => { event.preventDefault(); ask(); }}>
+        <input ref={input} type="text" value={draft} maxLength={2000} disabled={!sessionId} placeholder="Ask about this meeting…" aria-label="Ask about this meeting" autoComplete="off" spellCheck
+          onChange={(event) => setDraft(event.target.value)}
+          onFocus={() => { if (sessionId && tauri()) void invoke('focus_preview_editor', { sessionId }).catch(() => {}); }}
+          onBlur={() => { window.setTimeout(() => { if (document.hasFocus() && document.activeElement !== input.current) releaseKeys(); }, 0); }}
+          onKeyDown={(event) => { if (event.key === 'Escape') { event.stopPropagation(); input.current?.blur(); } }} />
+        <button type="submit" className="ctl-btn ctl-icon ctl-send" disabled={!draft.trim() || asking || !sessionId} aria-label="Ask" title="Ask (return)"><ArrowUp className="h-3.5 w-3.5" /></button>
+      </form>
+    </>
+  );
+}
+
+/** "4:05" into the recording, or "1:02:07" past the hour. */
+function stamp(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const rest = `${String(Math.floor((total % 3600) / 60)).padStart(hours ? 2 : 1, '0')}:${String(total % 60).padStart(2, '0')}`;
+  return hours ? `${hours}:${rest}` : rest;
+}
+
+/** One speaker's run of lines, so the transcript reads as turns rather than fragments. */
+function turnsFrom(rows: LiveRow[]): { label: string | null; startMs: number; text: string; provisional: boolean }[] {
+  const turns: { label: string | null; startMs: number; text: string; provisional: boolean }[] = [];
+  for (const row of rows) {
+    const text = row.text.trim();
+    if (!text) continue;
+    const last = turns[turns.length - 1];
+    // A long turn breaks every minute, so there is always a time to scroll back to.
+    if (last && last.label === row.label && row.startMs - last.startMs < 60_000) {
+      last.text += ` ${text}`;
+      last.provisional = row.provisional;
+    } else turns.push({ label: row.label, startMs: row.startMs, text, provisional: row.provisional });
+  }
+  return turns;
+}
+
+/**
+ * Everything said so far in a meeting, to read and scroll back through. It
+ * follows the newest words until you scroll up, then stays where you are.
+ */
+function MeetingTranscript({ rows, startedAtMs, empty }: { rows: LiveRow[]; startedAtMs: number | null; empty: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [following, setFollowing] = useState(true);
+  const turns = useMemo(() => turnsFrom(rows), [rows]);
+  useLayoutEffect(() => {
+    if (following && box.current) box.current.scrollTop = box.current.scrollHeight;
+  }, [turns, following]);
+  const latest = () => { setFollowing(true); if (box.current) box.current.scrollTop = box.current.scrollHeight; };
+  if (!turns.length) return <p className="ctl-meeting-empty" role="status">{empty}</p>;
+  return (
+    <>
+      <div ref={box} className="ctl-meeting" role="log" aria-label="Meeting transcript" tabIndex={0}
+        onScroll={(event) => { const el = event.currentTarget; setFollowing(el.scrollHeight - el.scrollTop - el.clientHeight < 24); }}>
+        {turns.map((turn, index) => (
+          <p key={`${turn.startMs}:${turn.label ?? ''}:${index}`} className="ctl-turn" data-who={turn.label === 'You' ? 'you' : turn.label ? 'others' : undefined} data-live={turn.provisional || undefined}>
+            <span className="ctl-turn-head"><b>{turn.label ?? 'Speaker'}</b><time title={startedAtMs ? new Date(startedAtMs + turn.startMs).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : undefined}>{stamp(turn.startMs)}</time></span>
+            {turn.text}
+          </p>
+        ))}
+      </div>
+      {!following && <button type="button" className="ctl-btn ctl-latest" onClick={latest}><ArrowDown className="h-3 w-3" />Latest</button>}
+    </>
   );
 }
 

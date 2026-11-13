@@ -40,7 +40,7 @@ function mockResend(reply: (call: Call) => Response | Promise<Response>) {
   return calls;
 }
 
-function setup(opts: { recaps?: boolean; transcript?: boolean; email?: string | null; anonymous?: boolean } = {}) {
+function setup(opts: { recaps?: boolean; transcript?: boolean; email?: string | null; anonymous?: boolean; openQuestions?: string } = {}) {
   const t = createFakeEnv();
   const now = Date.now();
   t.sqlite.run(
@@ -53,9 +53,9 @@ function setup(opts: { recaps?: boolean; transcript?: boolean; email?: string | 
     [now, now, now],
   );
   t.sqlite.run(
-    `INSERT INTO summaries (id, meeting_id, tldr, decisions_json, action_items_json, generated_by_model, generated_at)
-     VALUES ('s1', 'm1', 'Ship Friday & tell support.', '[{"text":"Ship Friday"}]', '[{"text":"Write notes","owner":"Maya","due":"Thu","completed":false}]', 'test', ?)`,
-    [now],
+    `INSERT INTO summaries (id, meeting_id, tldr, decisions_json, action_items_json, open_questions_json, generated_by_model, generated_at)
+     VALUES ('s1', 'm1', 'Ship Friday & tell support.', '[{"text":"Ship Friday"}]', '[{"text":"Write notes","owner":"Maya","due":"Thu","completed":false}]', ?, 'test', ?)`,
+    [opts.openQuestions ?? '[{"text":"Who tells <support>?"}]', now],
   );
   t.sqlite.run(`INSERT INTO transcript_segments (id, meeting_id, start_ms, end_ms, speaker_id, text) VALUES ('l1', 'm1', 65000, 66000, 'speaker_1', 'We ship Friday.')`);
   const env = Object.assign(t.env, {
@@ -95,14 +95,23 @@ describe('recap content', () => {
       tldr: 'Ship & tell',
       decisions: [{ text: 'Use "Resend"' }],
       actionItems: [{ text: 'Notes', owner: 'Maya', due: 'Thu', completed: false }],
+      openQuestions: [{ text: 'Who owns <billing>?' }],
       link: 'https://app.example.com/app/meetings/m1',
     });
+    expect(recap.text).toContain('Open questions\n- Who owns <billing>?');
+    expect(recap.html).toContain('Who owns &lt;billing&gt;?');
     expect(recap.subject).toBe('Recap: Q3 <script>');
     expect(recap.html).not.toContain('<script>');
     expect(recap.html).toContain('Q3 &lt;script&gt;');
     expect(recap.html).toContain('Use &quot;Resend&quot;');
     expect(recap.text).toContain('- Notes (Maya, due Thu)');
     expect(recap.text).toContain('Transcript: https://app.example.com/app/meetings/m1');
+  });
+
+  test('leaves out the open questions heading when the meeting left none', () => {
+    const recap = renderRecap({ title: 'Standup', startedAt: null, tldr: 'Fine.', decisions: [], actionItems: [], openQuestions: [], link: 'https://app.example.com/app/meetings/m2' });
+    expect(recap.text).not.toContain('Open questions');
+    expect(recap.html).not.toContain('Open questions');
   });
 
   test('accepts only plain addresses', () => {
@@ -166,6 +175,8 @@ describe('sending', () => {
     expect(call.body.to).toEqual(['owner@example.com']);
     expect(call.body.subject).toBe('Recap: Launch <sync>');
     expect(String(call.body.html)).toContain('https://app.example.com/app/meetings/m1');
+    expect(String(call.body.text)).toContain('Open questions\n- Who tells <support>?');
+    expect(String(call.body.html)).toContain('Who tells &lt;support&gt;?');
     const [row] = t.rows();
     expect(call.headers['idempotency-key']).toBe(String(row.id));
     expect(call.body.tags).toContainEqual({ name: 'eavesy_delivery', value: row.id });
@@ -179,6 +190,18 @@ describe('sending', () => {
       idempotency_key: 'meeting_recap:m1:owner@example.com',
       attempts: 1,
     });
+  });
+
+  test('open questions stored in a shape it cannot read never stop the recap', async () => {
+    for (const stored of ['[null, 7, {"text":""}, {"q":"x"}, {"text":"  Still open?  "}]', '{"text":"not a list"}', 'not json']) {
+      const t = setup({ openQuestions: stored });
+      const calls = mockResend(() => Response.json({ id: 're_1' }));
+      expect(await sendRecap(t.db, t.env, 'm1')).toBe('recapped');
+      expect(calls).toHaveLength(1);
+      const text = String(calls[0].body.text);
+      if (stored.startsWith('[')) expect(text).toContain('Open questions\n- Still open?\n');
+      else expect(text).not.toContain('Open questions');
+    }
   });
 
   test('leaves the transcript out unless asked', async () => {
