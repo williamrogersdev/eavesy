@@ -7,7 +7,7 @@ pub fn show(app: &AppHandle) -> Result<(), String> {
 
 /// The sections Settings knows (`SETTINGS_SECTIONS` in web/src/lib/desktop/bridge.ts).
 const SECTIONS: &[&str] = &[
-    "capture", "dictation", "transcription", "dictionary", "shortcuts", "prompts", "projects", "assistant", "machine",
+    "capture", "pill", "dictation", "transcription", "dictionary", "shortcuts", "prompts", "projects", "assistant", "machine",
     "permissions", "account",
 ];
 

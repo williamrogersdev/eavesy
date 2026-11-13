@@ -228,3 +228,54 @@
   .ev-capture-default, .ev-meeting-plan { flex-wrap: wrap; }
   .ev-capture-default .ev-field-input.ev-notetaker-name { width: 100%; }
 }
+
+/* Settings → Pill. A sample of the control over a desk-like backdrop, so the
+   colour and how see-through it is can be judged before looking up at the
+   real one. The colours repeat `.eavesy-control[data-tint]` in the HUD's
+   styles (desktop/launcher-ui/src/styles.css): keep the two in step. */
+.ev-pill-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 92px;
+  margin-bottom: 4px;
+  border-radius: var(--ev-r-pop);
+  background:
+    repeating-linear-gradient(90deg, rgb(33 28 26 / 0.07) 0 1px, transparent 1px 28px),
+    linear-gradient(160deg, #e9e4dc, #cfd6dd);
+  box-shadow: inset 0 0 0 1px var(--ev-line);
+}
+.ev-pill-sample, .ev-pill-swatch { --pill-bg: 34 32 30; --pill-ink: 247 241 232; }
+:is(.ev-pill-sample, .ev-pill-swatch)[data-tint='ink'] { --pill-bg: 22 30 52; }
+:is(.ev-pill-sample, .ev-pill-swatch)[data-tint='forest'] { --pill-bg: 22 44 36; }
+:is(.ev-pill-sample, .ev-pill-swatch)[data-tint='plum'] { --pill-bg: 48 28 50; }
+:is(.ev-pill-sample, .ev-pill-swatch)[data-tint='slate'] { --pill-bg: 52 58 66; }
+:is(.ev-pill-sample, .ev-pill-swatch)[data-tint='paper'] { --pill-bg: 250 246 239; --pill-ink: 33 28 26; }
+.ev-pill-sample {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 36px;
+  padding: 0 6px 0 13px;
+  border-radius: 18px;
+  background: rgb(var(--pill-bg) / var(--pill-alpha, 0.64));
+  box-shadow: inset 0 0 0 1px rgb(var(--pill-ink) / 0.16), var(--ev-e-2);
+  color: rgb(var(--pill-ink));
+  font: 600 12.5px/1 var(--ev-font-round);
+  font-variant-numeric: tabular-nums;
+}
+.ev-pill-sample > i { width: 7px; height: 7px; border-radius: 50%; background: var(--ev-rec); }
+.ev-pill-sample > b { font-weight: 600; }
+.ev-pill-sample > em { width: 44px; height: 2px; border-radius: 1px; background: rgb(var(--pill-ink) / 0.35); }
+.ev-pill-sample > span { display: inline-flex; align-items: center; height: 26px; padding: 0 11px; border-radius: 13px; background: var(--ev-rec); color: #fff; }
+.ev-pill-swatches { display: flex; gap: 6px; }
+.ev-pill-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgb(var(--pill-bg));
+  box-shadow: inset 0 0 0 1px var(--ev-line-strong);
+  transition: box-shadow var(--ev-d-state) var(--ev-ease-out);
+}
+.ev-pill-swatch[aria-checked='true'] { box-shadow: inset 0 0 0 1px var(--ev-line-strong), 0 0 0 2px var(--ev-paper), 0 0 0 4px var(--ev-coat); }
+.ev-pill-swatch:disabled { opacity: 0.5; }
