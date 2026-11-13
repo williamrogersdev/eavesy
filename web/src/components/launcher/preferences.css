@@ -246,7 +246,7 @@
   box-shadow: inset 0 0 0 1px var(--ev-line);
 }
 .ev-pill-sample, .ev-pill-swatch { --pill-bg: 255 254 250; --pill-ink: 22 33 63; }
-:is(.ev-pill-sample, .ev-pill-swatch):not([data-tint='auto'], [data-tint='paper']) { --pill-bg: 34 32 30; --pill-ink: 247 241 232; }
+:is(.ev-pill-sample, .ev-pill-swatch)[data-tint]:not([data-tint='auto'], [data-tint='paper']) { --pill-bg: 34 32 30; --pill-ink: 247 241 232; }
 @media (prefers-color-scheme: dark) {
   :is(.ev-pill-sample, .ev-pill-swatch)[data-tint='auto'] { --pill-bg: 30 40 72; --pill-ink: 238 240 247; }
 }

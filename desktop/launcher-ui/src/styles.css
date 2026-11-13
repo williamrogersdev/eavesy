@@ -215,7 +215,7 @@ body {
 .eavesy-control[data-tint="slate"] { --ctl-bg: 52 58 66; }
 /* No colour chosen: navy after hours. */
 @media (prefers-color-scheme: dark) {
-  .eavesy-control:not([data-tint]) {
+  .eavesy-control:is(:not([data-tint]), [data-tint="auto"]) {
     --ctl-bg: 30 40 72;
     --ctl-fg: 238 240 247;
     --ctl-on-ink: #16213f;
