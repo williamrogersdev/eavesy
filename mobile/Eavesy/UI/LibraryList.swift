@@ -8,8 +8,8 @@ struct Detail: Hashable {
 }
 
 /// Everything kept, from every device, grouped by day. The date groups are
-/// the structure: there is no title, and rows sit on the paper like lines in
-/// a case file rather than in boxes of their own.
+/// the structure: there is no title, and rows sit on the paper like lines on
+/// a page rather than in boxes of their own.
 struct LibraryList: View {
     @Environment(AppModel.self) private var model
     let filter: EvKind?

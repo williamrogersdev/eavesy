@@ -2,54 +2,60 @@ import SwiftUI
 import UIKit
 
 /// The `--ev-*` tokens from `web/src/components/launcher/ui/tokens.css`, for
-/// SwiftUI. The standard is `desktop/DESIGN.md`: cream paper, charcoal ink,
-/// and coral only while something is recording.
+/// SwiftUI. The standard is `desktop/DESIGN.md`: warm paper, navy ink, marigold
+/// fills, and coral only while something is recording.
 enum Ev {
     // surfaces
-    static let paper = dyn(0xFBF7F0, 0x1C1B1A)
-    static let well = dyn(0xF2EBDF, 0x232220)
-    static let raised = dyn(0xFFFDF8, 0x282725)
-    static let line = dyn(0xE6DDCF, 0x353331)
-    static let lineStrong = dyn(0xD3C7B6, 0x46433F)
+    static let paper = dyn(0xFBF8F1, 0x111830)
+    static let well = dyn(0xF1EDE2, 0x18203C)
+    static let raised = dyn(0xFFFEFA, 0x1E2848)
+    static let line = dyn(0xE4DFD2, 0x2C3759)
+    static let lineStrong = dyn(0xD0C9B8, 0x3D4A73)
     // ink
-    static let ink = dyn(0x211C1A, 0xF2EFEA)
-    static let ink2 = dyn(0x5F5751, 0xAEA9A2)
-    static let ink3 = dyn(0x968D85, 0x7C7771)
-    // brand
-    static let coat = dyn(0x2B2523, 0xF2EFEA)
-    static let coatSoft = dyn(0xECE6DF, 0x302E2C)
-    static let onCoat = dyn(0xFBF7F0, 0x1C1B1A)
+    static let ink = dyn(0x16213F, 0xEEF0F7)
+    static let ink2 = dyn(0x505A75, 0xA7AECB)
+    static let ink3 = dyn(0x666D85, 0x8A93B3)
+    // brand: marigold is for fills with navy content on them, never for text
+    // or small marks. The coat (navy by day, paper white at night) carries
+    // text, links, focus and small state marks.
+    static let brand = dyn(0xF2B233, 0xF5C04E)
+    static let brandSoft = dyn(0xFBEBC4, 0x40371A)
+    static let onBrand = dyn(0x16213F, 0x16213F)
+    static let coat = dyn(0x16213F, 0xEEF0F7)
+    static let coatSoft = dyn(0xE9E5D8, 0x263058)
+    static let onCoat = dyn(0xFBF8F1, 0x111830)
     static let manila = dyn(0xE2B866, 0xF0C879)
-    static let manilaSoft = dyn(0xF6E8CC, 0x3A2F1C)
+    static let manilaSoft = dyn(0xF6E8CC, 0x3A3320)
     static let manilaInk = dyn(0x6E4A12, 0xF5D9A0)
-    static let mascotBody = dyn(0x2B2523, 0x3B3836)
-    static let mascotBand = dyn(0x4A403C, 0x57524E)
-    static let mascotEye = dyn(0xFBF7F0, 0xF2EFEA)
+    static let mascotBody = dyn(0xF2B233, 0xF5C04E)
+    static let mascotHat = dyn(0x16213F, 0x7186C9)
+    static let mascotBand = dyn(0xFBF8F1, 0xEEF0F7)
+    static let mascotEye = dyn(0x16213F, 0x16213F)
     // meaning
     /// The coral light. Recording only.
     static let rec = dyn(0xFF5A3C, 0xFF6A4D)
-    static let recSoft = dyn(0xFFE3DA, 0x3A1D16)
-    static let leaf = dyn(0x2F8A5B, 0x6FCF97)
-    static let leafSoft = dyn(0xDDF1E5, 0x1F3328)
+    static let recSoft = dyn(0xFFE3DA, 0x3D2030)
+    static let leaf = dyn(0x267A4F, 0x6FCF97)
+    static let leafSoft = dyn(0xDDF1E5, 0x173A2C)
     static let warnInk = dyn(0x9A5B00, 0xFFC870)
-    static let warnSoft = dyn(0xFFF0D6, 0x3A2C17)
+    static let warnSoft = dyn(0xFFF0D6, 0x432F1C)
     // kinds
     static let voice = dyn(0x2A5CB8, 0x86AEF5)
-    static let voiceSoft = dyn(0xE3EBFA, 0x1F2A40)
+    static let voiceSoft = dyn(0xE3EBFA, 0x1C2C52)
     static let meeting = dyn(0x7A4BB5, 0xBC9AF0)
-    static let meetingSoft = dyn(0xECE4F7, 0x2D2440)
+    static let meetingSoft = dyn(0xECE4F7, 0x2D2752)
     static let screen = dyn(0x0A6772, 0x5FC7D2)
-    static let screenSoft = dyn(0xDCF0F1, 0x173236)
-    static let note = dyn(0x85580C, 0xF0C879)
-    static let noteSoft = dyn(0xF6E8CC, 0x3A2F1C)
+    static let screenSoft = dyn(0xDCF0F1, 0x15344A)
+    static let note = dyn(0x7A4A2A, 0xD9A37C)
+    static let noteSoft = dyn(0xF1E2D6, 0x3A2C30)
 
-    // the live card: the same charcoal in both modes, as on the Mac
+    // the live card: the same dark card in both modes, as on the Mac
     static let hud = Color(UIColor(hex: 0x161312))
     static let hudInk = Color(UIColor(hex: 0xF6EFE4))
     static let hudInk2 = Color(UIColor(hex: 0xF6EFE4)).opacity(0.62)
     static let hudLine = Color(red: 1, green: 0.94, blue: 0.86).opacity(0.14)
-    /// Shadows are charcoal-tinted, never neutral grey.
-    static let shade = Color(UIColor { UIColor(hex: 0x211C1A).withAlphaComponent($0.userInterfaceStyle == .dark ? 0.6 : 0.3) })
+    /// Shadows are navy-tinted, never neutral grey.
+    static let shade = Color(UIColor { UIColor(hex: 0x16213F).withAlphaComponent($0.userInterfaceStyle == .dark ? 0.6 : 0.3) })
 
     // radii: they grow with the container
     static let rCtl: CGFloat = 12
