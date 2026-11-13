@@ -215,7 +215,7 @@ export function TranscriptPlayer({
             <button
               type="button"
               onClick={() => (playing ? audio.current?.pause() : void audio.current?.play())}
-              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ev-coat text-ev-on-coat shadow-[var(--ev-e-2)] transition hover:bg-ev-coat-hover active:scale-95"
+              className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-ev-brand text-ev-on-brand shadow-[var(--ev-e-2)] transition hover:bg-ev-brand-hover active:scale-95"
               aria-label={playing ? 'Pause' : 'Play'}
             >
               {playing ? <Pause className="h-4 w-4" /> : <Play className="ml-0.5 h-4 w-4" />}

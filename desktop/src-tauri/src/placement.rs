@@ -85,7 +85,7 @@ pub fn place(app: &AppHandle) {
     let main = app.get_webview_window("main");
     let hud = app.get_webview_window("hud");
     let size = main.as_ref().and_then(|w| w.outer_size().ok()).unwrap_or(PhysicalSize::new((420.0*scale) as u32,(440.0*scale) as u32));
-    let pill = hud.as_ref().and_then(|w| w.outer_size().ok()).unwrap_or(PhysicalSize::new((272.0*scale) as u32,(40.0*scale) as u32));
+    let pill = hud.as_ref().and_then(|w| w.outer_size().ok()).unwrap_or(PhysicalSize::new((300.0*scale) as u32,(40.0*scale) as u32));
     let (launcher_position, hud_position) = companion_positions(area.position, area.size, size, pill, scale, settings::load(app).launcher_position);
     if let Some(window) = main { let _ = window.set_position(launcher_position); }
     if let Some(window) = hud { let _ = window.set_position(hud_position); }

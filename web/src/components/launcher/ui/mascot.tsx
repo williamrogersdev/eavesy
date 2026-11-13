@@ -1,7 +1,7 @@
 import { useId, type CSSProperties } from 'react';
 
 /**
- * Eavesy: the Little Snoop, a charcoal bean in a fedora. The hat lifts off
+ * Eavesy's mascot: a marigold bean in a navy hat. The hat lifts off
  * its brow only while the mic is live, and the coral lens appears only while
  * recording. That makes the character the privacy indicator, so never fake
  * `listening` or `recording`. The static brand mark (app icon, favicon, OG
@@ -35,18 +35,19 @@ export type MascotProps = {
 const CROWN = 'M13.5 27C13.8 16.5 19.5 8.5 26.5 8.5Q32 11.5 37.5 8.5C44.5 8.5 50.2 16.5 50.5 27Z';
 
 const CSS = `
-.evm{--evm-body:var(--ev-mascot-body,#2B2523);--evm-band:var(--ev-mascot-band,#4A403C);--evm-eye:var(--ev-mascot-eye,#FBF7F0);--evm-rec:var(--ev-rec,#FF5A3C);--evm-smoke:var(--ev-ink-3,#968D85);overflow:visible;display:inline-block;vertical-align:middle;flex:none}
+.evm{--evm-body:var(--ev-mascot-body,#F2B233);--evm-hat:var(--ev-mascot-hat,#16213F);--evm-band:var(--ev-mascot-band,#FBF8F1);--evm-eye:var(--ev-mascot-eye,#16213F);--evm-rec:var(--ev-rec,#FF5A3C);--evm-smoke:var(--ev-ink-3,#968D85);overflow:visible;display:inline-block;vertical-align:middle;flex:none}
 .evm *{transform-box:fill-box}
 .evm-body{fill:var(--evm-body)}
+.evm-hatfill{fill:var(--evm-hat)}
 .evm-band{fill:var(--evm-band)}
-.evm-ground{fill:var(--evm-body);opacity:.12}
+.evm-ground{fill:var(--evm-hat);opacity:.12}
 .evm-eye{fill:var(--evm-eye)}
 .evm-stroke{stroke:var(--evm-eye);fill:none;stroke-linecap:round;stroke-linejoin:round}
-.evm-handle{stroke:var(--evm-band);stroke-linecap:round}
+.evm-handle{stroke:var(--evm-hat);stroke-linecap:round}
 .evm-glass{fill:var(--evm-rec)}
 .evm-glint{fill:#FFFFFF;opacity:.7}
-.evm-rec{fill:var(--evm-rec);stroke:var(--ev-paper,#FBF7F0);stroke-width:1.6}
-.evm-mono .evm-body,.evm-mono .evm-eye{fill:currentColor}
+.evm-rec{fill:var(--evm-rec);stroke:var(--ev-paper,#FBF8F1);stroke-width:1.6}
+.evm-mono .evm-body,.evm-mono .evm-hatfill,.evm-mono .evm-eye{fill:currentColor}
 .evm-mono .evm-stroke{stroke:currentColor}
 
 .evm-figure{transform-origin:50% 100%;transition:transform 260ms cubic-bezier(.2,.8,.2,1)}
@@ -133,8 +134,8 @@ export function Mascot({
             </g>
 
             <g className="evm-hat" style={{ transform: `translateY(${-lift}px) rotate(${tilt}deg)` }}>
-              <ellipse className="evm-body" cx="32" cy="27" rx="30" ry={mini ? 5.6 : 5} />
-              <path className="evm-body" d={CROWN} />
+              <ellipse className="evm-hatfill" cx="32" cy="27" rx="30" ry={mini ? 5.6 : 5} />
+              <path className="evm-hatfill" d={CROWN} />
               {!mini && (
                 <>
                   <clipPath id={clipId}><path d={CROWN} /></clipPath>
@@ -146,7 +147,7 @@ export function Mascot({
             {recording && !mini && (
               <g>
                 <line className="evm-handle" x1="53" y1="56" x2="59" y2="63" strokeWidth="3.4" />
-                <circle className="evm-body" cx="49.5" cy="51.5" r="7.6" />
+                <circle className="evm-hatfill" cx="49.5" cy="51.5" r="7.6" />
                 <circle className="evm-glass" cx="49.5" cy="51.5" r="5" />
                 <circle className="evm-glint" cx="47.8" cy="49.8" r="1.3" />
               </g>

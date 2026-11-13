@@ -11,6 +11,28 @@ type Handler = (e: { payload: unknown }) => void;
 
 const HOUR = 3_600_000;
 
+function sampleClips(now: number) {
+  const clip = (id: number, kind: string, text: string, source: string, hoursAgo: number, times = 1, title = text.split('\n').find((line) => line.trim())?.trim() ?? text) => ({
+    id, kind, title, text, source, firstMs: now - (hoursAgo + 1) * HOUR, lastMs: now - hoursAgo * HOUR, times,
+    width: kind === 'image' ? 480 : 0, height: kind === 'image' ? 300 : 0, chars: text.length, words: text.split(/\s+/).filter(Boolean).length, bytes: kind === 'image' ? 184_320 : text.length,
+    image: kind === 'image' ? '/mock/clip.png' : null,
+  });
+  return [
+    clip(1, 'text', 'Open the change in the browser preview, click through it, and take a screenshot of each state, including the empty and error ones.\n\nFix anything that looks off before saying it is done.', 'Claude', 0.05, 2),
+    clip(2, 'link', 'https://eavesy.com/docs/shortcuts', 'Safari', 0.4),
+    clip(3, 'text', 'bun run build && bunx tsc --noEmit', 'Ghostty', 1.2, 4),
+    clip(4, 'image', '', 'Figma', 2, 1, 'Image · 480 × 300'),
+    clip(5, 'text', 'export function pasteLabel(target: string | null): string {\n  return target ? `Paste to ${target}` : \'Paste\';\n}', 'Cursor', 3.5),
+    clip(6, 'file', '/Users/robin/Downloads/Q4 plan.pdf', 'Finder', 5, 1, 'Q4 plan.pdf'),
+    clip(7, 'text', 'Thanks, that works. Thursday at 10 is good for me.', 'Mail', 26),
+    clip(8, 'link', 'https://github.com/tauri-apps/tauri/releases', 'Arc', 29),
+    clip(9, 'text', 'robin@example.com', 'Notes', 31, 6),
+    clip(10, 'text', '4f2a9c1', 'Ghostty', 52),
+    clip(11, 'text', 'The capture panel ships first and the HUD restyle follows.', 'Linear', 75),
+    clip(12, 'text', 'SELECT id, title FROM clips ORDER BY last_ms DESC LIMIT 50;', 'TablePlus', 99),
+  ];
+}
+
 function sampleRecordings(now: number) {
   const day = 24 * HOUR;
   return [
@@ -40,12 +62,18 @@ export function installDevMock(): void {
       transcript: `Capture ${i}. ${'Synthetic meeting words. '.repeat(200)} ${i === 55 ? 'hidden-search-needle' : 'full-transcript-tail'}`,
     })));
   }
+  if (window.location.pathname.endsWith('clipboard.html') && !params.has('empty')) {
+    // The clipboard panel's grid wants more than one screenshot.
+    recordings.push(...Array.from({ length: 10 }, (_, i) => ({ id: `shot-${i}`, title: 'Screenshot', started_at_ms: now - (2 + i * 7) * HOUR, duration_sec: 0, source: 'screenshot', status: 'complete', has_audio: false })));
+  }
+  const clips = params.has('empty') ? [] : sampleClips(now);
   let copiedText = '';
   const live = params.has('live');
   const settings = {
-    toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', assistant_hotkey: 'Alt+Space', screen_hotkey: 'Alt+Shift+R', control_hotkey: 'Alt+Shift+H', device_id: 'dev', setup_completed: true,
+    toggle_hotkey: 'Cmd+Shift+Space', dictation_hotkey: 'Fn', assistant_hotkey: 'Alt+Space', screen_hotkey: 'Alt+Shift+R', control_hotkey: 'Alt+Shift+H', clipboard_hotkey: 'Alt+Shift+V', screenshots_hotkey: 'Alt+Shift+S', clipboard_history: !params.has('clipboard-off'), device_id: 'dev', setup_completed: true,
     recordings_root: '~/Eavesy/Recordings', launcher_position: 'top_center', live_captions: true, add_screenshots: true,
     hud_preview_lines: params.has('lines') ? Number(params.get('lines')) : undefined, hud_translucent: params.has('solid') ? false : undefined,
+    hud_tint: undefined as string | undefined, hud_opacity: undefined as number | undefined, hud_hidden: false, hud_quiet: false,
     fast_live_words: undefined as unknown, hud_result_preview: params.has('receipt') ? false : undefined as boolean | undefined,
   };
   let preferencesLoadFailures = params.has('settings-offline') ? 2 : 0;
@@ -108,9 +136,29 @@ export function installDevMock(): void {
       Object.assign(settings, { hud_preview_lines: lines, hud_translucent: translucent });
       if (fastLiveWords !== undefined) settings.fast_live_words = fastLiveWords;
       if (resultPreview !== undefined) settings.hud_result_preview = Boolean(resultPreview);
-      emit('hud:look', { lines, translucent, preview: settings.hud_result_preview ?? false });
+      emit('hud:look', { lines, translucent, preview: settings.hud_result_preview ?? false, tint: settings.hud_tint, opacity: settings.hud_opacity });
     },
+    set_hud_style: ({ tint, opacity }: Record<string, unknown>) => {
+      if (tint !== undefined) settings.hud_tint = String(tint);
+      if (opacity !== undefined) settings.hud_opacity = Number(opacity);
+      emit('hud:look', { lines: settings.hud_preview_lines ?? 0, preview: settings.hud_result_preview ?? false, tint: settings.hud_tint, opacity: settings.hud_opacity });
+    },
+    set_hud_visibility: ({ show }: Record<string, unknown>) => {
+      Object.assign(settings, { hud_hidden: show !== 'always', hud_quiet: show === 'never' });
+    },
+    hud_options: () => null,
     copy_text: ({ text }: Record<string, unknown>) => { copiedText = String(text); },
+    clipboard_list: ({ query = '' }: Record<string, unknown>) => {
+      const words = String(query).toLowerCase().trim().split(/\s+/).filter(Boolean);
+      const items = clips.filter((clip) => words.every((word) => `${clip.title} ${clip.text}`.toLowerCase().includes(word)));
+      return { items: items.map(({ id, kind, title, lastMs }) => ({ id, kind, title, lastMs })), total: items.length };
+    },
+    clipboard_item: ({ id }: Record<string, unknown>) => clips.find((clip) => clip.id === id) ?? null,
+    clipboard_delete: ({ id }: Record<string, unknown>) => { const at = clips.findIndex((clip) => clip.id === id); if (at >= 0) clips.splice(at, 1); },
+    clipboard_clear: () => { clips.length = 0; },
+    clipboard_use: ({ id, paste }: Record<string, unknown>) => { copiedText = clips.find((clip) => clip.id === id)?.text ?? ''; return paste ? 'pasted' : 'copied'; },
+    clipboard_use_capture: ({ paste }: Record<string, unknown>) => paste ? 'pasted' : 'copied',
+    set_clipboard_history: ({ enabled }: Record<string, unknown>) => { settings.clipboard_history = Boolean(enabled); },
     sync_status: { signedOut: false },
     check_permissions: { mic: true, micAsked: true, screen: !params.has('perms-missing'), accessibility: true, speech: true, inputMonitoring: true, notifications: !params.has('perms-missing') },
     get_hud_state: live
@@ -242,10 +290,10 @@ function installSetupMock(results: Record<string, unknown>): void {
   });
 }
 
-type Bindings = { toggle_hotkey: string; dictation_hotkey: string; assistant_hotkey: string; screen_hotkey: string; control_hotkey: string };
-type Action = 'toggle' | 'dictation' | 'assistant' | 'screen' | 'control';
-const ACTIONS: Action[] = ['toggle', 'dictation', 'assistant', 'screen', 'control'];
-const DEFAULTS: Record<Action, string> = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Space', screen: 'Alt+Shift+R', control: 'Alt+Shift+H' };
+type Bindings = { toggle_hotkey: string; dictation_hotkey: string; assistant_hotkey: string; screen_hotkey: string; control_hotkey: string; clipboard_hotkey: string; screenshots_hotkey: string };
+type Action = 'toggle' | 'dictation' | 'assistant' | 'screen' | 'control' | 'clipboard' | 'screenshots';
+const ACTIONS: Action[] = ['toggle', 'dictation', 'assistant', 'screen', 'control', 'clipboard', 'screenshots'];
+const DEFAULTS: Record<Action, string> = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Space', screen: 'Alt+Shift+R', control: 'Alt+Shift+H', clipboard: 'Alt+Shift+V', screenshots: 'Alt+Shift+S' };
 const COMMON: Record<string, string> = { C: 'Copy', V: 'Paste', X: 'Cut', A: 'Select All', Z: 'Undo', S: 'Save', Q: 'Quit', W: 'Close' };
 
 /** A rough stand-in for hotkeys.rs + shortcut_conflicts.rs, enough to see every Settings state. */
@@ -287,6 +335,8 @@ function mockHotkeys(settings: Bindings, fnReady: boolean): Record<string, (args
       settings.assistant_hotkey = DEFAULTS.assistant;
       settings.screen_hotkey = DEFAULTS.screen;
       settings.control_hotkey = DEFAULTS.control;
+      settings.clipboard_hotkey = DEFAULTS.clipboard;
+      settings.screenshots_hotkey = DEFAULTS.screenshots;
       return Promise.resolve(null);
     },
     get_hotkey_defaults: () => Promise.resolve(DEFAULTS),

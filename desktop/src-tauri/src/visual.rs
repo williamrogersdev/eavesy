@@ -191,7 +191,7 @@ pub async fn copy_capture_media(app: AppHandle, id: String) -> Result<(), String
 }
 
 #[cfg(target_os = "macos")]
-fn copy_file(path: &std::path::Path) -> Result<(), String> {
+pub(crate) fn copy_file(path: &std::path::Path) -> Result<(), String> {
     use tauri_nspanel::{cocoa::{base::{id, nil, BOOL, YES}, foundation::NSString}, objc::{class, msg_send, sel, sel_impl}};
     unsafe {
         let string = NSString::alloc(nil).init_str(&path.to_string_lossy());
@@ -205,7 +205,7 @@ fn copy_file(path: &std::path::Path) -> Result<(), String> {
     }
 }
 #[cfg(not(target_os = "macos"))]
-fn copy_file(_path: &std::path::Path) -> Result<(), String> { Err("Video file copying is available on Mac.".into()) }
+pub(crate) fn copy_file(_path: &std::path::Path) -> Result<(), String> { Err("Video file copying is available on Mac.".into()) }
 
 #[cfg(test)]
 mod tests {

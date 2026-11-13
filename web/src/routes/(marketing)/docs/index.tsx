@@ -73,7 +73,7 @@ function DocsHomePage() {
             <div className="mt-6 flex flex-wrap gap-2">
               <Link
                 href="/docs/installing-the-mac-app"
-                className={`${BUTTON} bg-ev-coat text-ev-on-coat shadow-[var(--ev-e-2)] hover:bg-ev-coat-hover`}
+                className={`${BUTTON} bg-ev-brand text-ev-on-brand shadow-[var(--ev-e-2)] hover:bg-ev-brand-hover`}
               >
                 Install the Mac app
                 <ArrowRight className="h-4 w-4" />
@@ -154,7 +154,7 @@ function DocsHomePage() {
         </section>
       )}
 
-      <section className="mt-14 flex flex-col gap-5 rounded-[28px] bg-ev-coat p-7 text-ev-on-coat sm:flex-row sm:items-center sm:justify-between sm:p-9">
+      <section className="mt-14 flex flex-col gap-5 rounded-[28px] bg-ev-brand p-7 text-ev-on-brand sm:flex-row sm:items-center sm:justify-between sm:p-9">
         <div className="flex items-start gap-4">
           <GithubMark className="mt-1 h-7 w-7 flex-none" />
           <div>
@@ -176,7 +176,7 @@ function DocsHomePage() {
           </a>
           <Link
             href="/docs/open-source"
-            className={`${BUTTON} text-ev-on-coat shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--ev-on-coat)_40%,transparent)] hover:bg-ev-coat-hover`}
+            className={`${BUTTON} text-ev-on-brand shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--ev-on-brand)_40%,transparent)] hover:bg-ev-brand-hover`}
           >
             Self-hosting
           </Link>

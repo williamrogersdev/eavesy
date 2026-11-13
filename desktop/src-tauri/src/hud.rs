@@ -111,6 +111,10 @@ pub fn set_state_if(app: &AppHandle, state: HudState, allowed: impl FnOnce(&HudS
         if !keeps_peek || (peek.is_some() && *peek != state.session_id) {
             *peek = None;
         }
+        // The dictation options belong to the recording they were opened on.
+        if state.phase != Phase::Recording {
+            OPTIONS.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
     }
     // The sound and the red tray glyph mean the mic is live, not that a key
     // was pressed: a recording still starting has no session yet.
@@ -189,18 +193,23 @@ pub fn show_stopping(app: &AppHandle, session_id: &str) {
 /// stands down for the same time (`audio::JUST_STOPPED_FOR`).
 pub(crate) const STOPPING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
-/// The resting pill: Open Eavesy, Talk, Meeting, Screenshot, Video and close, with
+/// The resting pill: Open Eavesy, Talk, Meeting, Screenshot, Video, Clipboard and close, with
 /// bare room left between them to drag it by. Talk's shortcut shows only
 /// when it leaves that room (up to about 42pt, "fn" or "Space"); a longer
 /// one is in the tooltip (`.ctl-home ~ .ctl-talk` in styles.css).
-const DEFAULT_SIZE: (f64, f64) = (272.0, 36.0);
+const DEFAULT_SIZE: (f64, f64) = (300.0, 36.0);
 /// Recording and writing it down: controls above a scrollable transcript.
 const WIDE: (f64, f64) = (400.0, 142.0);
 /// A meeting recording: the controls above everything said so far, to scroll back through.
 const MEETING: (f64, f64) = (400.0, 380.0);
-/// Recording with the live words turned off: just the controls, with room
-/// for how the words are written and whether they are typed live.
-const BAR: (f64, f64) = (400.0, 40.0);
+/// Recording with the live words turned off: the light, the time, the voice
+/// bars, how the words are written, Cancel and Stop. The fixed parts take about
+/// 205pt; the rest is the write chip's, which shortens its own name with an
+/// ellipsis before anything else in the row gives way.
+const BAR: (f64, f64) = (340.0, 40.0);
+/// The controls with the dictation options open under them: the six ways the
+/// words are written, then "Type as I talk". They take the live words' place.
+const OPTIONS_HEIGHT: f64 = 256.0;
 
 /// Recording or writing it down, with `lines` of live words under the controls.
 fn live_size(lines: u8) -> (f64, f64) {
@@ -220,7 +229,7 @@ const SHOT: (f64, f64) = (360.0, 172.0);
 /// The control's size in each phase, and with a finished dictation's drawer
 /// open (`peek`). The window takes it in one step when either changes and
 /// never measures its content.
-pub fn size_for(state: &HudState, lines: u8, peek: bool) -> (f64, f64) {
+pub fn size_for(state: &HudState, lines: u8, peek: bool, options: bool) -> (f64, f64) {
     let video = state.mode.as_deref() == Some("video");
     // Talking to Eavesy always shows your words as you say them, and its answer after.
     let eavesy = state.mode.as_deref() == Some(crate::assistant::voice::MODE);
@@ -233,6 +242,7 @@ pub fn size_for(state: &HudState, lines: u8, peek: bool) -> (f64, f64) {
         Phase::Transcribing if video => DEFAULT_SIZE,
         Phase::Recording if state.mode.as_deref() == Some(MEETING_MODE) => MEETING,
         Phase::Recording | Phase::Transcribing if eavesy => live_size(lines.max(1)),
+        Phase::Recording if options && state.mode.as_deref() == Some("audio") => (live_size(lines).0, OPTIONS_HEIGHT),
         Phase::Recording | Phase::Transcribing => live_size(lines),
         Phase::Failed | Phase::Prompt => WIDE,
         Phase::Done => match state.mode.as_deref() {
@@ -327,7 +337,7 @@ fn fit_for_on_main(app: &AppHandle, state: &HudState) {
     let Some(window) = app.get_webview_window("hud") else { return };
     let Some(from) = frame_of(&window) else { return };
     let prefs = prefs(app);
-    let size = size_for(state, prefs.lines, peeking(state) || opens_by_itself(state, prefs.preview));
+    let size = size_for(state, prefs.lines, peeking(state) || opens_by_itself(state, prefs.preview), options_open());
     // The NSPanel is resized through Cocoa below. Keep the embedded webview's
     // viewport in step too, including when the outer frame already matches.
     // Otherwise the toolbar can still render inside the resting pill's width.
@@ -339,6 +349,66 @@ fn fit_for_on_main(app: &AppHandle, state: &HudState) {
     let low = crate::placement::in_lower_half(app, from.0 + from.2 / 2.0, from.1, from.3);
     imp::resize(&window, size, low);
     note_placed(&window);
+}
+
+/// The dictation options are open under the recording controls.
+static OPTIONS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn options_open() -> bool {
+    OPTIONS.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Counts requests to open or close the options. A main-thread task acts
+/// only while its request is still the latest, so one that timed out, or
+/// that a newer request overtook, can't change the flag behind its back.
+static OPTIONS_REQUEST: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Opens or closes the dictation options under the recording controls, and
+/// gives the control their size. Returns whether they are open and the
+/// window has room for them: false when the recording ended first, or the
+/// window could not be reached in time.
+pub fn set_options(app: &AppHandle, open: bool) -> bool {
+    use std::sync::atomic::Ordering::SeqCst;
+    let request = OPTIONS_REQUEST.fetch_add(1, SeqCst) + 1;
+    let handle = app.clone();
+    let (done, fitted) = std::sync::mpsc::channel::<bool>();
+    // The flag and the window change together, on the thread that sizes the
+    // window and in line with `set_state_if`, so a recording that ends
+    // meanwhile can't leave one saying open and the other closed.
+    let dispatched = app.run_on_main_thread(move || {
+        let opened = {
+            let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
+            if OPTIONS_REQUEST.load(SeqCst) != request {
+                // Given up on, or overtaken: the newer request has the say.
+                let _ = done.send(false);
+                return;
+            }
+            let opened = open && current().phase == Phase::Recording;
+            OPTIONS.store(opened, SeqCst);
+            opened
+        };
+        fit_on_main(&handle);
+        let _ = done.send(opened);
+    });
+    let opened = dispatched.is_ok() && fitted.recv_timeout(std::time::Duration::from_millis(500)).unwrap_or(false);
+    if !opened && open {
+        // Too late to trust. Giving the request up stops the task above if it
+        // has not run; if it ran just now, this one closes what it opened,
+        // unless a newer request has taken over since.
+        let abandoned = OPTIONS_REQUEST.fetch_add(1, SeqCst) + 1;
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            {
+                let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
+                if OPTIONS_REQUEST.load(SeqCst) != abandoned {
+                    return;
+                }
+                OPTIONS.store(false, SeqCst);
+            }
+            fit_on_main(&handle);
+        });
+    }
+    opened
 }
 
 /// The finished dictation whose transcript drawer is open under the pointer.
@@ -432,16 +502,42 @@ fn is_active(phase: &Phase) -> bool {
 struct Prefs {
     frame: Option<HudFrame>,
     hidden: bool,
+    quiet: bool,
     lines: u8,
     preview: bool,
+}
+
+impl Prefs {
+    fn of(config: &Settings) -> Self {
+        Prefs { frame: config.hud_frame, hidden: config.hud_hidden, quiet: config.hud_quiet, lines: config.hud_preview_lines(), preview: config.hud_result_preview() }
+    }
+
+    /// Whether the control is on screen for `state`. Hidden, it still shows
+    /// a capture and what came of it; quiet, only what needs an answer or
+    /// went wrong.
+    fn shows(&self, state: &HudState) -> bool {
+        if self.quiet {
+            return speaks_up(state);
+        }
+        !self.hidden || is_active(&state.phase)
+    }
+}
+
+/// What a pill kept off screen while recording still comes up for: a meeting
+/// about to be recorded, a failure, and words that could not be pasted.
+fn speaks_up(state: &HudState) -> bool {
+    match state.phase {
+        Phase::Prompt | Phase::Failed => true,
+        Phase::Done | Phase::Saved => state.notice.is_some(),
+        Phase::Idle | Phase::Recording | Phase::Transcribing => false,
+    }
 }
 static PREFS: std::sync::Mutex<Option<Prefs>> = std::sync::Mutex::new(None);
 
 fn prefs(app: &AppHandle) -> Prefs {
     let mut guard = PREFS.lock().unwrap_or_else(|error| error.into_inner());
     *guard.get_or_insert_with(|| {
-        let config = settings::load(app);
-        Prefs { frame: config.hud_frame, hidden: config.hud_hidden, lines: config.hud_preview_lines(), preview: config.hud_result_preview() }
+        Prefs::of(&settings::load(app))
     })
 }
 
@@ -454,7 +550,7 @@ fn update_prefs(app: &AppHandle, change: impl Fn(&mut Settings)) {
         config
     });
     *PREFS.lock().unwrap_or_else(|error| error.into_inner()) =
-        Some(Prefs { frame: config.hud_frame, hidden: config.hud_hidden, lines: config.hud_preview_lines(), preview: config.hud_result_preview() });
+        Some(Prefs::of(&config));
 }
 
 /// How the control looks: how many lines of live words while recording,
@@ -472,7 +568,44 @@ pub fn set_look(app: &AppHandle, lines: u8, translucent: bool, fast_live_words: 
             config.hud_result_preview = Some(preview);
         }
     });
-    let look = serde_json::json!({ "lines": lines, "translucent": translucent, "preview": prefs(app).preview });
+    send_look(app);
+}
+
+/// The pill's colour and how solid it is (30 to 100 percent), whichever is
+/// given. Takes effect at once.
+pub fn set_style(app: &AppHandle, tint: Option<String>, opacity: Option<u8>) {
+    update_prefs(app, |config| {
+        if let Some(tint) = &tint {
+            config.hud_tint = Some(tint.clone());
+        }
+        if let Some(percent) = opacity {
+            config.hud_opacity = Some(percent);
+            // Older builds read the switch: keep it saying the nearest thing.
+            config.hud_translucent = Some(percent < 100);
+        }
+    });
+    send_look(app);
+}
+
+/// When the pill is on screen: "always", "capturing" (not at rest) or
+/// "never" (only to ask about a meeting or say something went wrong).
+pub fn set_visibility_on_main(app: &AppHandle, hidden: bool, quiet: bool) {
+    update_prefs(app, |config| {
+        config.hud_hidden = hidden;
+        config.hud_quiet = quiet;
+    });
+    let now = current();
+    if prefs(app).shows(&now) && !tucked(&now) { show_on_main(app); } else { imp::hide(app); }
+}
+
+/// Refits the window for the saved look and tells the control about it.
+fn send_look(app: &AppHandle) {
+    let config = settings::load(app);
+    let opacity = config.hud_opacity();
+    let look = serde_json::json!({
+        "lines": prefs(app).lines, "translucent": opacity < 100, "preview": prefs(app).preview,
+        "tint": config.hud_tint(), "opacity": opacity,
+    });
     let handle = app.clone();
     let emitted = look.clone();
     // In line with set_state's tasks, so the state sent below is never
@@ -529,18 +662,17 @@ pub fn toggle_visible_on_main(app: &AppHandle) {
     }
 }
 
+/// The pill's own close, and Show and Hide Capture Control in the menu.
+/// Showing it also ends "never", and brings back a recording that was put
+/// away: asking for the pill means wanting it back.
 pub fn set_hidden_on_main(app: &AppHandle, hidden: bool) {
     if !hidden {
         // Under the lock every other write to it takes, in the same order.
         let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
         *TUCKED.lock().unwrap_or_else(|error| error.into_inner()) = None;
     }
-    update_prefs(app, |config| config.hud_hidden = hidden);
-    if hidden && !is_active(&current().phase) {
-        imp::hide(app);
-    } else {
-        show_on_main(app);
-    }
+    let quiet = hidden && prefs(app).quiet;
+    set_visibility_on_main(app, hidden, quiet);
 }
 
 fn on_screen(app: &AppHandle, frame: &HudFrame) -> bool {
@@ -559,6 +691,12 @@ fn show_on_main_for(app: &AppHandle, state: &HudState) {
 /// The panel folds back into the pill, even one the user closed earlier: the
 /// panel's close is "collapse", and the pill's own close is how to put it away.
 pub fn collapse_from_panel_on_main(app: &AppHandle) {
+    // Not one set to stay off screen while recording: that is a standing
+    // choice in Settings, not a pill put away for now.
+    if prefs(app).quiet {
+        show_unchecked(app, &current());
+        return;
+    }
     if prefs(app).hidden {
         update_prefs(app, |config| config.hud_hidden = false);
     }
@@ -575,7 +713,7 @@ fn show_unchecked(app: &AppHandle, state: &HudState) {
         return;
     };
     let prefs = prefs(app);
-    if (prefs.hidden && !is_active(&state.phase)) || tucked(state) {
+    if !prefs.shows(state) || tucked(state) {
         imp::hide(app);
         return;
     }
@@ -868,7 +1006,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{anchored, is_active, keeps_tuck, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, MEETING, MEETING_MODE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
+    use super::{Prefs, OPTIONS_HEIGHT, anchored, is_active, keeps_tuck, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, MEETING, MEETING_MODE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
 
     #[test]
     fn a_hidden_recording_stays_hidden_until_it_fails_or_ends() {
@@ -886,27 +1024,27 @@ mod tests {
     #[test]
     fn a_meeting_recording_has_room_to_scroll_back() {
         let meeting = state(Phase::Recording, Some(MEETING_MODE), None);
-        assert_eq!(size_for(&meeting, 4, false), MEETING);
-        assert_eq!(size_for(&meeting, 1, false), MEETING);
+        assert_eq!(size_for(&meeting, 4, false, false), MEETING);
+        assert_eq!(size_for(&meeting, 1, false, false), MEETING);
         // The transcript is what a meeting is for: it shows whatever dictation's line count is.
-        assert_eq!(size_for(&meeting, 0, false), MEETING);
-        assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 0, false), BAR);
-        assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 4, false), WIDE);
+        assert_eq!(size_for(&meeting, 0, false, false), MEETING);
+        assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 0, false, false), BAR);
+        assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 4, false, false), WIDE);
     }
 
     #[test]
     fn saved_without_typing_has_room_to_say_why() {
         let saved = HudState { notice: Some("Saved. Sign in to have it typed for you".into()), ..state(Phase::Saved, Some("audio"), None) };
-        assert_eq!(size_for(&saved, 4, false), WIDE);
-        assert_eq!(size_for(&saved, 0, false), WIDE);
+        assert_eq!(size_for(&saved, 4, false, false), WIDE);
+        assert_eq!(size_for(&saved, 0, false, false), WIDE);
         let failed = HudState { notice: Some("x".into()), ..state(Phase::Failed, Some("audio"), Some("no mic")) };
-        assert_eq!(size_for(&saved, 4, false), size_for(&failed, 4, false));
+        assert_eq!(size_for(&saved, 4, false, false), size_for(&failed, 4, false, false));
     }
 
     #[test]
     fn a_grow_pushed_in_from_the_edge_shrinks_back_to_where_the_pill_rests() {
         // Resting near the right edge; growing gets clamped 50pt to the left.
-        let rest = (872.0, 40.0, 272.0, 36.0);
+        let rest = (858.0, 40.0, 300.0, 36.0);
         let (wide, anchor) = anchored(rest, None, WIDE, false, refit);
         assert_eq!(anchor, rest);
         assert_eq!(wide, (808.0, 40.0, 400.0, 142.0));
@@ -919,10 +1057,10 @@ mod tests {
 
     #[test]
     fn a_pill_moved_since_its_last_resize_rests_where_it_was_moved() {
-        let placed = Some(Placement { anchor: (872.0, 40.0, 272.0, 36.0), set: (758.0, 40.0, 400.0, 142.0) });
+        let placed = Some(Placement { anchor: (858.0, 40.0, 300.0, 36.0), set: (758.0, 40.0, 400.0, 142.0) });
         let dragged = (300.0, 200.0, 400.0, 142.0);
         let (back, anchor) = anchored(dragged, placed, DEFAULT_SIZE, false, refit);
-        assert_eq!(anchor, (364.0, 200.0, 272.0, 36.0));
+        assert_eq!(anchor, (350.0, 200.0, 300.0, 36.0));
         assert_eq!(back, anchor);
     }
 
@@ -933,25 +1071,25 @@ mod tests {
     #[test]
     fn talking_writing_and_the_pasted_words_share_one_width() {
         let talk = Some("audio");
-        assert_eq!(size_for(&state(Phase::Recording, talk, None), 4, false), WIDE);
-        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 4, false), WIDE);
-        assert_eq!(size_for(&state(Phase::Done, talk, Some("hello there")), 4, true), RESULT);
+        assert_eq!(size_for(&state(Phase::Recording, talk, None), 4, false, false), WIDE);
+        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 4, false, false), WIDE);
+        assert_eq!(size_for(&state(Phase::Done, talk, Some("hello there")), 4, true, false), RESULT);
         assert_eq!(RESULT.0, WIDE.0);
     }
 
     #[test]
     fn a_finished_dictation_rests_as_a_receipt_until_hovered() {
         let pasted = state(Phase::Done, Some("audio"), Some("hello there"));
-        assert_eq!(size_for(&pasted, 4, false), RECEIPT);
-        assert_eq!(size_for(&pasted, 4, true), RESULT);
+        assert_eq!(size_for(&pasted, 4, false, false), RECEIPT);
+        assert_eq!(size_for(&pasted, 4, true, false), RESULT);
         // The drawer is only ever a finished dictation's.
-        assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 4, true), WIDE);
+        assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 4, true, false), WIDE);
         // Talking to Eavesy shows your words even with live words off, then its answer.
-        assert_eq!(size_for(&state(Phase::Recording, Some("assistant"), None), 0, false), live_size(1));
+        assert_eq!(size_for(&state(Phase::Recording, Some("assistant"), None), 0, false, false), live_size(1));
         let answer = state(Phase::Done, Some("assistant"), Some("Six dev servers."));
-        assert_eq!(size_for(&answer, 0, false), RESULT);
+        assert_eq!(size_for(&answer, 0, false, false), RESULT);
         assert_eq!(receipt(&answer), None);
-        assert_eq!(size_for(&HudState::idle(), 4, true), DEFAULT_SIZE);
+        assert_eq!(size_for(&HudState::idle(), 4, true, false), DEFAULT_SIZE);
     }
 
     #[test]
@@ -979,10 +1117,10 @@ mod tests {
     fn fewer_preview_lines_make_a_shorter_control() {
         let talk = Some("audio");
         assert_eq!(live_size(4), WIDE);
-        assert_eq!(size_for(&state(Phase::Recording, talk, None), 1, false), (WIDE.0, 82.0));
-        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 2, false), (WIDE.0, 102.0));
-        assert_eq!(size_for(&state(Phase::Recording, talk, None), 0, false), BAR);
-        assert_eq!(size_for(&state(Phase::Failed, talk, Some("no mic")), 0, false), WIDE);
+        assert_eq!(size_for(&state(Phase::Recording, talk, None), 1, false, false), (WIDE.0, 82.0));
+        assert_eq!(size_for(&state(Phase::Transcribing, talk, None), 2, false, false), (WIDE.0, 102.0));
+        assert_eq!(size_for(&state(Phase::Recording, talk, None), 0, false, false), BAR);
+        assert_eq!(size_for(&state(Phase::Failed, talk, Some("no mic")), 0, false, false), WIDE);
     }
 
     #[test]
@@ -998,44 +1136,72 @@ mod tests {
 
     #[test]
     fn resting_saved_and_video_stay_a_small_pill() {
-        assert_eq!(size_for(&HudState::idle(), 4, false), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Saved, Some("audio"), None), 4, false), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Transcribing, Some("video"), None), 4, false), DEFAULT_SIZE);
-        assert_eq!(size_for(&state(Phase::Done, Some("audio"), Some("  ")), 4, false), DEFAULT_SIZE);
+        assert_eq!(size_for(&HudState::idle(), 4, false, false), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Saved, Some("audio"), None), 4, false, false), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Transcribing, Some("video"), None), 4, false, false), DEFAULT_SIZE);
+        assert_eq!(size_for(&state(Phase::Done, Some("audio"), Some("  ")), 4, false, false), DEFAULT_SIZE);
     }
 
     #[test]
     fn a_screen_recording_makes_room_for_clicks_and_marking() {
-        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 4, false), VIDEO_LIVE);
+        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 4, false, false), VIDEO_LIVE);
         assert_eq!(VIDEO_LIVE, (420.0, 76.0));
     }
 
     #[test]
     fn a_screenshot_makes_room_for_its_thumbnail() {
-        assert_eq!(size_for(&state(Phase::Done, Some("image"), None), 4, false), SHOT);
+        assert_eq!(size_for(&state(Phase::Done, Some("image"), None), 4, false, false), SHOT);
+    }
+
+    #[test]
+    fn the_dictation_options_open_under_a_recording_only() {
+        let talk = state(Phase::Recording, Some("audio"), None);
+        assert_eq!(size_for(&talk, 0, false, true), (BAR.0, OPTIONS_HEIGHT));
+        assert_eq!(size_for(&talk, 2, false, true), (WIDE.0, OPTIONS_HEIGHT));
+        assert_eq!(size_for(&state(Phase::Transcribing, Some("audio"), None), 0, false, true), BAR);
+        assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 0, false, true), VIDEO_LIVE);
+        assert_eq!(live_size(8), (WIDE.0, 222.0));
+    }
+
+    #[test]
+    fn a_quiet_pill_only_comes_up_to_ask_or_to_say_what_went_wrong() {
+        let quiet = Prefs { frame: None, hidden: true, quiet: true, lines: 0, preview: false };
+        assert!(!quiet.shows(&state(Phase::Recording, Some("audio"), None)));
+        assert!(!quiet.shows(&state(Phase::Transcribing, Some("audio"), None)));
+        assert!(!quiet.shows(&state(Phase::Done, Some("audio"), Some("words"))));
+        assert!(!quiet.shows(&HudState::idle()));
+        assert!(quiet.shows(&state(Phase::Prompt, None, Some("Design review"))));
+        assert!(quiet.shows(&state(Phase::Failed, Some("audio"), Some("no mic"))));
+        let unpasted = HudState { notice: Some("Allow Accessibility".into()), ..state(Phase::Done, Some("audio"), Some("words")) };
+        assert!(quiet.shows(&unpasted));
+        // Hidden only at rest: a capture and its result still show.
+        let hidden = Prefs { quiet: false, ..quiet };
+        assert!(hidden.shows(&state(Phase::Recording, Some("audio"), None)) && !hidden.shows(&HudState::idle()));
+        let shown = Prefs { hidden: false, ..hidden };
+        assert!(shown.shows(&HudState::idle()));
     }
 
     #[test]
     fn refitting_keeps_the_centre_and_the_top_edge() {
-        assert_eq!(refit((472.0, 40.0, 272.0, 36.0), WIDE, false), (408.0, 40.0, 400.0, 142.0));
+        assert_eq!(refit((458.0, 40.0, 300.0, 36.0), WIDE, false), (408.0, 40.0, 400.0, 142.0));
     }
 
     #[test]
     fn low_on_the_screen_refitting_keeps_the_bottom_edge() {
-        assert_eq!(refit((472.0, 800.0, 272.0, 36.0), WIDE, true), (408.0, 694.0, 400.0, 142.0));
-        assert_eq!(refit((408.0, 694.0, 400.0, 142.0), DEFAULT_SIZE, true), (472.0, 800.0, 272.0, 36.0));
+        assert_eq!(refit((458.0, 800.0, 300.0, 36.0), WIDE, true), (408.0, 694.0, 400.0, 142.0));
+        assert_eq!(refit((408.0, 694.0, 400.0, 142.0), DEFAULT_SIZE, true), (458.0, 800.0, 300.0, 36.0));
     }
 
     #[test]
     fn in_cocoa_coordinates_the_top_edge_is_the_one_kept() {
-        assert_eq!(refit_cocoa((472.0, 800.0, 272.0, 36.0), WIDE, false), (408.0, 694.0, 400.0, 142.0));
-        assert_eq!(refit_cocoa((472.0, 100.0, 272.0, 36.0), WIDE, true), (408.0, 100.0, 400.0, 142.0));
+        assert_eq!(refit_cocoa((458.0, 800.0, 300.0, 36.0), WIDE, false), (408.0, 694.0, 400.0, 142.0));
+        assert_eq!(refit_cocoa((458.0, 100.0, 300.0, 36.0), WIDE, true), (408.0, 100.0, 400.0, 142.0));
     }
 
     #[test]
     fn only_the_resting_pill_is_ever_saved() {
-        assert_eq!(resting((408.0, 24.0, 400.0, 142.0), false), HudFrame { x: 472.0, y: 24.0, width: 272.0, height: 36.0 });
-        assert_eq!(resting((408.0, 694.0, 400.0, 142.0), true), HudFrame { x: 472.0, y: 800.0, width: 272.0, height: 36.0 });
-        assert_eq!(resting((488.0, 24.0, 240.0, 40.0), false), HudFrame { x: 472.0, y: 24.0, width: 272.0, height: 36.0 });
+        assert_eq!(resting((408.0, 24.0, 400.0, 142.0), false), HudFrame { x: 458.0, y: 24.0, width: 300.0, height: 36.0 });
+        assert_eq!(resting((408.0, 694.0, 400.0, 142.0), true), HudFrame { x: 458.0, y: 800.0, width: 300.0, height: 36.0 });
+        assert_eq!(resting((488.0, 24.0, 240.0, 40.0), false), HudFrame { x: 458.0, y: 24.0, width: 300.0, height: 36.0 });
     }
 }

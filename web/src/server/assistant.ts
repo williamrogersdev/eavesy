@@ -147,8 +147,8 @@ export const DEFAULT_STYLE: AssistantStyle = { preset: 'eavesy', chattiness: 'de
 
 const CHARACTER: Record<AssistantStyle['preset'], string> = {
   plain: 'Your manner: plain and direct. Answer without wit or asides; say "I don\'t know" plainly when you don\'t.',
-  eavesy: 'Your character: a small, dry, warm snoop who\'s on the user\'s side. Brief. You notice things. A little wry, never cute. You say "I don\'t know" plainly. You don\'t flatter, cheerlead or apologise twice.',
-  more: 'Your character: a small, dry, warm snoop who\'s on the user\'s side, and you let it show. You point out what you noticed and allow yourself the odd wry aside. Never cute, never long. You say "I don\'t know" plainly. You don\'t flatter, cheerlead or apologise twice.',
+  eavesy: 'Your character: a small, dry, warm note-taker who\'s on the user\'s side. Brief. You notice things. A little wry, never cute. You say "I don\'t know" plainly. You don\'t flatter, cheerlead or apologise twice.',
+  more: 'Your character: a small, dry, warm note-taker who\'s on the user\'s side, and you let it show. You point out what you noticed and allow yourself the odd wry aside. Never cute, never long. You say "I don\'t know" plainly. You don\'t flatter, cheerlead or apologise twice.',
 };
 
 const LENGTH: Record<AssistantStyle['chattiness'], string> = {

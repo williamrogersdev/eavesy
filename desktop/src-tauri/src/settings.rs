@@ -14,6 +14,11 @@ pub const DEFAULT_SCREEN_HOTKEY: &str = "Alt+Shift+R";
 /// Hides the capture control, and brings it back: for a recording that
 /// shouldn't be on a shared screen.
 pub const DEFAULT_CONTROL_HOTKEY: &str = "Alt+Shift+H";
+/// Clipboard history: V as in paste, in the ⌥⇧ family the other panel
+/// shortcuts use. ⌘⇧V would take Paste and Match Style from every app.
+pub const DEFAULT_CLIPBOARD_HOTKEY: &str = "Alt+Shift+V";
+/// Screenshot history: S, beside it.
+pub const DEFAULT_SCREENSHOTS_HOTKEY: &str = "Alt+Shift+S";
 /// What Talk to Eavesy defaulted to before; `hotkeys::migrate_assistant_default`
 /// moves it when another app also uses it.
 pub const OLD_ASSISTANT_HOTKEY: &str = "Alt+Space";
@@ -23,6 +28,13 @@ pub const DEFAULT_SEGMENT_SEC: u32 = 60;
 /// The capture sidecar refuses anything shorter.
 const MIN_SEGMENT_SEC: u32 = 30;
 const MAX_SEGMENT_SEC: u32 = 600;
+
+/// Line counts of live words the pill is drawn for.
+pub const HUD_LINES: [u8; 5] = [0, 1, 2, 4, 8];
+/// The pill's colours (`.eavesy-control[data-tint]` in the HUD's styles); the first is the default.
+pub const HUD_TINTS: [&str; 7] = ["auto", "charcoal", "ink", "forest", "plum", "slate", "paper"];
+/// The least and most solid the pill can be, in percent.
+pub const HUD_OPACITY: (u8, u8) = (30, 100);
 
 // Variant names are persisted as snake_case settings values; renaming would break saved settings.
 #[allow(clippy::enum_variant_names)]
@@ -60,6 +72,10 @@ pub struct Settings {
     pub screen_hotkey: String,
     #[serde(default = "default_control_hotkey")]
     pub control_hotkey: String,
+    #[serde(default = "default_clipboard_hotkey")]
+    pub clipboard_hotkey: String,
+    #[serde(default = "default_screenshots_hotkey")]
+    pub screenshots_hotkey: String,
     #[serde(default = "new_device_id")]
     pub device_id: String,
     #[serde(default)]
@@ -88,6 +104,10 @@ pub struct Settings {
     /// key: the old `auto_import_screenshots` saved `false` for everyone who never chose.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub add_screenshots: Option<bool>,
+    /// Keep what is copied in the clipboard history, on this Mac only (on
+    /// unless turned off).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clipboard_history: Option<bool>,
     /// Snapshots of the shared screen while a meeting records (on unless turned off).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshots: Option<bool>,
@@ -98,7 +118,19 @@ pub struct Settings {
     /// unless turned off). Off, Eavesy only asks.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_record_meetings: Option<bool>,
-    /// Lines of live words the control shows while recording: 0, 1, 2 or 4
+    /// The pill stays off screen while it records and writes too, not only at
+    /// rest (`hud_hidden`). It still comes up to ask about a meeting and to
+    /// say something went wrong.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hud_quiet: bool,
+    /// The pill's colour: one of `HUD_TINTS` (auto unless chosen: paper by day, navy by night).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_tint: Option<String>,
+    /// How solid the pill is, in percent (30 to 100). Unset reads
+    /// `hud_translucent`, the switch this replaced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_opacity: Option<u8>,
+    /// Lines of live words the control shows while recording: 0, 1, 2, 4 or 8
     /// (off unless chosen: the plain bar is quieter while you talk).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hud_preview_lines: Option<u8>,
@@ -215,7 +247,22 @@ impl Settings {
 
     /// One of the line counts the control is drawn for; anything else reads as off.
     pub fn hud_preview_lines(&self) -> u8 {
-        self.hud_preview_lines.filter(|lines| matches!(lines, 0 | 1 | 2 | 4)).unwrap_or(0)
+        self.hud_preview_lines.filter(|lines| HUD_LINES.contains(lines)).unwrap_or(0)
+    }
+
+    /// The pill's colour, when it is one this build draws.
+    pub fn hud_tint(&self) -> &str {
+        self.hud_tint.as_deref().filter(|tint| HUD_TINTS.contains(tint)).unwrap_or(HUD_TINTS[0])
+    }
+
+    /// How solid the pill is, in percent. Before there was a level there was
+    /// a switch: see-through (64, the default) or solid.
+    pub fn hud_opacity(&self) -> u8 {
+        match self.hud_opacity {
+            Some(percent) => percent.clamp(HUD_OPACITY.0, HUD_OPACITY.1),
+            None if self.hud_translucent == Some(false) => 100,
+            None => 64,
+        }
     }
 
     pub fn hud_result_preview(&self) -> bool {
@@ -228,6 +275,10 @@ impl Settings {
 
     pub fn fast_live_words(&self) -> bool {
         self.fast_live_words.unwrap_or(true)
+    }
+
+    pub fn clipboard_history(&self) -> bool {
+        self.clipboard_history.unwrap_or(true)
     }
 
     pub fn add_screenshots(&self) -> bool {
@@ -259,6 +310,14 @@ fn default_screen_hotkey() -> String {
     DEFAULT_SCREEN_HOTKEY.to_string()
 }
 
+fn default_clipboard_hotkey() -> String {
+    DEFAULT_CLIPBOARD_HOTKEY.to_string()
+}
+
+fn default_screenshots_hotkey() -> String {
+    DEFAULT_SCREENSHOTS_HOTKEY.to_string()
+}
+
 fn new_device_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -271,6 +330,8 @@ impl Default for Settings {
             assistant_hotkey: DEFAULT_ASSISTANT_HOTKEY.to_string(),
             screen_hotkey: DEFAULT_SCREEN_HOTKEY.to_string(),
             control_hotkey: DEFAULT_CONTROL_HOTKEY.to_string(),
+            clipboard_hotkey: DEFAULT_CLIPBOARD_HOTKEY.to_string(),
+            screenshots_hotkey: DEFAULT_SCREENSHOTS_HOTKEY.to_string(),
             device_id: new_device_id(),
             setup_completed: false,
             recordings_root: None,
@@ -282,9 +343,13 @@ impl Default for Settings {
             segment_sec: None,
             live_captions: None,
             add_screenshots: None,
+            clipboard_history: None,
             snapshots: None,
             capture_sounds: None,
             auto_record_meetings: None,
+            hud_quiet: false,
+            hud_tint: None,
+            hud_opacity: None,
             hud_preview_lines: None,
             hud_translucent: None,
             fast_live_words: None,
@@ -811,6 +876,27 @@ mod tests {
     }
 
     #[test]
+    fn the_pill_follows_the_appearance_and_is_see_through_unless_chosen() {
+        let mut settings = Settings::default();
+        assert_eq!((settings.hud_tint(), settings.hud_opacity()), ("auto", 64));
+        let saved = serde_json::to_string(&settings).unwrap();
+        assert!(!saved.contains("hud_tint") && !saved.contains("hud_opacity") && !saved.contains("hud_quiet"));
+        // The switch this level replaced still reads as it was saved.
+        settings.hud_translucent = Some(false);
+        assert_eq!(settings.hud_opacity(), 100);
+        settings.hud_opacity = Some(45);
+        assert_eq!(settings.hud_opacity(), 45);
+        settings.hud_opacity = Some(5);
+        assert_eq!(settings.hud_opacity(), 30);
+        settings.hud_tint = Some("forest".into());
+        assert_eq!(settings.hud_tint(), "forest");
+        settings.hud_tint = Some("neon".into());
+        assert_eq!(settings.hud_tint(), "auto");
+        settings.hud_preview_lines = Some(8);
+        assert_eq!(settings.hud_preview_lines(), 8);
+    }
+
+    #[test]
     fn fast_live_words_are_on_unless_turned_off() {
         let mut settings = Settings::default();
         assert!(settings.fast_live_words());
@@ -853,6 +939,8 @@ mod tests {
         let before: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b"}"#).unwrap();
         assert_eq!(before.assistant_hotkey, DEFAULT_ASSISTANT_HOTKEY);
         assert_eq!(before.screen_hotkey, DEFAULT_SCREEN_HOTKEY, "settings saved before the shortcut existed get it");
+        assert_eq!((before.clipboard_hotkey.as_str(), before.screenshots_hotkey.as_str()), (DEFAULT_CLIPBOARD_HOTKEY, DEFAULT_SCREENSHOTS_HOTKEY));
+        assert!(before.clipboard_history(), "kept unless turned off");
         assert_eq!(before.assistant_hotkey_settled, None);
         // A saved ⌥Space is read as it is; moving it is the migration's call.
         let old: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","assistant_hotkey":"Alt+Space"}"#).unwrap();

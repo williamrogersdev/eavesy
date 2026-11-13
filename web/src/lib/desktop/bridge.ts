@@ -50,8 +50,8 @@ export function isDesktop(): boolean {
 }
 
 /** Settings sections another window can ask the Settings window to show. */
-export type SettingsSection = 'capture' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'connections' | 'agents' | 'assistant' | 'machine' | 'permissions' | 'account';
-const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'connections', 'agents', 'assistant', 'machine', 'permissions', 'account'];
+export type SettingsSection = 'capture' | 'pill' | 'dictation' | 'transcription' | 'dictionary' | 'shortcuts' | 'prompts' | 'projects' | 'connections' | 'agents' | 'assistant' | 'machine' | 'permissions' | 'account';
+const SETTINGS_SECTIONS: readonly SettingsSection[] = ['capture', 'pill', 'dictation', 'transcription', 'dictionary', 'shortcuts', 'prompts', 'projects', 'connections', 'agents', 'assistant', 'machine', 'permissions', 'account'];
 /** Both webviews share an origin, so the panel leaves the section here for the Settings window. */
 const SETTINGS_SECTION_KEY = 'eavesy.settings.section';
 /** A request older than this was for a Settings window that has come and gone. */
@@ -747,11 +747,27 @@ export async function onAssistantThread(cb: (thread: AssistantThread) => void): 
 }
 
 /** Lines of live words the recording control shows: 0 hides them and leaves just the bar. */
-export type HudPreviewLines = 0 | 1 | 2 | 4;
+export type HudPreviewLines = 0 | 1 | 2 | 4 | 8;
 
 /** `fastLiveWords` applies from the next recording; it and `resultPreview` are sent only when that switch changes. */
 export async function setHudLook(lines: HudPreviewLines, translucent: boolean, fastLiveWords?: boolean, resultPreview?: boolean): Promise<void> {
   await invoke('set_hud_look', { lines, translucent, fastLiveWords, resultPreview });
+}
+
+/** The pill's colours (`HUD_TINTS` in settings.rs); the first is the default. */
+export const HUD_TINTS = ['auto', 'charcoal', 'ink', 'forest', 'plum', 'slate', 'paper'] as const;
+export type HudTint = (typeof HUD_TINTS)[number];
+
+/** The pill's colour, and how solid it is in percent (30 to 100); either may be left out. */
+export async function setHudStyle(style: { tint?: HudTint; opacity?: number }): Promise<void> {
+  await invoke('set_hud_style', style);
+}
+
+/** When the pill is on screen: always, only while it captures, or never (it still asks about a meeting and says when something went wrong). */
+export type HudVisibility = 'always' | 'capturing' | 'never';
+
+export async function setHudVisibility(show: HudVisibility): Promise<void> {
+  await invoke('set_hud_visibility', { show });
 }
 
 // Each request asks for one permission alone, while the launcher steps out of the way so the
@@ -943,12 +959,16 @@ export interface Settings {
   screen_hotkey?: string;
   /** Shows or hides the pill, so a recording can run out of sight while you share your screen. */
   control_hotkey?: string;
+  clipboard_hotkey?: string;
+  screenshots_hotkey?: string;
   device_id: string;
   setup_completed: boolean;
   recordings_root?: string | null;
   launcher_position?: LauncherPosition;
   /** Absent means on. */
   live_captions?: boolean;
+  /** Keep what's copied, on this Mac, for the clipboard panel. Absent means on. */
+  clipboard_history?: boolean;
   /** Copy new macOS screenshots into the history. Absent means on. */
   add_screenshots?: boolean;
   /** Snapshots of shared screens in meetings. Absent means on. */
@@ -959,6 +979,14 @@ export interface Settings {
   /** Absent means off. */
   hud_preview_lines?: HudPreviewLines;
   hud_translucent?: boolean;
+  /** The pill's colour. Absent means auto: paper by day, navy by night. */
+  hud_tint?: string;
+  /** How solid the pill is, in percent. Absent reads `hud_translucent`: see-through (64) unless that is false. */
+  hud_opacity?: number;
+  /** The pill is off screen at rest. */
+  hud_hidden?: boolean;
+  /** The pill is off screen while it records too. */
+  hud_quiet?: boolean;
   /** A finished dictation opens with its words to edit. Absent means on. */
   hud_result_preview?: boolean;
   /** Live words about a second sooner from a fast recognizer. Absent means on. */
@@ -1059,7 +1087,7 @@ export async function setupStepShown(step: number): Promise<void> {
   await invoke('setup_step_shown', { step }).catch(() => undefined);
 }
 
-export type HotkeyAction = 'toggle' | 'dictation' | 'assistant' | 'screen' | 'control';
+export type HotkeyAction = 'toggle' | 'dictation' | 'assistant' | 'screen' | 'control' | 'clipboard' | 'screenshots';
 /** Every shortcut; "" means unbound, "Fn" the fn / 🌐 key on its own, "Fn+Space" fn held with a key. */
 export type HotkeyBindings = Record<HotkeyAction, string>;
 /** Why the Mac app refused a shortcut (Rust `HotkeyError`). */
@@ -1102,7 +1130,7 @@ export async function checkAllHotkeys(): Promise<Partial<Record<HotkeyAction, Ho
 }
 
 export async function getHotkeyDefaults(): Promise<HotkeyBindings> {
-  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space', screen: 'Alt+Shift+R', control: 'Alt+Shift+H' };
+  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space', screen: 'Alt+Shift+R', control: 'Alt+Shift+H', clipboard: 'Alt+Shift+V', screenshots: 'Alt+Shift+S' };
   if (!isDesktop()) return fallback;
   return (await invoke<HotkeyBindings | null>('get_hotkey_defaults').catch(() => null)) ?? fallback;
 }
@@ -1242,6 +1270,20 @@ export async function getScreenshotFolder(): Promise<string | null> {
 
 export async function setAutoImportScreenshots(enabled: boolean): Promise<void> {
   await invoke('set_auto_import_screenshots', { enabled });
+}
+
+/** Starts or stops keeping what's copied (clipboard.rs). What was already kept stays until cleared. */
+export async function setClipboardHistory(enabled: boolean): Promise<void> {
+  await invoke('set_clipboard_history', { enabled });
+}
+
+export async function clearClipboardHistory(): Promise<void> {
+  await invoke('clipboard_clear');
+}
+
+/** Opens the clipboard panel on one of its two views. */
+export async function showClipboard(view: 'clipboard' | 'screenshots'): Promise<void> {
+  await invoke('show_clipboard', { view });
 }
 
 export async function onDragDrop(cb: (payload: DragDropPayload) => void): Promise<UnlistenFn> {

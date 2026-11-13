@@ -26,10 +26,12 @@ warm, slightly odd companion would do. Don't fall back to a generic dev tool.
    microcopy and small details, not from loud visuals. During normal use
    nothing bounces, pulses for attention or pops up. The mascot gets more
    room to be expressive only in empty states and onboarding.
-2. **Your AI's inside guy.** Eavesy isn't a dashboard. It's a small snoop
-   that sits on your Mac and writes things down for you. Every surface
-   should feel like its case file: cream paper, charcoal ink, manila folders,
-   one coral light. Screens shouldn't feel like empty containers.
+2. **A notebook, not a dashboard.** Eavesy sits on your Mac and writes
+   things down for you. Every surface should feel like a well-kept notebook:
+   warm paper, navy ink, one marigold brand colour, one coral light. Screens
+   shouldn't feel like empty containers. The product records, so nothing in
+   the look or the words should hint at spying: no "snoop", no case files,
+   no trench coats.
 3. **You can always see when it's listening.** The mascot tips its hat up
    only while the mic is live, and its coral lens shows only while recording. In every other state its eyes
    are calm, closed or looking elsewhere. The character *is* the privacy
@@ -92,11 +94,10 @@ Rules:
 | Copy toast | Transcript copied | Copied |
 | Panel title | Capture history | (no title: the date groups are the structure) |
 
-## 3. The mascot: Eavesy, the Little Snoop
+## 3. The mascot: Eavesy
 
-**Form.** A small charcoal bean in a fedora, the shape of a trench-coated spy
-seen from the hat up. Two plain cream oval eyes peek out under the brim. The
-hat has a slightly lighter band and a pinched crown. While a capture is
+**Form.** A small marigold bean in a navy fedora. Two plain navy oval eyes
+peek out under the brim. The hat has a paper-white band and a pinched crown. While a capture is
 recording it raises a magnifying glass whose lens is the coral recording
 light. There are no limbs, antennae, mechanical parts or screens for a face,
 and no mouth: it says everything with its eyes and its hat. It's a creature,
@@ -146,12 +147,12 @@ never animates to ask for attention.
   Recording uses a non-template variant: the same glyph in a mid-tone plus
   one coral dot. Paused/mic off uses closed-eye dashes. It is never a
   microphone.
-- **App icon:** cream `#FBF7F0` squircle with the Little Snoop at 78% scale,
-  lens raised. Coat `#2B2523`, band `#4A403C`, lens `#FF5A3C`. The static
+- **App icon:** cream `#FBF8F1` squircle with the mascot at 78% scale,
+  lens raised. Body `#F2B233`, hat `#16213F`, band `#FBF8F1`, lens `#FF5A3C`. The static
   brand mark (app icon, favicon `web/public/icon.svg`, OG image) is the one
   place the coral shows without a recording. Anything live, the `Mascot`
   component included, shows it only while recording.
-- **Wordmark:** "eavesy" in charcoal with a coral full stop.
+- **Wordmark:** "Eavesy" in navy ink beside the mascot.
 - **Toasts:** 16px happy/confused glyph before the text.
 
 **Not allowed:** a mascot that talks during errors, that pops up uninvited
@@ -166,40 +167,47 @@ alias block so old classes still work.
 
 ```css
 .launcher-scope, .ev {
-  /* surfaces: case-file cream, not white */
-  --ev-paper:      #FBF7F0;  /* panel background */
-  --ev-well:       #F2EBDF;  /* sunken: search, toolbar shelf, kbd */
-  --ev-raised:     #FFFDF8;  /* menus, popovers, thumbnails frame */
-  --ev-line:       #E6DDCF;  /* hairlines */
-  --ev-line-strong:#D3C7B6;
-  /* ink: trench-coat charcoal, never #000 */
-  --ev-ink:        #211C1A;
-  --ev-ink-2:      #5F5751;  /* secondary text */
-  --ev-ink-3:      #968D85;  /* placeholders, timestamps */
-  /* brand */
-  --ev-coat:       #2B2523;  /* primary actions, focus, selection */
-  --ev-coat-hover: #1A1614;
-  --ev-coat-soft:  #ECE6DF;
-  --ev-on-coat:    #FBF7F0;
-  --ev-manila:      #E2B866;  /* folder tan: highlights. Never text */
+  /* surfaces: warm paper, not white */
+  --ev-paper:      #FBF8F1;  /* panel background */
+  --ev-well:       #F1EDE2;  /* sunken: search, toolbar shelf, kbd */
+  --ev-raised:     #FFFEFA;  /* menus, popovers, thumbnails frame */
+  --ev-line:       #E4DFD2;  /* hairlines */
+  --ev-line-strong:#D0C9B8;
+  /* ink: deep navy, never #000 */
+  --ev-ink:        #16213F;
+  --ev-ink-2:      #505A75;  /* secondary text */
+  --ev-ink-3:      #666D85;  /* placeholders, timestamps */
+  /* brand: marigold, for fills only (primary buttons, switches, the mascot).
+     On paper it is about 1.8:1, so it is never text, a hairline or a small mark. */
+  --ev-brand:       #F2B233;
+  --ev-brand-hover: #E5A31C;
+  --ev-brand-soft:  #FBEBC4;
+  --ev-on-brand:    #16213F;  /* text and icons on a marigold fill */
+  /* coat: the navy that carries links, focus, selection, checkboxes and dots */
+  --ev-coat:       #16213F;
+  --ev-coat-hover: #0B1330;
+  --ev-coat-soft:  #E9E5D8;  /* selection wash: neutral, so it never reads as a warning */
+  --ev-on-coat:    #FBF8F1;
+  --ev-manila:      #E2B866;  /* highlights. Never text */
   --ev-manila-shade:#C99A45;
   --ev-manila-soft: #F6E8CC;  /* highlight wash, search hits */
   --ev-manila-ink:  #6E4A12;  /* text on manila-soft */
-  --ev-mascot-body:#2B2523; --ev-mascot-band:#4A403C; --ev-mascot-eye:#FBF7F0;
+  --ev-mascot-body:#F2B233; --ev-mascot-hat:#16213F; --ev-mascot-band:#FBF8F1; --ev-mascot-eye:#16213F;
   /* kinds: index-tab inks, one per kind of capture (dark values in tokens.css) */
   --ev-voice:   #2A5CB8;  --ev-voice-soft:   #E3EBFA;  /* voice notes, dictation */
   --ev-meeting: #7A4BB5;  --ev-meeting-soft: #ECE4F7;  /* meetings */
   --ev-screen:  #0A6772;  --ev-screen-soft:  #DCF0F1;  /* screenshots, videos */
-  --ev-note:    #85580C;  --ev-note-soft:    #F6E8CC;  /* notes */
+  --ev-note:    #7A4A2A;  --ev-note-soft:    #F1E2D6;  /* notes: brown, never the brand marigold */
   /* meaning */
   --ev-rec:        #FF5A3C;  /* the coral light: RECORDING ONLY. Same as web --signal */
   --ev-rec-soft:   #FFE3DA;
-  --ev-leaf:       #2F8A5B;  /* granted / done */
+  --ev-leaf:       #267A4F;  /* granted / done */
   --ev-leaf-soft:  #DDF1E5;
   --ev-warn-ink:   #9A5B00;  /* errors use warn, not coral: coral means recording */
   --ev-warn-soft:  #FFF0D6;
-  /* HUD pill (same in both modes: it sits over any app) */
-  --ev-hud:        rgb(22 19 18 / 0.97);  /* solid pill, no vibrancy */
+  /* Dark glass for overlays that sit on screen content (marker, agent cards):
+     the same in both modes. The pill has its own colours (see HUD). */
+  --ev-hud:        rgb(22 19 18 / 0.97);
   --ev-hud-line:   rgb(255 240 220 / 0.14);
   --ev-hud-ink:    #F6EFE4;
   --ev-hud-ink-2:  rgb(246 239 228 / 0.62);
@@ -208,29 +216,33 @@ alias block so old classes still work.
   --ev-focus-field: 0 0 0 1px var(--ev-ink-3), 0 0 0 4px color-mix(in srgb, var(--ev-ink-3) 18%, transparent);
 }
 @media (prefers-color-scheme: dark) { .launcher-scope, .ev { /* after hours */
-  --ev-paper:      #1F1A18;  /* warm paper after hours, never a black slab */
-  --ev-well:       #29231F;  /* lighter than paper: raised, not sunken */
-  --ev-raised:     #2E2724;
-  --ev-line:       #3A322D;
-  --ev-line-strong:#4D433D;
-  --ev-ink:        #F2EBDF;
-  --ev-ink-2:      #B5ABA0;
-  --ev-ink-3:      #82786F;
-  --ev-coat:       #F2EBDF;  /* in the dark the coat turns to cream paper */
+  --ev-paper:      #111830;  /* night blue, never a black slab */
+  --ev-well:       #18203C;  /* lighter than paper: raised, not sunken */
+  --ev-raised:     #1E2848;
+  --ev-line:       #2C3759;
+  --ev-line-strong:#3D4A73;
+  --ev-ink:        #EEF0F7;
+  --ev-ink-2:      #A7AECB;
+  --ev-ink-3:      #8A93B3;
+  --ev-brand:       #F5C04E;
+  --ev-brand-hover: #FFD06A;
+  --ev-brand-soft:  #40371A;
+  --ev-on-brand:    #16213F;
+  --ev-coat:       #EEF0F7;  /* in the dark the coat turns to paper white */
   --ev-coat-hover: #FFFFFF;
-  --ev-coat-soft:  #352D29;
-  --ev-on-coat:    #1F1A18;
+  --ev-coat-soft:  #263058;
+  --ev-on-coat:    #111830;
   --ev-manila:      #F0C879;
   --ev-manila-shade:#D9AB55;
-  --ev-manila-soft: #3A2F1C;
+  --ev-manila-soft: #3A3320;
   --ev-manila-ink:  #F5D9A0;
-  --ev-mascot-body:#3D3431; --ev-mascot-band:#5A4F4A; --ev-mascot-eye:#F2EBDF;
+  --ev-mascot-body:#F5C04E; --ev-mascot-hat:#7186C9; --ev-mascot-band:#EEF0F7; --ev-mascot-eye:#16213F;
   --ev-rec:        #FF6A4D;
-  --ev-rec-soft:   #3A1D16;
+  --ev-rec-soft:   #3D2030;
   --ev-leaf:       #6FCF97;
-  --ev-leaf-soft:  #1F3328;
+  --ev-leaf-soft:  #173A2C;
   --ev-warn-ink:   #FFC870;
-  --ev-warn-soft:  #3A2C17;
+  --ev-warn-soft:  #432F1C;
 }}
 /* migration aliases: delete once no class references them */
 .launcher-scope {
@@ -250,14 +262,15 @@ slab).
 
 **Colour says what a thing is.** Paper and ink carry the text; colour is
 kept for the index tabs. Each kind of capture has one ink (voice blue, meeting
-violet, screen teal, note manila) and wears it in three places only: the small
+violet, screen teal, note brown) and wears it in three places only: the small
 tab that holds a row's icon and its kind label, the dot on its filter chip
 (the chip fills with the soft tint while chosen), and the rule beside a
 meeting's details. Settings files its sections in four groups (Recording, Your
 words, Connected, This app) that borrow the same four inks for their icon
 tiles; the open section's tile is filled. A kind ink never marks a state:
 coral is still only "recording now", leaf "granted", warn "needs attention".
-Body text, buttons and switches stay ink and coat.
+Body text stays ink; primary buttons and switches are the marigold brand
+fill with navy on it; links, focus rings, checkboxes and small marks are coat.
 
 A meeting row leads with the meeting's name and its summary's overview;
 decisions and action items sit behind one line, the transcript behind
@@ -269,7 +282,7 @@ another, and the name opens the meeting on eavesy.com.
   carries the capture's state (hat up while the mic is live); nothing below
   repeats it.
 - A live capture shows in the panel as the **live card**: the pill carried
-  in, in `--ev-hud` charcoal with the coral light, the label, the time,
+  in, in the pill colours with the coral light, the label, the time,
   Stop, and the same number of lines the pill shows (newest in full ink,
   older in `--ev-hud-ink-2`). Nothing shrinks to one line.
 - Opening the panel fades it in over the pill (the native animator, about
@@ -287,8 +300,9 @@ another, and the name opens the meeting on eavesy.com.
   with a "‹ Captures" way back.
 
 **Type.** `--ev-font-round: ui-rounded, "SF Pro Rounded", "Nunito", system-ui, sans-serif`
-for the voice of the product: headings, date groups, buttons, chips, mascot
-bubbles, kbd. `--ev-font-text: -apple-system, BlinkMacSystemFont, system-ui, sans-serif`
+for the voice of the Mac app: headings, date groups, buttons, chips, mascot
+bubbles, kbd. The public website is set in Geist instead (`marketing.css`);
+pictures of the app on it keep the rounded face (`.ev-app-type`). `--ev-font-text: -apple-system, BlinkMacSystemFont, system-ui, sans-serif`
 for transcripts and long text (SF Pro reads better at length). Numbers use
 `font-variant-numeric: tabular-nums`. Don't use monospace anywhere in the UI.
 
@@ -306,10 +320,10 @@ for transcripts and long text (SF Pro reads better at length). Numbers use
 `--ev-r-pop: 12px`, `--ev-r-panel: 16px`, `--ev-r-hud: 999px` (bars); the HUD
 pill itself is r20, r22 when wide.
 
-**Elevation** (always charcoal-tinted, never neutral grey):
-`--ev-e-1: 0 1px 0 rgb(33 28 26 / .05)` (pressed-in well, inset),
-`--ev-e-2: 0 1px 2px rgb(33 28 26 / .08), 0 4px 14px -6px rgb(33 28 26 / .18)` (menus, thumbnails),
-`--ev-e-3: 0 0 0 .5px rgb(33 28 26 / .14), 0 24px 60px -22px rgb(33 28 26 / .45)` (panel, HUD).
+**Elevation** (always navy-tinted, never neutral grey):
+`--ev-e-1: 0 1px 0 rgb(22 33 63 / .05)` (pressed-in well, inset),
+`--ev-e-2: 0 1px 2px rgb(22 33 63 / .08), 0 4px 14px -6px rgb(22 33 63 / .18)` (menus, thumbnails),
+`--ev-e-3: 0 0 0 .5px rgb(22 33 63 / .14), 0 24px 60px -22px rgb(22 33 63 / .45)` (panel, HUD).
 In dark mode, multiply the alpha by 2 and add `inset 0 1px 0 rgb(255 240 220 / .06)`.
 
 **Spacing:** 4-pt grid. `--ev-s-1: 4px`, `-2: 8px`, `-3: 12px`, `-4: 16px`,
@@ -429,7 +443,7 @@ Every tile is visually equal: no lead button and no colour fill. Hover
 darkens the surface a touch and strengthens the line. While a capture runs,
 the label row goes and the tiles become the live bar in place: a 28px head
 row (status, elapsed time, cancel and Stop) over up to four lines of the
-newest words, on the HUD's charcoal. The title bar's mascot is the only
+newest words, on the pill colours. The title bar's mascot is the only
 mascot while it runs. Starting and writing use the same bar without Stop.
 There is no second listening card or expandable text box above search. The
 bar's height follows its lines, not the 90px of label and tiles it replaces,
@@ -545,7 +559,7 @@ row enters recording mode: the keys become a dashed coat outline reading
 480), independent of the capture panel and HUD. It uses the same tokens as the
 rest of the app: a well-tinted sidebar (the open section is a raised paper tab
 with a manila notch), cream index cards on paper (one level, never nested),
-and charcoal coat actions and switches. Dark mode uses the plain dark tokens;
+and marigold primary actions and switches. Dark mode uses the plain dark tokens;
 there is no extra manila mixing. Manila stays a highlight (the notch, step
 numbers, tags). All of it lives in `preferences.css`; coral stays for
 recording only.
@@ -580,40 +594,61 @@ Preserve drafts when switching sections. Show errors beside the affected
 controls. Use reduced-motion behavior. The capture panel and pill retain their
 geometry when Settings opens or closes.
 
-**HUD (floating pill, one fixed size per phase).** A solid charcoal pill
-(`--ev-hud`), not vibrancy glass: it has to read the same over any app, and
-CSS draws its corners so the shadow and the shape always match. Rust picks the
+**HUD (floating pill, one fixed size per phase).** A pill in its own colour
+(Settings → Pill), not vibrancy glass. Unless a colour is chosen it follows
+the appearance: paper with navy ink by day, navy by night; Charcoal, Ink,
+Forest, Plum, Slate and Paper are fixed choices. CSS draws its corners so the shadow and the shape always match. Rust picks the
 window size from the phase (`hud::size_for`) and animates the native frame
 once per phase change, or when a receipt's drawer opens (`peek_hud`). Content never measures itself or resizes the window, so
 the pill can't jitter or flip while words arrive.
 
 | Size | Px | Used for |
 |---|---|---|
-| pill | 244 × 36 | idle, saved, video recording, a plain "Saved" |
-| bar | 400 × 40 | recording and writing with live words off (the default) |
+| pill | 300 × 36 | idle, saved, video recording, a plain "Saved" |
+| bar | 340 × 40 | recording and writing with live words off (the default): the light, the time, the voice bars, the write chip, Cancel and Stop. The light and Stop are never cut off: the chip shortens its own name first |
+| options | bar or wide width × 256 | a dictation being recorded with its options open: the six ways it is written, then **Type as I talk** |
 | wide | 400 × 62 + 20 per line | recording and writing with 1, 2 or 4 lines of live words, failed, a save that wasn't typed (**Not typed** and why) |
 | receipt | 248 × 36 | a finished dictation with "Show the words when it's done" off, or **Not pasted** |
-| result | 400 × 176 | a finished dictation's drawer: the words that went out, editable, and the tone row (the dictation setting: a Tone pop-up and a For AI switch, then Translate). Opens by itself unless that switch is off; then hovering the receipt opens it |
+| result | 400 × 176 | a finished dictation's drawer: the words that went out, editable, and the tone row (the dictation setting: the write chip, then Translate). Opens by itself unless that switch is off; then hovering the receipt opens it |
 | shot | 360 × 172 | a screenshot, with its thumbnail |
 
 **The idle pill** reads, left to right: **Open Eavesy** (a house, then a
-hairline), **Talk** with its shortcut, Screenshot, Video, bare room, and
+hairline), **Talk** with its shortcut, Meeting, Screenshot, Video, Clipboard, bare room, and
 **×**. Open Eavesy is the sure way into the panel; a click on the bare room
 opens it too, and a drag there moves the control. It leads the pill so a
 near miss never lands on ×. The other states at this size (Saved, a video
 being written) show their status and × only. The pill is one width whatever
 the Talk shortcut is: a shortcut that would leave under 12px of bare room
-is left off the pill and named in Talk's tooltip instead.
+wraps under Talk, where the button's own box clips it out of sight, and is
+named in Talk's tooltip instead. Talk always has at least 98px, more than its
+icon and label need, so only the shortcut is ever hidden.
 
-**How it looks while recording** is the user's call (Settings → General → Recording
-control, `set_hud_look`): live words Off (the bar, the default), 1, 2 or 4
-lines, **Show the words when it's done**, on by default, and
-**See-through**, on by default, which turns the charcoal into a plain smoked
-glass (neutral grey at 64%, enough for 4.5:1 text over white, a hairline
-white edge, no coral ring) so the
-control sits back over whatever is underneath and blends into a screen share. Still
-no native glass, for the corner reason above. A change applies at once, even
-mid-recording: Rust refits the window and the HUD hears `hud:look`.
+**Everything about the pill is set on one page, Settings → Pill**: when it
+shows, its colour, how see-through it is, what it shows while you talk, what
+it does when a dictation is done, and where it sits. A change applies at
+once, even mid-recording: Rust refits the window and the HUD hears
+`hud:look`.
+
+- **Show the pill** (`set_hud_visibility`): **Always**; **While recording**
+  (off screen at rest, the same as closing it with ×); or **Never**, for
+  recording from shortcuts and the menu bar with nothing on screen. Never
+  still brings the pill up for what needs an answer or went wrong: a meeting
+  about to be recorded, a failure, and words that could not be pasted.
+- **Colour** (`set_hud_style`): Charcoal (the default), Ink, Forest, Plum,
+  Slate, or Paper, which turns the control light with dark ink. Each is one
+  `--ctl-bg`; everything drawn on the pill is `--ctl-fg` at some strength, so
+  a colour is never set on a single part. Red is still only the live mic.
+- **Transparency**: Solid, A little see-through, See-through (64%, the
+  default: neutral smoked glass, enough for 4.5:1 text over white), Very
+  see-through, Barely there (30%). Below the default the words can be hard
+  to read over a bright window; that is the user's trade to make. A hairline
+  edge, no coral ring, and no native glass, for the corner reason above. An
+  open menu is nearly solid whatever the level, and a screen recording's
+  controls stay solid.
+- **Live words** (`set_hud_look`): Off (the bar, the default), 1, 2, 4 or 8
+  lines; 8 keeps the most of what was said in view, and scrolls.
+- **Show the words when it's done**, and **Type as I talk**.
+
 **Faster live words**, on by default, shows words about a second sooner from
 a fast preview recognizer until the accurate one catches up; it applies from
 the next recording.
@@ -627,14 +662,13 @@ the next recording.
 There is no mascot or logo on the control: it opens Eavesy from a click on
 its surface. The five voice bars follow the mic level. The coral dot, the
 coral ring (solid look only) and the coral Stop are the only red, and only
-while the mic is live. Live words, when on, are in a quieter ink (62%) on a lighter charcoal (neutral
-grey at 72% when see-through) so they don't pull the eye while you talk; clicking in to
+while the mic is live. Live words, when on, are in a quieter ink (62%) on a slightly stronger fill so they don't pull the eye while you talk; clicking in to
 fix one brings it to full ink. The ticker is one line of 12.5/18 text, clipped from
 the start with a soft left fade so the newest words stay in view. Before the
 first word it shows the hint ("Go ahead, I'm listening", plus the paste shortcut).
 
 After stop the top row reads "Writing it down…" and the ticker shimmers. The
-control stays charcoal the whole way: stopping never turns it into another
+control keeps its colour the whole way: stopping never turns it into another
 object. A dictation ends as a **receipt**, the pill with a stamp that lands
 with a short spring: **Pasted · 16 words** (leaf), **Copied** with "⌘V to
 paste" (manila) or **Not pasted** (warn, with an Allow button for
@@ -647,11 +681,15 @@ pointer on it for 250ms (not on a button) opens the drawer.
 The drawer holds the words that went out, editable in place, beside Copy,
 **–** (collapse to the pill) and **×** (hide the control until it is
 reopened from the menu bar). Under the words, the **tone row** is the
-dictation setting itself (Settings → Dictation), not a one-off: a **Tone**
-pop-up (As spoken · Professional · Friendly · Concise, a native `<select>`
-whose list opens over the control, so the window never has to hold it), a
-1px rule, a **For AI** switch (written as a prompt for an AI agent; the
-track lights cream when on) and, at the row's end, **Translate**. The row shows the tone in force for the words (the server tells
+dictation setting itself (Settings → Dictation), not a one-off: the **write
+chip**, which names the choice in force (Exactly as said · As spoken ·
+Professional · Friendly · Concise · AI prompt) and, at the row's end,
+**Translate**. The chip opens the choices in the control's own look, where
+the words are, two to a row, with a tick on the one in force; never a native
+pop-up, which reads as another app's menu on a dark pill. The same chip sits
+on the recording bar, where the choices open under the controls, one to a
+row with what each does, above **Type as I talk**; the window grows to hold
+them and gives the room back when one is picked. The row shows the tone in force for the words (the server tells
 the app with them; a project's own tone counts, and the saved choice stands
 in when the server didn't say). Changing it keeps the choice first, for
 every dictation to come, on the account or on the project when the tone was
@@ -719,6 +757,31 @@ the app the words were pasted into), the control says which word for 4s with
 a leaf stamp, **✓ Added "Kubernetes"** (+N for more): in place of Pasted on
 the result, or as the whole pill when idle. A correction that could not be
 saved stamps **Not saved to dictionary** in warn.
+
+### Clipboard and screenshot history
+
+One panel, two views: what you copied, and your screenshots. It opens from
+the pill's Clipboard button, the menu bar, or a shortcut for each view
+(`⌥⇧V` clipboard, `⌥⇧S` screenshots; both change in Settings → Shortcuts).
+760 × 500, on the display the pointer is on, a little above the middle.
+Paper, like the launcher; no coral. Source: `desktop/launcher-ui/src/clipboard.tsx`,
+`desktop/src-tauri/src/clipboard.rs`.
+
+- **Top**: a search field that always has the keyboard, and a Clipboard |
+  Screenshots segmented control. `tab` switches views.
+- **Clipboard**: on the left, one row per thing copied (kind icon, first
+  line), under day headings, newest first. On the right, the whole thing, then
+  where it was copied from, when and how often, and its size.
+- **Screenshots**: a three-column grid of thumbnails with their time.
+- **Footer**: what the keys do on the left, then **Copy** (`⌘↵`) and the main
+  action, **Paste to <app>** (`↵`), naming the app the panel opened over.
+
+Arrows move, `↵` pastes into the app you were in, `⌘↵` or `⌘C` only copies,
+`⌘⌫` removes a clipboard row, `esc` clears the search and then closes. A click
+selects, a double click pastes, and a click outside closes it. The shortcut
+again closes it; the other view's shortcut switches to that view. Clipboard
+history never leaves the Mac: 1,000 items, 90 days, and nothing a password
+manager marks as private.
 
 ### Next meeting in the menu bar
 

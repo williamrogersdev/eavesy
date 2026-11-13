@@ -72,6 +72,10 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let meeting_item = MenuItem::with_id(app, "record_meeting", "Record a Meeting", true, None::<&str>)?;
     let open_item = MenuItem::with_id(app, "open", "Open Eavesy", true, menu_accel(&settings.toggle_hotkey))?;
     let control_item = MenuItem::with_id(app, "show_control", "Show Capture Control", true, None::<&str>)?;
+    // No key equivalents: the shortcuts are global hotkeys that close the
+    // panel when pressed again, and a menu's would fire as well while it is open.
+    let clipboard_item = MenuItem::with_id(app, "clipboard", "Clipboard History", true, None::<&str>)?;
+    let screenshots_item = MenuItem::with_id(app, "screenshots", "Screenshot History", true, None::<&str>)?;
     let settings_item = MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?;
     let dictionary_item = MenuItem::with_id(app, "dictionary", "Add to Dictionary…", true, None::<&str>)?;
     let machine_item = MenuItem::with_id(app, "this_mac", "Clean Up This Mac…", true, None::<&str>)?;
@@ -88,6 +92,9 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
             &meeting_item,
             &open_item,
             &control_item,
+            &separator()?,
+            &clipboard_item,
+            &screenshots_item,
             &separator()?,
             &dictionary_item,
             &machine_item,
@@ -156,6 +163,8 @@ pub fn install(app: &AppHandle) -> tauri::Result<()> {
             "record_meeting" => crate::meeting_watch::record_now(app),
             "open" => hotkeys::show_launcher(app),
             "show_control" => crate::hud::set_hidden_on_main(app, false),
+            "clipboard" => crate::clipboard::open(app, crate::clipboard::View::Clipboard),
+            "screenshots" => crate::clipboard::open(app, crate::clipboard::View::Screenshots),
             "settings" => { let _ = crate::commands::show_settings(app.clone()); },
             "dictionary" => { let _ = crate::settings_window::show_section(app, "dictionary"); },
             "this_mac" => { let _ = crate::settings_window::show_section(app, "machine"); },

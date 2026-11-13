@@ -151,20 +151,20 @@ export function renderRecap(content: RecapContent) {
   const section = (heading: string, items: string[]) => items.length
     ? `<h2 style="font-size:15px;margin:24px 0 8px">${heading}</h2><ul style="margin:0;padding-left:20px">${items.map((i) => `<li style="margin:4px 0">${i}</li>`).join('')}</ul>`
     : '';
-  const html = `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1c1917;line-height:1.5;max-width:600px;margin:0 auto;padding:24px">
+  const html = `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#16213f;line-height:1.5;max-width:600px;margin:0 auto;padding:24px">
 <h1 style="font-size:20px;margin:0 0 4px">${escapeHtml(content.title)}</h1>
-${when ? `<p style="color:#78716c;margin:0 0 16px;font-size:13px">${escapeHtml(when)}</p>` : ''}
+${when ? `<p style="color:#505a75;margin:0 0 16px;font-size:13px">${escapeHtml(when)}</p>` : ''}
 <h2 style="font-size:15px;margin:24px 0 8px">TL;DR</h2>
 <p style="margin:0">${escapeHtml(content.tldr || 'No summary was written for this meeting.')}</p>
 ${section('Decisions', decisions.map(escapeHtml))}
-${section('Action items', actions.map((a) => `${escapeHtml(a.text)}${a.meta ? ` <span style="color:#78716c">(${escapeHtml(a.meta)})</span>` : ''}`))}
+${section('Action items', actions.map((a) => `${escapeHtml(a.text)}${a.meta ? ` <span style="color:#505a75">(${escapeHtml(a.meta)})</span>` : ''}`))}
 ${section('Open questions', questions.map(escapeHtml))}
-<p style="margin:24px 0 0"><a href="${escapeHtml(content.link)}" style="color:#1c1917">Open the transcript</a></p>
-${content.attachmentNote ? `<p style="color:#78716c;font-size:13px">${escapeHtml(content.attachmentNote)}</p>` : ''}
-${content.shareLink ? `<p style="margin:24px 0 0"><a href="${escapeHtml(content.shareLink)}" style="display:inline-block;background:#1c1917;color:#fafaf9;text-decoration:none;font-weight:600;padding:10px 18px;border-radius:999px">Send to everyone</a></p>
-<p style="color:#78716c;font-size:13px;margin:6px 0 0">You'll see who gets it before anything is sent.</p>` : ''}
-${content.autoEnabledOffLink ? `<p style="color:#78716c;font-size:13px;margin-top:24px">${escapeHtml(AUTO_ENABLED_NOTICE)} <a href="${escapeHtml(content.autoEnabledOffLink)}" style="color:#78716c">Turn them off</a>.</p>` : ''}
-<p style="color:#a8a29e;font-size:12px;margin-top:32px">You get this because email recaps are on in your Eavesy settings.</p>
+<p style="margin:24px 0 0"><a href="${escapeHtml(content.link)}" style="color:#16213f">Open the transcript</a></p>
+${content.attachmentNote ? `<p style="color:#505a75;font-size:13px">${escapeHtml(content.attachmentNote)}</p>` : ''}
+${content.shareLink ? `<p style="margin:24px 0 0"><a href="${escapeHtml(content.shareLink)}" style="display:inline-block;background:#f2b233;color:#16213f;text-decoration:none;font-weight:600;padding:10px 18px;border-radius:999px">Send to everyone</a></p>
+<p style="color:#505a75;font-size:13px;margin:6px 0 0">You'll see who gets it before anything is sent.</p>` : ''}
+${content.autoEnabledOffLink ? `<p style="color:#505a75;font-size:13px;margin-top:24px">${escapeHtml(AUTO_ENABLED_NOTICE)} <a href="${escapeHtml(content.autoEnabledOffLink)}" style="color:#505a75">Turn them off</a>.</p>` : ''}
+<p style="color:#666d85;font-size:12px;margin-top:32px">You get this because email recaps are on in your Eavesy settings.</p>
 </body></html>`;
   return { subject, html, text };
 }

@@ -4,7 +4,7 @@ import type { HotkeyAction, HotkeyConflict, HotkeyError } from '@/lib/desktop/br
 export const FN = 'Fn';
 
 /** What people call each action (DESIGN.md §5 Settings). */
-export const SHORTCUT_LABELS: Record<HotkeyAction, string> = { toggle: 'Open Eavesy', dictation: 'Talk', assistant: 'Talk to Eavesy', screen: 'Record screen', control: 'Show or hide Eavesy' };
+export const SHORTCUT_LABELS: Record<HotkeyAction, string> = { toggle: 'Open Eavesy', dictation: 'Talk', assistant: 'Talk to Eavesy', screen: 'Record screen', control: 'Show or hide Eavesy', clipboard: 'Clipboard history', screenshots: 'Screenshot history' };
 
 /** How the Talk shortcut behaves: fn is a tap (fn_key.rs); other keys, fn chords included, tap or hold (dictate.rs). */
 export function talkHint(accelerator: string): string {

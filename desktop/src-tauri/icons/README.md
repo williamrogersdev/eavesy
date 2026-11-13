@@ -8,7 +8,7 @@ fetches it for you.
 ## App icon
 
 `gen_icon.py` draws `icon-source.png` (1024², cream squircle on the macOS icon
-grid, the Little Snoop at 78% with its coral lens). Regenerate the set with:
+grid, the marigold mascot in its navy hat at 78%, with its coral lens). Regenerate the set with:
 
 ```bash
 uv run gen_icon.py

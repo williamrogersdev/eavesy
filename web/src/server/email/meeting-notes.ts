@@ -297,17 +297,17 @@ export function renderMeetingNotes(content: NotesContent) {
   const section = (heading: string, items: string[]) => items.length
     ? `<h2 style="font-size:15px;margin:24px 0 8px">${heading}</h2><ul style="margin:0;padding-left:20px">${items.map((i) => `<li style="margin:4px 0">${i}</li>`).join('')}</ul>`
     : '';
-  const html = `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#1c1917;line-height:1.5;max-width:600px;margin:0 auto;padding:24px">
+  const html = `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#16213f;line-height:1.5;max-width:600px;margin:0 auto;padding:24px">
 ${content.note ? `<p style="margin:0 0 24px;white-space:pre-wrap">${escapeHtml(content.note)}</p>` : ''}
 <h1 style="font-size:20px;margin:0 0 4px">${escapeHtml(content.title)}</h1>
-${when ? `<p style="color:#78716c;margin:0 0 16px;font-size:13px">${escapeHtml(when)}</p>` : ''}
+${when ? `<p style="color:#505a75;margin:0 0 16px;font-size:13px">${escapeHtml(when)}</p>` : ''}
 <h2 style="font-size:15px;margin:24px 0 8px">Summary</h2>
 <p style="margin:0">${escapeHtml(tldr)}</p>
-${section('Action items', actions.map((a) => `${escapeHtml(a.text)}${a.meta ? ` <span style="color:#78716c">(${escapeHtml(a.meta)})</span>` : ''}`))}
+${section('Action items', actions.map((a) => `${escapeHtml(a.text)}${a.meta ? ` <span style="color:#505a75">(${escapeHtml(a.meta)})</span>` : ''}`))}
 ${section('Decisions', decisions.map(escapeHtml))}
-<p style="margin:24px 0 0"><a href="${escapeHtml(content.shareLink)}" style="color:#1c1917">Open the full notes</a></p>
-${content.attachmentNote ? `<p style="color:#78716c;font-size:13px">${escapeHtml(content.attachmentNote)}</p>` : ''}
-<p style="color:#a8a29e;font-size:12px;margin-top:32px">${escapeHtml(from)}</p>
+<p style="margin:24px 0 0"><a href="${escapeHtml(content.shareLink)}" style="color:#16213f">Open the full notes</a></p>
+${content.attachmentNote ? `<p style="color:#505a75;font-size:13px">${escapeHtml(content.attachmentNote)}</p>` : ''}
+<p style="color:#666d85;font-size:12px;margin-top:32px">${escapeHtml(from)}</p>
 </body></html>`;
   return { subject, html, text };
 }

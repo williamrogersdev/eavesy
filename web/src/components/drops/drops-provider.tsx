@@ -398,7 +398,7 @@ export function DropsProvider({ children }: { children: ReactNode }) {
       {dragging ? (
         <div className="pointer-events-none fixed inset-0 z-[90] flex items-center justify-center bg-ev-paper/70 backdrop-blur-sm">
           <div className="flex flex-col items-center gap-2 rounded-[var(--ev-r-panel)] border-2 border-dashed border-ev-coat bg-ev-paper px-10 py-8 text-center shadow-[var(--ev-e-3)]">
-            <Upload className="h-7 w-7 text-action" />
+            <Upload className="h-7 w-7 text-ev-coat" />
             <p className="text-sm font-semibold text-ev-ink">Drop to send to your devices</p>
             <p className="text-xs text-ev-ink-2">It shows up on your other computers right away.</p>
           </div>
@@ -449,7 +449,7 @@ function ToastStack({
                   onUndo(toast);
                   onDismiss(toast.id);
                 }}
-                className="rounded-[var(--ev-r-ctl)] px-2 py-1 text-xs font-medium text-action hover:bg-[var(--ev-hover)]"
+                className="rounded-[var(--ev-r-ctl)] px-2 py-1 text-xs font-medium text-ev-coat hover:bg-[var(--ev-hover)]"
               >
                 Undo
               </button>
@@ -477,7 +477,7 @@ function ToastAction({ drop }: { drop: Drop }) {
       <a
         href={downloadUrl(drop)}
         download={drop.filename ?? true}
-        className="flex items-center gap-1 rounded-full bg-action font-round font-bold px-2 py-1 text-xs text-ev-on-coat hover:bg-action-hover"
+        className="flex items-center gap-1 rounded-full bg-action font-round font-bold px-2 py-1 text-xs text-ev-on-brand hover:bg-action-hover"
       >
         <Download className="h-3.5 w-3.5" /> Download
       </a>
@@ -492,7 +492,7 @@ function ToastAction({ drop }: { drop: Drop }) {
           .catch(() => setCopyState('failed'))
           .finally(() => window.setTimeout(() => setCopyState('idle'), 2000));
       }}
-      className="flex items-center gap-1 rounded-full bg-action font-round font-bold px-2 py-1 text-xs text-ev-on-coat hover:bg-action-hover"
+      className="flex items-center gap-1 rounded-full bg-action font-round font-bold px-2 py-1 text-xs text-ev-on-brand hover:bg-action-hover"
     >
       {copyState === 'copied' ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
       {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy'}

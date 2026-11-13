@@ -1,6 +1,6 @@
 /*
  * eavesy.com public pages. Same standard as the app (desktop/DESIGN.md):
- * cream surfaces, charcoal ink, the coat for actions, manila for warmth,
+ * warm paper, navy ink, marigold for actions, the navy coat for links,
  * coral only for "recording right now". The layout root carries `.ev .ev-site`.
  */
 
@@ -14,10 +14,10 @@
     --accent: var(--ev-coat);
     --accent-hover: var(--ev-coat-hover);
     --accent-soft: var(--ev-coat-soft);
-    --action: var(--ev-coat);
-    --action-hover: var(--ev-coat-hover);
-    --primary: var(--ev-coat);
-    --primary-foreground: var(--ev-on-coat);
+    --action: var(--ev-brand);
+    --action-hover: var(--ev-brand-hover);
+    --primary: var(--ev-brand);
+    --primary-foreground: var(--ev-on-brand);
 
     background: var(--ev-paper);
     color: var(--ev-ink);
@@ -27,13 +27,32 @@
 
   .ev-site :where(h1, h2, h3, h4) {
     font-family: var(--ev-font-round);
-    letter-spacing: -0.015em;
+    letter-spacing: -0.025em;
   }
 
   .ev-site ::selection {
     background: var(--ev-manila-soft);
     color: var(--ev-manila-ink);
   }
+}
+
+/* Type: the site is set in Geist, a plain grotesque. The rounded face is the
+   Mac app's voice; `.ev-app-type` brings it back for pictures of the app.
+   Unlayered so it wins over the tokens on `.ev`. */
+.ev.ev-site {
+  --ev-font-round: var(--font-geist-sans);
+  --ev-font-text: var(--font-geist-sans);
+}
+.ev-site .ev-app-type {
+  --ev-font-round: ui-rounded, 'SF Pro Rounded', 'Nunito', system-ui, sans-serif;
+  --ev-font-text: -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --ev-t-title: 700 19px/24px var(--ev-font-round);
+  --ev-t-head: 650 15px/20px var(--ev-font-round);
+  --ev-t-body: 400 13.5px/20px var(--ev-font-text);
+  --ev-t-ui: 550 13px/18px var(--ev-font-round);
+  --ev-t-small: 500 11.5px/16px var(--ev-font-round);
+  --ev-t-group: 700 12px/16px var(--ev-font-round);
+  font-family: var(--ev-font-text);
 }
 
 @layer components {

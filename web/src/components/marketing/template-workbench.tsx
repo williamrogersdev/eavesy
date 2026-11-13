@@ -151,7 +151,7 @@ export function TemplateWorkbench({ slug }: { slug: string }) {
         <button
           type="button"
           onClick={() => void copy()}
-          className="min-h-11 rounded-full bg-ev-coat px-5 font-semibold text-ev-on-coat"
+          className="min-h-11 rounded-full bg-ev-brand px-5 font-semibold text-ev-on-brand"
         >
           Copy your draft
         </button>

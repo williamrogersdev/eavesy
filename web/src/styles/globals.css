@@ -11,8 +11,9 @@
 
 /*
  * The whole site runs on the --ev tokens (desktop/DESIGN.md): <html> carries
- * `.ev`, and the older semantic names below resolve to them. Red (--signal)
- * means "recording right now" only; errors and destructive actions use warn.
+ * `.ev`, and the older semantic names below resolve to them. Marigold (--ev-brand)
+ * fills buttons; navy (--ev-coat) carries links and focus. Red (--signal) means
+ * "recording right now" only; errors and destructive actions use warn.
  */
 .ev {
   --background: var(--ev-paper);
@@ -24,12 +25,12 @@
   --accent: var(--ev-coat);
   --accent-hover: var(--ev-coat-hover);
   --accent-soft: var(--ev-coat-soft);
-  --action: var(--ev-coat);
-  --action-hover: var(--ev-coat-hover);
+  --action: var(--ev-brand);
+  --action-hover: var(--ev-brand-hover);
   --danger: var(--ev-warn-ink);
   --danger-soft: var(--ev-warn-soft);
-  --primary: var(--ev-coat);
-  --primary-foreground: var(--ev-on-coat);
+  --primary: var(--ev-brand);
+  --primary-foreground: var(--ev-on-brand);
   color-scheme: light dark;
 }
 
@@ -66,6 +67,10 @@
   --color-ev-coat-hover: var(--ev-coat-hover);
   --color-ev-coat-soft: var(--ev-coat-soft);
   --color-ev-on-coat: var(--ev-on-coat);
+  --color-ev-brand: var(--ev-brand);
+  --color-ev-brand-hover: var(--ev-brand-hover);
+  --color-ev-brand-soft: var(--ev-brand-soft);
+  --color-ev-on-brand: var(--ev-on-brand);
   --color-ev-manila: var(--ev-manila);
   --color-ev-manila-soft: var(--ev-manila-soft);
   --color-ev-manila-ink: var(--ev-manila-ink);
