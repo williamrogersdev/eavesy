@@ -79,6 +79,7 @@ export const Route = createFileRoute('/api/meetings/$id/chat')({
             history: body.messages,
             openRouter: plan.openRouter,
             byoApiKey: plan.summary.apiKey,
+            model: plan.summary.model,
           });
         } catch (err) {
           console.error('[meeting-chat] failed', err);

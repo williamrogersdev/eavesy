@@ -16,6 +16,7 @@ import {
 import { dictationStyle, isDictationStyle } from '@/lib/transcription/dictation-style';
 import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS, normalizeVocabulary, parseVocabulary } from '@/lib/transcription/vocabulary';
 import { openUserKeys } from '@/server/secret-box';
+import { DEFAULT_ASSISTANT_MODEL, DEFAULT_NOTES_MODEL, isModelChoice, MODEL_CHOICES } from '@/lib/ai/model-choice';
 import { resolveIngestActor } from '@/server/device-auth';
 import { getCloudflareContext } from '@/server/cloudflare-context';
 import { type EmailEnv, emailConfigured } from '@/server/email/resend';
@@ -27,7 +28,7 @@ import type { MeetingBotsEnv } from '@/server/meeting-bots/control';
 import { botsAvailable } from '@/server/meeting-bots/service';
 
 /** What the Mac app may change with its device token; the rest needs a web sign-in. */
-const MAC_WRITABLE = new Set(['spokenLanguages', 'customVocabulary', 'dictationStyle', 'dictationForAgents', 'meetingCaptureDefault', 'notetakerName']);
+const MAC_WRITABLE = new Set(['notesModel', 'assistantModel', 'spokenLanguages', 'customVocabulary', 'dictationStyle', 'dictationForAgents', 'meetingCaptureDefault', 'notetakerName']);
 
 const updateSchema = z.object({
   displayName: z.string().max(100).optional(),
@@ -37,6 +38,9 @@ const updateSchema = z.object({
   defaultTranscriptionEngine: z.literal('whisper').optional(),
   defaultLanguage: z.string().refine(isTranscriptionLanguage, 'unsupported language').optional(),
   notesLanguage: z.string().refine(isNotesLanguage, 'unsupported language').nullable().optional(),
+  /** A model from `MODEL_CHOICES`; null goes back to Eavesy's default. */
+  notesModel: z.string().refine(isModelChoice, 'unsupported model').nullable().optional(),
+  assistantModel: z.string().refine(isModelChoice, 'unsupported model').nullable().optional(),
   spokenLanguages: z.array(z.string().max(12)).max(MAX_SPOKEN_LANGUAGES * 2).optional(),
   byoAnthropicKey: z.string().max(200).nullable().optional(),
   dictationStyle: z.string().refine(isDictationStyle, 'unsupported style').optional(),
@@ -86,6 +90,12 @@ export const Route = createFileRoute('/api/me')({
           defaultTranscriptionEngine: 'whisper',
           defaultLanguage: u.defaultLanguage,
           notesLanguage: u.notesLanguage ?? null,
+          // The choice (null: the default), what the default is, and what can be chosen.
+          notesModel: isModelChoice(u.notesModel) ? u.notesModel : null,
+          assistantModel: isModelChoice(u.assistantModel) ? u.assistantModel : null,
+          defaultNotesModel: DEFAULT_NOTES_MODEL,
+          defaultAssistantModel: DEFAULT_ASSISTANT_MODEL,
+          modelChoices: MODEL_CHOICES,
           spokenLanguages: spokenLanguages(u),
           customVocabulary: parseVocabulary(u.customVocabularyJson),
           dictationStyle: dictationStyle(u.dictationStyle),
@@ -138,6 +148,8 @@ export const Route = createFileRoute('/api/me')({
         if (body.defaultTranscriptionEngine) patch.defaultTranscriptionEngine = body.defaultTranscriptionEngine;
         if (body.defaultLanguage) patch.defaultLanguage = body.defaultLanguage;
         if (body.notesLanguage !== undefined) patch.notesLanguage = body.notesLanguage;
+        if (body.notesModel !== undefined) patch.notesModel = body.notesModel;
+        if (body.assistantModel !== undefined) patch.assistantModel = body.assistantModel;
         if (body.spokenLanguages) {
           const spoken = normalizeSpokenLanguages(body.spokenLanguages);
           patch.spokenLanguagesJson = spoken.length > 0 ? JSON.stringify(spoken) : null;

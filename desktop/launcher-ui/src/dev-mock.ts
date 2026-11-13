@@ -426,6 +426,8 @@ function mockAccount(noProjects: boolean, manyWords: boolean, noPrompts = false,
     spokenLanguages: ['en'],
     dictationStyle: 'concise',
     dictationForAgents: true,
+    notesModel: null,
+    assistantModel: 'claude-opus-5-5',
     customVocabulary: manyWords
       ? Array.from({ length: 140 }, (_, i) => (i < many.length ? many[i] : `${many[i % many.length]} ${Math.floor(i / many.length) + 1}`))
       : ['Eavesy', 'Priya Raman', 'Kubernetes'],

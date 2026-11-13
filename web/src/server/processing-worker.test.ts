@@ -421,8 +421,46 @@ describe('rolling summary', () => {
     const api = stubAnthropic(() => summaryReply(SUMMARY));
     restoreFetch = api.restore;
     await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
-    expect((api.calls[0] as { model: string; stream?: boolean })).toMatchObject({ model: 'claude-sonnet-4-6' });
+    // The default notes model, and a declined request is retried on its fallback.
+    expect((api.calls[0] as { model: string; stream?: boolean })).toMatchObject({ model: 'claude-sonnet-5-5', fallbacks: 'default' });
     expect((api.calls[0] as { stream?: boolean }).stream).toBeUndefined();
+  });
+
+  test('the final summary is written by the model the account chose, and says so', async () => {
+    const t = setup();
+    t.sqlite.run(`UPDATE users SET notes_model = 'claude-opus-5-5'`);
+    t.addSegment(0, 'complete');
+    t.addLine(0, 'We ship Friday.');
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(api.calls[0]).toMatchObject({ model: 'claude-opus-5-5' });
+    expect(t.sqlite.query(`SELECT generated_by_model AS m FROM summaries WHERE meeting_id = 'm1'`).get()).toEqual({ m: 'claude-opus-5-5' });
+  });
+
+  test('notes a fallback model wrote after a decline are recorded under that model', async () => {
+    const t = setup();
+    t.addSegment(0, 'complete');
+    t.addLine(0, 'We ship Friday.');
+    const api = stubAnthropic(() => {
+      const reply = summaryReply(SUMMARY);
+      return { json: { ...reply.json, model: 'claude-sonnet-5' } };
+    });
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(api.calls[0]).toMatchObject({ model: 'claude-sonnet-5-5', fallbacks: 'default' });
+    expect(t.sqlite.query(`SELECT generated_by_model AS m FROM summaries WHERE meeting_id = 'm1'`).get()).toEqual({ m: 'claude-sonnet-5' });
+  });
+
+  test('a choice that is no longer offered falls back to the default', async () => {
+    const t = setup();
+    t.sqlite.run(`UPDATE users SET notes_model = 'claude-sonnet-4-6'`);
+    t.addSegment(0, 'complete');
+    t.addLine(0, 'We ship Friday.');
+    const api = stubAnthropic(() => summaryReply(SUMMARY));
+    restoreFetch = api.restore;
+    await deliver(t.env, { kind: 'summarize', meetingId: 'm1' });
+    expect(api.calls[0]).toMatchObject({ model: 'claude-sonnet-5-5' });
   });
 });
 

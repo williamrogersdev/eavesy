@@ -4,6 +4,7 @@ import { ArrowLeft, ChevronRight, FolderOpen, Plus, Trash2, X } from 'lucide-rea
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { parseProject, type ProjectFields, type ProjectSummary } from '@/lib/api/projects';
 import { accountCall, errMsg } from '@/lib/desktop/bridge';
+import { DEFAULT_ASSISTANT_MODEL, DEFAULT_NOTES_MODEL, isModelChoice, modelNote, modelOptions } from '@/lib/ai/model-choice';
 import { isRecord } from '@/lib/json';
 import { PROJECT_LIMITS } from '@/lib/projects';
 import { DICTATION_EXAMPLE, DICTATION_STYLES, dictationStyle, effectiveDictation, isDictationStyle, WRITING_CHOICES, writingChoice, writingFor, type DictationStyle } from '@/lib/transcription/dictation-style';
@@ -55,6 +56,10 @@ export interface AccountPrefs {
   words: string[];
   style: DictationStyle;
   forAgents: boolean;
+  /** The Claude model for meeting notes and questions; null is Eavesy's default. */
+  notesModel: string | null;
+  /** The Claude model Eavesy's assistant runs on; null is Eavesy's default. */
+  assistantModel: string | null;
 }
 
 /**
@@ -81,6 +86,8 @@ export function useAccountPrefs(accountKey: string | null) {
           words: strings(me.customVocabulary),
           style: dictationStyle(me.dictationStyle),
           forAgents: me.dictationForAgents === true,
+          notesModel: isModelChoice(me.notesModel) ? me.notesModel : null,
+          assistantModel: isModelChoice(me.assistantModel) ? me.assistantModel : null,
         });
       })
       .catch((e: unknown) => { if (live) setError(errMsg(e, 'Couldn’t load your settings.')); });
@@ -292,6 +299,38 @@ export function LanguagesCard({ account }: { account: AccountPrefsState }) {
         {!prefs && error && <div role="alert" className="ev-settings-feedback"><p>{error}</p><Button variant="outline" size="sm" onClick={retry}>Retry</Button></div>}
         {prefs && <Status error={error} />}
       </div>
+    </Card>
+  );
+}
+
+/** Which Claude model writes meeting notes and answers questions, and which one the assistant runs on. */
+export function ModelsCard({ account }: { account: AccountPrefsState }) {
+  const { prefs, update, error, retry } = account;
+  return (
+    <Card title="AI models">
+      <Row label="Meeting notes and questions" hint={`Writes the notes after a meeting and answers what you ask during it. ${modelNote(prefs?.notesModel, DEFAULT_NOTES_MODEL)}`}>
+        <Select
+          label="The model for meeting notes and questions"
+          value={prefs?.notesModel ?? ''}
+          options={modelOptions(DEFAULT_NOTES_MODEL)}
+          disabled={!prefs}
+          onChange={(next) => update({ notesModel: next || null }, { notesModel: next || null })}
+        />
+      </Row>
+      <Row label="Eavesy assistant" hint={`What you talk to with the Talk key. ${modelNote(prefs?.assistantModel, DEFAULT_ASSISTANT_MODEL)}`}>
+        <Select
+          label="The model for Eavesy’s assistant"
+          value={prefs?.assistantModel ?? ''}
+          options={modelOptions(DEFAULT_ASSISTANT_MODEL)}
+          disabled={!prefs}
+          onChange={(next) => update({ assistantModel: next || null }, { assistantModel: next || null })}
+        />
+      </Row>
+      {error && (
+        <div className="ev-set-body">
+          {!prefs ? <div role="alert" className="ev-settings-feedback"><p>{error}</p><Button variant="outline" size="sm" onClick={retry}>Retry</Button></div> : <Status error={error} />}
+        </div>
+      )}
     </Card>
   );
 }

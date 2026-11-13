@@ -290,11 +290,13 @@ export function memoryBlock(notes: readonly string[], about: readonly string[] =
 export async function runTurn(
   client: AssistantClient,
   input: Omit<TurnInput, 'style' | 'instructions' | 'memory' | 'about' | 'features'> & { style?: AssistantStyle; instructions?: string[]; memory?: string[]; about?: string[]; features?: string[] },
+  /** The account's choice of model (`chosenModel`); absent is the default. */
+  model?: string,
 ): Promise<TurnReply> {
   const notes = memoryBlock(input.memory ?? [], input.about ?? []);
   const prompt = systemPrompt(input.style, input.instructions, input.features);
   const message = await client.messages.create({
-    model: MODELS.assistant,
+    model: model ?? MODELS.assistant,
     max_tokens: REPLY_TOKENS,
     system: notes ? [{ type: 'text', text: prompt }, { type: 'text', text: notes }] : prompt,
     tools: toolsFor(input.features),
@@ -396,13 +398,14 @@ const CONSOLIDATE_SCHEMA = {
 } as const;
 
 /** Throws when the model fails or answers with something that isn't fewer notes; the Mac then keeps the notes as they were. */
-export async function runConsolidate(client: AssistantClient, input: ConsolidateInput): Promise<{ notes: string[] }> {
+export async function runConsolidate(client: AssistantClient, input: ConsolidateInput, model?: string): Promise<{ notes: string[] }> {
+  // Thinking can't be turned off on these models (the request is refused), so
+  // it runs at low effort, with room for it in the limit.
   const message = await client.messages.create({
-    model: MODELS.assistant,
-    max_tokens: 4_000,
-    thinking: { type: 'disabled' },
+    model: model ?? MODELS.assistant,
+    max_tokens: 8_000,
     system: CONSOLIDATE_SYSTEM_PROMPT,
-    output_config: { format: { type: 'json_schema', schema: CONSOLIDATE_SCHEMA as unknown as Record<string, unknown> } },
+    output_config: { effort: 'low', format: { type: 'json_schema', schema: CONSOLIDATE_SCHEMA as unknown as Record<string, unknown> } },
     messages: [{ role: 'user', content: `<notes>\n${noteLines(input.notes, fenceExactly).join('\n')}\n</notes>` }],
   });
   if (message.stop_reason !== 'end_turn') throw new Error('merge incomplete');

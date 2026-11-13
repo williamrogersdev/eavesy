@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { resolveIngestActor } from '@/server/device-auth';
 import { anthropic } from '@/lib/ai/client';
+import { assistantModelFor } from '@/server/assistant-model';
 import { guardSpend, guardUserQuota, refundSpend, refundUserQuota } from '@/server/rate-limit';
 import { MAX_CONSOLIDATE_BYTES, consolidateInput, readJson, respond, runConsolidate } from '@/server/assistant';
 
@@ -17,7 +18,7 @@ export const Route = createFileRoute('/api/assistant/consolidate')({ server: { h
     if (quota) return quota;
     const limited = await guardSpend(request, 'assistant', { perMin: 60, perDay: 20_000 });
     if (limited) { await refundUserQuota(actor.userId, 'assistant', chargedAt); return limited; }
-    return respond(() => runConsolidate(anthropic(), input), async () => {
+    return respond(async () => runConsolidate(anthropic(), input, await assistantModelFor(actor.userId)), async () => {
       await Promise.allSettled([refundUserQuota(actor.userId, 'assistant', chargedAt), refundSpend('assistant', chargedAt)]);
     });
   },

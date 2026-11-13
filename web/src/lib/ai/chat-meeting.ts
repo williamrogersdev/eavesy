@@ -1,5 +1,5 @@
 import { OPENROUTER_MODELS, openRouterChat } from '@/lib/providers/openrouter-chat';
-import { anthropic, anthropicForUser, MODELS } from './client';
+import { anthropic, anthropicForUser, MODELS, refusalFallback, replyText } from './client';
 
 export interface ChatTurn {
   role: 'user' | 'assistant';
@@ -11,6 +11,8 @@ export interface ChatMeetingInput {
   history: ChatTurn[];
   openRouter?: { apiKey: string } | null;
   byoApiKey?: string;
+  /** The Claude model to answer with (`plan.summary.model`); absent is the default. */
+  model?: string;
 }
 
 function systemPrompt(context: string): string {
@@ -44,14 +46,16 @@ export async function chatWithMeeting(input: ChatMeetingInput): Promise<string> 
   }
 
   const client = input.byoApiKey ? anthropicForUser(input.byoApiKey) : anthropic();
-  const response = await client.messages.create({
-    model: MODELS.summary,
-    max_tokens: 1024,
+  // Low effort: an answer someone is waiting for, read from a transcript.
+  // The limit leaves room for the model's thinking as well as the answer.
+  const model = input.model ?? MODELS.summary;
+  const response = await client.beta.messages.create({
+    ...refusalFallback(model),
+    model,
+    max_tokens: 8_000,
+    output_config: { effort: 'low' },
     system,
     messages: history.map((t) => ({ role: t.role, content: t.content })),
   });
-  return response.content
-    .map((c) => (c.type === 'text' ? c.text : ''))
-    .join('')
-    .trim();
+  return replyText(response, 'chat').trim();
 }
