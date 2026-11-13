@@ -6,6 +6,17 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-13 - desktop
+
+### Added
+
+- Mac app: marigold mascot in icons, share image and emails; design standard ([#394](https://github.com/williamrogersdev/eavesy/pull/394))
+- Mac app: marigold and navy palette, navy-hatted mascot, theme-following pill ([#392](https://github.com/williamrogersdev/eavesy/pull/392))
+- Mac app: a Pill page in Settings, pill colours and transparency, and a recording bar that fits ([#382](https://github.com/williamrogersdev/eavesy/pull/382))
+- Mac app: clipboard and screenshot history panel ([#384](https://github.com/williamrogersdev/eavesy/pull/384))
+- Mac app: the meeting's notes so far and typed questions, in its panel ([#387](https://github.com/williamrogersdev/eavesy/pull/387))
+- Mac app: say plainly when a meeting is recording, and start one from the pill ([#383](https://github.com/williamrogersdev/eavesy/pull/383))
+
 ## [0.9.16] - 2026-11-12 - desktop
 
 ### Added
