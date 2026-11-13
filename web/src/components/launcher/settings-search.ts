@@ -5,7 +5,8 @@ import type { SettingsSection } from '@/lib/desktop/bridge';
  * sidebar finds a setting by the words people use for it ("mcp", "hotkey").
  */
 const SECTION_KEYWORDS: Record<SettingsSection, string> = {
-  capture: 'sounds meetings record automatically auto-record calls zoom teams meet live captions recording appearance live words see-through translucent position pill hud recordings folder screenshots',
+  capture: 'sounds meetings record automatically auto-record calls zoom teams meet live captions recordings folder screenshots',
+  pill: 'recording control capture control hud bar appearance look colour color theme tint see-through translucent transparent transparency opacity hide hidden show visible never position place live words lines type as i talk result preview',
   dictation: 'tone style format for agents dictate typing paste',
   transcription: 'languages language notes translate',
   dictionary: 'custom words vocabulary spelling replacements swap',

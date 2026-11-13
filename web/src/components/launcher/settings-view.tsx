@@ -2,8 +2,8 @@
 
 import './preferences.css';
 
-import { ArrowLeft, ArrowUpRight, AudioLines, BellRing, BookOpen, Cable, Check, FolderOpen, Keyboard, Languages, Laptop, Loader2, LogOut, MessageCircle, MessageSquareText, RotateCcw, Search, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { ArrowLeft, ArrowUpRight, AudioLines, BellRing, BookOpen, Cable, Check, FolderOpen, Keyboard, Languages, Laptop, Loader2, LogOut, MessageCircle, MessageSquareText, RectangleHorizontal, RotateCcw, Search, ShieldCheck, SlidersHorizontal, UserRound } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Button, Card, IconButton, Mascot, Row, Segmented, Select, StatusDisc, Switch } from '@/components/launcher/ui';
 import { RestoreDefaultShortcuts, ShortcutRow, talkHint, useShortcuts } from '@/components/launcher/shortcut-row';
 import { isGranted, PermissionChecklist, permissionSpecs } from '@/components/launcher/permission-checklist';
@@ -24,6 +24,9 @@ import {
   setAgentSpeakFinished,
   copyText,
   setHudLook,
+  setHudStyle,
+  setHudVisibility,
+  HUD_TINTS,
   checkPermissions,
   checkForUpdates,
   getAppInfo,
@@ -35,6 +38,8 @@ import {
   type AccountInfo,
   type SettingsSection,
   type HudPreviewLines,
+  type HudTint,
+  type HudVisibility,
   type LauncherPosition,
   type Permissions,
   type PrivacyPane,
@@ -69,7 +74,30 @@ const PREVIEW_OPTIONS: { value: string; label: string }[] = [
   { value: '1', label: '1 line' },
   { value: '2', label: '2 lines' },
   { value: '4', label: '4 lines' },
+  { value: '8', label: '8 lines' },
 ];
+
+const TINT_LABELS: Record<HudTint, string> = { auto: 'Follows the appearance', charcoal: 'Charcoal', ink: 'Ink', forest: 'Forest', plum: 'Plum', slate: 'Slate', paper: 'Paper' };
+
+/** How solid the pill is, in percent, as the levels Settings offers. */
+const OPACITY_OPTIONS: { value: string; label: string }[] = [
+  { value: '100', label: 'Solid' },
+  { value: '85', label: 'A little see-through' },
+  { value: '64', label: 'See-through' },
+  { value: '45', label: 'Very see-through' },
+  { value: '30', label: 'Barely there' },
+];
+
+const VISIBILITY_OPTIONS: { value: HudVisibility; label: string }[] = [
+  { value: 'always', label: 'Always' },
+  { value: 'capturing', label: 'While recording' },
+  { value: 'never', label: 'Never' },
+];
+const VISIBILITY_HINTS: Record<HudVisibility, string> = {
+  always: 'The pill rests on screen, ready for a click, and grows while you record.',
+  capturing: 'Nothing on screen until you start. The pill shows while it records and for what came of it, then goes away.',
+  never: 'Recording works from your shortcuts and the menu bar, with nothing on screen. The pill still comes up to ask about a meeting, and to say when something went wrong.',
+};
 
 type AgentHold = '0' | '120' | '300' | '900';
 const AGENT_HOLDS: { value: AgentHold; label: string }[] = [
@@ -355,6 +383,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
   const [openPrompt, setOpenPrompt] = useState<string | null>(null);
   const sections: { id: SettingsSection; group: SettingsGroup; label: string; icon: typeof SlidersHorizontal; hint: string }[] = [
     { id: 'capture', group: 'recording' as const, label: 'Capture', icon: SlidersHorizontal, hint: 'Recording, screenshots, and where things are saved.' },
+    ...(isDesktop() ? [{ id: 'pill' as const, group: 'recording' as const, label: 'Pill', icon: RectangleHorizontal, hint: 'The floating control: when it shows, how it looks while you talk, and where it sits.' }] : []),
     { id: 'dictation', group: 'recording' as const, label: 'Dictation', icon: AudioLines, hint: 'How your words are written when Eavesy types them for you.' },
     { id: 'transcription', group: 'recording' as const, label: 'Transcription', icon: Languages, hint: 'The languages Eavesy listens for.' },
     { id: 'shortcuts', group: 'recording' as const, label: 'Shortcuts', icon: Keyboard, hint: 'Make Eavesy work the way you do.' },
@@ -466,8 +495,13 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
       .catch(() => setMessagesNote('Couldn’t copy the instructions.'));
   };
   const savedLines = settings?.hud_preview_lines;
-  const previewLines: HudPreviewLines = savedLines === 1 || savedLines === 2 || savedLines === 4 ? savedLines : 0;
-  const translucent = settings?.hud_translucent ?? true;
+  const previewLines: HudPreviewLines = savedLines === 1 || savedLines === 2 || savedLines === 4 || savedLines === 8 ? savedLines : 0;
+  const opacity = settings?.hud_opacity ?? (settings?.hud_translucent === false ? 100 : 64);
+  const translucent = opacity < 100;
+  const tint: HudTint = HUD_TINTS.find((known) => known === settings?.hud_tint) ?? 'auto';
+  const visibility: HudVisibility = settings?.hud_quiet ? 'never' : settings?.hud_hidden ? 'capturing' : 'always';
+  // The nearest level on offer, for a value saved by hand or by an older build.
+  const opacityLevel = OPACITY_OPTIONS.reduce((best, option) => Math.abs(Number(option.value) - opacity) < Math.abs(Number(best.value) - opacity) ? option : best).value;
   const fastWords = settings?.fast_live_words ?? true;
   const resultPreview = settings?.hud_result_preview ?? false;
   const [lookError, setLookError] = useState<string | null>(null);
@@ -480,6 +514,17 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
       void getSettings().then((saved) => setSettings((current) => current && saved
         ? { ...current, hud_preview_lines: saved.hud_preview_lines, hud_translucent: saved.hud_translucent, fast_live_words: saved.fast_live_words, hud_result_preview: saved.hud_result_preview }
         : current)).catch(() => {});
+    });
+  };
+  /** Saves one pill setting, shown at once and put back to what is saved if it didn't take. */
+  const changePill = (shown: Partial<Settings>, save: () => Promise<void>) => {
+    setLookError(null);
+    setSettings((current) => current ? { ...current, ...shown } : current);
+    void save().catch((error: unknown) => {
+      setLookError(errMsg(error, 'Couldn’t change the pill.'));
+      void getSettings().then((saved) => setSettings((current) => current && saved
+        ? { ...current, hud_tint: saved.hud_tint, hud_opacity: saved.hud_opacity, hud_translucent: saved.hud_translucent, hud_hidden: saved.hud_hidden, hud_quiet: saved.hud_quiet }
+        : current)).catch(() => setLookError('Couldn’t change the pill, or read back what is saved. What you see here may not be saved.'));
     });
   };
   const [shotFolder, setShotFolder] = useState<string | null>(null);
@@ -765,6 +810,62 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
         </Card>
 
         </div>
+        {isDesktop() && (
+        <div id="settings-pill" hidden={section !== 'pill'}>
+          <div className="ev-pill-stage" aria-hidden>
+            <span className="ev-pill-sample" data-tint={tint} style={{ '--pill-alpha': opacity / 100 } as CSSProperties}>
+              <i /><b>0:12</b><em /><span>Stop</span>
+            </span>
+          </div>
+          <Section title="When it shows">
+            <Row label="Show the pill" hint={VISIBILITY_HINTS[visibility]}>
+              <Segmented label="When the pill is on screen" size="sm" value={visibility} options={VISIBILITY_OPTIONS}
+                onChange={(next) => changePill({ hud_hidden: next !== 'always', hud_quiet: next === 'never' }, () => setHudVisibility(next))} />
+            </Row>
+          </Section>
+          <Section title="Look">
+            <Row label="Colour" hint={TINT_LABELS[tint]}>
+              <div role="radiogroup" aria-label="Pill colour" className="ev-pill-swatches">
+                {HUD_TINTS.map((option) => (
+                  <button key={option} type="button" role="radio" aria-checked={option === tint} aria-label={TINT_LABELS[option]} title={TINT_LABELS[option]}
+                    disabled={!settings} data-tint={option} className="ev-pill-swatch"
+                    onClick={() => changePill({ hud_tint: option }, () => setHudStyle({ tint: option }))} />
+                ))}
+              </div>
+            </Row>
+            <Row label="Transparency" hint="How much of the screen shows through. A screen recording’s controls stay solid.">
+              <Select label="How see-through the pill is" value={opacityLevel} options={OPACITY_OPTIONS} disabled={!settings}
+                onChange={(next) => changePill({ hud_opacity: Number(next), hud_translucent: Number(next) < 100 }, () => setHudStyle({ opacity: Number(next) }))} />
+            </Row>
+          </Section>
+          <Section title="While you talk">
+            <Row label="Live words" hint={captionsOn ? 'What you say, under the timer, as you say it. 8 lines keeps the most of it in view, and scrolls.' : 'Off while live captions are off (Capture → Live captions).'}>
+              <Select label="Lines of live words while recording" value={String(previewLines)} options={PREVIEW_OPTIONS} disabled={!settings || !captionsOn} onChange={next => changeLook(Number(next) as HudPreviewLines, translucent)} />
+            </Row>
+            <Switch checked={fastWords} disabled={!settings} onCheckedChange={next => changeLook(previewLines, translucent, next)} label="Faster live words" hint="Shows words about a second sooner. Turn off if live words look jumpy or your Mac runs hot." />
+            <Switch
+              checked={typeLive}
+              onCheckedChange={toggleTypeLive}
+              disabled={!settings || typeLiveBusy}
+              label="Type as I talk"
+              hint="Your words appear where your cursor is as you say them, then tidy up when you stop. Also on the pill while you record, under how it’s written."
+            />
+          </Section>
+          <Section title="When it’s done">
+            <Switch checked={resultPreview} disabled={!settings} onCheckedChange={next => changeLook(previewLines, translucent, undefined, next)} label="Show the words when it's done" hint="After a dictation, the words open under the pill so you can fix them or change the tone. Off: just a Pasted stamp." />
+          </Section>
+          <Section title="Position">
+            <PositionPicker
+              value={settings?.launcher_position ?? 'top_center'}
+              custom={!!settings?.hud_frame}
+              disabled={!settings || positionBusy}
+              onPick={pickPosition}
+            />
+            {positionError ? <p role="alert" className="ev-set-hint mt-2 text-center text-[var(--ev-warn-ink)]">{positionError}</p> : null}
+          </Section>
+          {(lookError || typeLiveError) && <p role="alert" className="ev-set-hint">{lookError ?? typeLiveError}</p>}
+        </div>
+        )}
         <div id="settings-capture" hidden={section !== 'capture'}>
         {isDesktop() && (
           <Section title="Meetings">
@@ -816,26 +917,6 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
             )}
           </Section>
         )}
-
-        <Section title="Recording appearance">
-          <Row label="Live words" hint="What you say, under the timer, as you say it.">
-            <Select label="Lines of live words while recording" value={String(previewLines)} options={PREVIEW_OPTIONS} disabled={!settings || !captionsOn} onChange={next => changeLook(Number(next) as HudPreviewLines, translucent)} />
-          </Row>
-          <Switch checked={resultPreview} disabled={!settings} onCheckedChange={next => changeLook(previewLines, translucent, undefined, next)} label="Show the words when it's done" hint="After a dictation, the words open under the pill so you can fix them or change the tone. Off: just a Pasted stamp." />
-          <Switch checked={translucent} disabled={!settings} onCheckedChange={next => changeLook(previewLines, next)} label="See-through" hint="Lets the screen show through while you talk." />
-          <Switch checked={fastWords} disabled={!settings} onCheckedChange={next => changeLook(previewLines, translucent, next)} label="Faster live words" hint="Shows words about a second sooner. Turn off if live words look jumpy or your Mac runs hot." />
-          {lookError && <p role="alert" className="ev-set-hint">{lookError}</p>}
-        </Section>
-
-        <Section title="Position">
-          <PositionPicker
-            value={settings?.launcher_position ?? 'top_center'}
-            custom={!!settings?.hud_frame}
-            disabled={!settings || positionBusy || !isDesktop()}
-            onPick={pickPosition}
-          />
-          {positionError ? <p role="alert" className="ev-set-hint mt-2 text-center text-[var(--ev-warn-ink)]">{positionError}</p> : null}
-        </Section>
 
         <Section title="Recordings folder">
           <div className="flex items-center gap-2">

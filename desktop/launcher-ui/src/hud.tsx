@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, ArrowDown, ArrowUp, Camera, Check, ChevronsUpDown, Clapperboard, ClipboardList, Copy, EyeOff, History, House, Languages, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Users, Volume2, X } from 'lucide-react';
+import { AudioLines, ArrowDown, ArrowUp, Camera, Check, ChevronDown, Clapperboard, ClipboardList, Copy, EyeOff, History, House, Languages, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Users, Volume2, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import type { LiveRow } from '@/lib/desktop/live-captions';
 import { clock } from '@/components/launcher/history-model';
@@ -69,10 +69,12 @@ document.body.style.background = 'transparent';
  */
 type Size = 'pill' | 'receipt' | 'bar' | 'wide' | 'result' | 'shot' | 'video' | 'meeting';
 
-/** How the control looks while recording, from Settings → App → Capture. */
-type Look = { lines: 0 | 1 | 2 | 4; translucent: boolean };
+/** How the control looks, from Settings → Pill: lines of live words, its colour, and how solid it is (percent). */
+type Look = { lines: 0 | 1 | 2 | 4 | 8; tint: string; opacity: number };
 
-const DEFAULT_LOOK: Look = { lines: 0, translucent: true };
+const DEFAULT_LOOK: Look = { lines: 0, tint: 'auto', opacity: 64 };
+/** The window's height with the dictation options open (`OPTIONS_HEIGHT` in hud.rs). */
+const OPTIONS_HEIGHT = 256;
 
 /** How long Stop waits for a live correction to reach the app before stopping anyway. */
 const LIVE_EDIT_WAIT_MS = 1500;
@@ -121,12 +123,16 @@ function within(task: Promise<unknown>, ms: number): Promise<boolean> {
 }
 
 function lookFrom(value: unknown): Look {
-  const raw = value as { hud_preview_lines?: unknown; hud_translucent?: unknown; lines?: unknown; translucent?: unknown } | null;
+  const raw = value as { hud_preview_lines?: unknown; hud_translucent?: unknown; hud_tint?: unknown; hud_opacity?: unknown; lines?: unknown; translucent?: unknown; tint?: unknown; opacity?: unknown } | null;
   const lines = raw?.hud_preview_lines ?? raw?.lines;
   const translucent = raw?.hud_translucent ?? raw?.translucent;
+  const tint = raw?.hud_tint ?? raw?.tint;
+  const opacity = raw?.hud_opacity ?? raw?.opacity;
   return {
-    lines: lines === 0 || lines === 1 || lines === 2 || lines === 4 ? lines : DEFAULT_LOOK.lines,
-    translucent: typeof translucent === 'boolean' ? translucent : DEFAULT_LOOK.translucent,
+    lines: lines === 0 || lines === 1 || lines === 2 || lines === 4 || lines === 8 ? lines : DEFAULT_LOOK.lines,
+    tint: typeof tint === 'string' && tint ? tint : DEFAULT_LOOK.tint,
+    // Before there was a level there was a switch: see-through or solid.
+    opacity: typeof opacity === 'number' ? Math.min(100, Math.max(30, opacity)) : translucent === false ? 100 : DEFAULT_LOOK.opacity,
   };
 }
 
@@ -171,7 +177,7 @@ function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [300, 36], receipt: [248, 36], bar: [400, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76], meeting: [400, 380] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [300, 36], receipt: [248, 36], bar: [340, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76], meeting: [400, 380] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -329,7 +335,7 @@ function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: s
   const [clipShortcut, setClipShortcut] = useState('');
   const [look, setLook] = useState<Look>(() => {
     const params = new URLSearchParams(window.location.search);
-    return tauri() ? DEFAULT_LOOK : lookFrom({ lines: params.has('lines') ? Number(params.get('lines')) : undefined, translucent: !params.has('solid') });
+    return tauri() ? DEFAULT_LOOK : lookFrom({ lines: params.has('lines') ? Number(params.get('lines')) : undefined, translucent: !params.has('solid'), tint: params.get('tint') ?? undefined, opacity: params.has('opacity') ? Number(params.get('opacity')) : undefined });
   });
   const lookChanged = useRef(false);
   // "Type as I talk" (Settings → Dictation), shown and changed on the recording control.
@@ -439,6 +445,8 @@ function Hud() {
   const [translation, setTranslation] = useState<TranslationChange | null>(null);
   // The language finder, open in place of the words while a language is being picked.
   const [finding, setFinding] = useState(false);
+  // The ways a dictation is written, open in place of the words (the drawer), or under the recording controls with "Type as I talk".
+  const [choosing, setChoosing] = useState(false);
   const [languageQuery, setLanguageQuery] = useState('');
   const [languageActive, setLanguageActive] = useState(0);
   const [recentLanguages, setRecentLanguages] = useState(loadRecentLanguages);
@@ -549,7 +557,7 @@ function Hud() {
   };
   useEvent('hud:release-editor', releaseFromRust);
   useEffect(() => {
-    const release = () => { editorRef.current?.blur(); setEditing(false); setFinding(false); };
+    const release = () => { editorRef.current?.blur(); setEditing(false); setFinding(false); setChoosing(false); };
     window.addEventListener('blur', release);
     return () => window.removeEventListener('blur', release);
   }, []);
@@ -719,6 +727,8 @@ function Hud() {
     setTone((now) => now?.busy ? toneBefore.current : now);
   };
 
+  // The options belong to the recording (or the result) they were opened on.
+  useEffect(() => { setChoosing(false); }, [state?.phase, state?.sessionId]);
   useEffect(() => { setCopied(false); setEditing(false); setPointer('away'); cancelPeekDwell(); toneRequest.current = null; setTone(null); translateRequest.current = null; setTranslation(null); setFinding(false); setComposition(null); nativeEditReady.current = null; if (!pendingEdit.current) setSaveError(null); pendingLiveEdit.current = null; editorRef.current?.blur(); editHistory.current = { undo: [], redo: [] }; typingGroup.current = null; }, [state?.sessionId]);
 
   useEffect(() => {
@@ -740,7 +750,7 @@ function Hud() {
   const ownTone = tone && tone.sessionId === state?.sessionId ? tone : null;
   const ownTranslation = translation && translation.sessionId === state?.sessionId ? translation : null;
   const rewriting = !!ownTone?.busy || !!ownTranslation?.busy;
-  const keepDrawer = !!state?.sessionId && (editing || saving || !!saveError || rewriting || finding);
+  const keepDrawer = !!state?.sessionId && (editing || saving || !!saveError || rewriting || finding || choosing);
   // With the words shown after dictation (the default), a pasted or copied
   // dictation opens straight into its drawer; Not pasted keeps its Allow pill.
   const finished = state ? receiptFor(state) : null;
@@ -761,7 +771,7 @@ function Hud() {
   const receipt = state && !drawer ? finished : null;
 
   useEffect(() => {
-    if (!state || editing || finding || saving || saveError || rewriting || pendingEdit.current || !HELD_PHASES.includes(state.phase)) return;
+    if (!state || editing || finding || choosing || saving || saveError || rewriting || pendingEdit.current || !HELD_PHASES.includes(state.phase)) return;
     const hold = holdMs(state.phase, pointer, overSince.current, Date.now(), receipt, state.phase === 'saved' && !!state.notice);
     if (hold === null) return;
     const sessionId = state.sessionId;
@@ -770,7 +780,7 @@ function Hud() {
       else setState({ ...state, phase: 'idle', message: null, notice: null });
     }, hold);
     return () => window.clearTimeout(timeout);
-  }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, finding, saving, saveError, draft, saveRevision, receipt, rewriting]);
+  }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, finding, choosing, saving, saveError, draft, saveRevision, receipt, rewriting]);
 
   const cancelPeekDwell = () => {
     if (peekDwell.current !== null) window.clearTimeout(peekDwell.current);
@@ -820,12 +830,13 @@ function Hud() {
     if (tauri()) return;
     const live = state?.phase === 'recording' || state?.phase === 'transcribing';
     // Same as `live_size` in hud.rs.
-    const [width, height] = size === 'wide' && live ? [400, 62 + 20 * look.lines] : PREVIEW_SIZES[size];
+    const [width, rest] = size === 'wide' && live ? [400, 62 + 20 * look.lines] : PREVIEW_SIZES[size];
+    const height = choosing && state?.phase === 'recording' ? OPTIONS_HEIGHT : rest;
     const root = document.getElementById('root');
     if (root) Object.assign(root.style, { width: `${width}px`, height: `${height}px`, margin: '28px auto 0' });
     document.body.style.background = 'linear-gradient(160deg, #e9e4dc, #cfd6dd)';
     document.body.style.minHeight = '100vh';
-  }, [size, look.lines, state?.phase]);
+  }, [size, look.lines, state?.phase, choosing]);
 
   const snapshotWords = lines.map((line) => line.text).join(' ');
   const heard = snapshotWords || PREVIEW_WORDS;
@@ -1218,6 +1229,7 @@ function Hud() {
     }
   };
   const openFinder = () => {
+    setChoosing(false);
     if (!state.sessionId || rewriting) return;
     setLanguageQuery('');
     setLanguageActive(0);
@@ -1282,19 +1294,27 @@ function Hud() {
     </div>
   );
   // Tone and "AI prompt" are one choice: the setting for every dictation.
-  const writePicker = (shown: Writing, disabled: boolean, pick: (next: Writing) => void) => {
+  // The chip names it; the menu it opens is drawn here, in the control's own
+  // look, where the words are (a native pop-up looked like another app's).
+  const writeChip = (shown: Writing, disabled: boolean, toggle: () => void) => (
+    <button type="button" className="ctl-write-chip" aria-haspopup="true" aria-expanded={choosing} disabled={disabled}
+      title="How dictations are written. Used for every dictation." onClick={toggle}>
+      <span>{WRITING_CHOICES.find((option) => option.id === writingChoice(shown))?.label}</span><ChevronDown className="h-3 w-3" aria-hidden />
+    </button>
+  );
+  const writeMenu = (shown: Writing, disabled: boolean, pick: (next: Writing) => void) => {
     const choice = writingChoice(shown);
     return (
-      <label className="ctl-field" title={`${WRITING_CHOICES.find((option) => option.id === choice)?.hint ?? ''} Used for every dictation.`}>
-        <span>Write</span>
-        <span className="ctl-select">
-          <select aria-label="How dictations are written" value={choice} disabled={disabled}
-            onChange={(event) => { if (isWritingChoice(event.target.value)) pick(writingFor(event.target.value, shown)); }}>
-            {WRITING_CHOICES.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
-          </select>
-          <ChevronsUpDown className="ctl-select-icon" aria-hidden />
-        </span>
-      </label>
+      <div className="ctl-write-menu" role="radiogroup" aria-label="How dictations are written">
+        {WRITING_CHOICES.map((option) => (
+          <button key={option.id} type="button" role="radio" aria-checked={option.id === choice} disabled={disabled} title={option.hint} className="ctl-write"
+            onClick={() => pick(writingFor(option.id, shown))}>
+            <span className="ctl-write-name">{option.label}</span>
+            <span className="ctl-write-hint">{option.hint}</span>
+            {option.id === choice && <Check className="ctl-write-tick" aria-hidden />}
+          </button>
+        ))}
+      </div>
     );
   };
   const tooLong = words.length > MAX_REWRITE_CHARS;
@@ -1306,7 +1326,7 @@ function Hud() {
     </div>
   ) : (
     <div className="ctl-tones" role="group" aria-label="How dictations are written">
-      {writePicker(picked, rewriting, (next) => void change(next))}
+      {writeChip(picked, rewriting, () => { closeFinder(); setChoosing((open) => !open); })}
       <span className="ctl-fill" />
       {translateButton}
     </div>
@@ -1347,6 +1367,15 @@ function Hud() {
         typeLiveBusy.current = false;
       }
     };
+    // The options open under the controls: the window takes their size first, and gives it back after.
+    const showOptions = async (open: boolean) => {
+      if (!open) setChoosing(false);
+      // Rust says whether the window has room for them: not when the recording ended first.
+      const opened = tauri() ? await invoke('hud_options', { open }).then((ok) => ok === true, () => false) : open;
+      if (!open) return;
+      if (opened) setChoosing(true);
+      else setActionError('Couldn’t open the options. Try again?');
+    };
     const elapsedSec = Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000));
     const cancelDisabled = opening || !state.sessionId || stopping === state.sessionId;
     top = (
@@ -1362,16 +1391,7 @@ function Hud() {
         {eavesy && !opening && <Stamp tone="manila" fit>Eavesy’s listening</Stamp>}
         {meeting && !opening && <span className="ctl-say" role="status">Recording meeting</span>}
         <span className="ctl-fill" />
-        {dictating && !opening && (
-          <span className="ctl-live-opts" onMouseDown={(event) => event.stopPropagation()}>
-            {writePicker(prefs ?? PLAIN, cancelDisabled, (next) => void pickWhileRecording(next))}
-            <button type="button" role="switch" aria-checked={typeLive} aria-label="Type as I talk" disabled={cancelDisabled} className="ctl-switch-row"
-              title={typeLive ? 'Your words are typed where your cursor is while you talk. Turn off to paste them when you stop.' : 'Your words are pasted when you stop. Turn on to type them where your cursor is while you talk.'}
-              onClick={() => void toggleTypeLive()}>
-              Type live<span className="ctl-switch" aria-hidden />
-            </button>
-          </span>
-        )}
+        {dictating && !opening && writeChip(prefs ?? PLAIN, cancelDisabled, () => void showOptions(!choosing))}
         {meeting && !opening && (
           <button type="button" disabled={!state.sessionId} onClick={() => { if (tauri()) void invoke('tuck_hud').catch((error: unknown) => setActionError(hudError(error, 'Couldn’t hide Eavesy. Try again?'))); }}
             aria-label="Hide Eavesy while it records" title={`Hide this while you share your screen. The recording carries on${hideShortcut ? `; ${hideShortcut} brings it back` : '; Eavesy in the menu bar brings it back'}.`} className="ctl-btn ctl-icon"><EyeOff className="h-3.5 w-3.5" /></button>
@@ -1392,6 +1412,16 @@ function Hud() {
       {actionError ? <button className="ctl-btn" onClick={() => setActionError(null)}>Dismiss</button> : marking.tool && <button className="ctl-btn" onClick={() => act('stop_marking')}>Done · esc</button>}
     </div>;
     if (meeting) below = <MeetingPanel sessionId={state.sessionId ?? null} rows={lines.length ? lines : PREVIEW_MEETING} startedAtMs={state.startedAtMs ?? null} releaseKeys={() => void releaseEditor(state.sessionId)} empty={actionError ?? (opening ? 'Opening the mic…' : noLiveWords ? 'Live words are off on this Mac. The meeting is still recording, and its transcript is written when you press Stop.' : 'Recording both sides of the call. What is said shows up here.')} />;
+    else if (dictating && choosing && !opening && !rowOnly) below = (
+      <div className="ctl-options">
+        {writeMenu(prefs ?? PLAIN, cancelDisabled, (next) => { void pickWhileRecording(next); void showOptions(false); })}
+        <button type="button" role="switch" aria-checked={typeLive} disabled={cancelDisabled} className="ctl-switch-row ctl-option-switch"
+          title={typeLive ? 'Your words are typed where your cursor is while you talk. Turn off to paste them when you stop.' : 'Your words are pasted when you stop. Turn on to type them where your cursor is while you talk.'}
+          onClick={() => void toggleTypeLive()}>
+          <span>Type as I talk</span><span className="ctl-switch" aria-hidden />
+        </button>
+      </div>
+    );
     else if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `${eavesy ? 'Eavesy’s listening' : 'Listening'}… ${doneHint}`);
   } else if (state.phase === 'transcribing') {
     top = <>{errorSay ?? <span className="ctl-say">{video ? 'Saving' : state.mode === 'meeting' ? 'Saving the meeting' : eavesy ? 'Eavesy’s thinking' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>}<span className="ctl-fill" /></>;
@@ -1463,7 +1493,7 @@ function Hud() {
         {close}
       </>
     );
-    below = editable ? finding && size === 'result' ? languageFinder : transcriptEditor() : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
+    below = editable ? finding && size === 'result' ? languageFinder : choosing && size === 'result' ? writeMenu(picked, rewriting, (next) => { setChoosing(false); void change(next); }) : transcriptEditor() : <p className="ctl-line ctl-quiet" title={notice ?? undefined}>{notice}</p>;
     if (size === 'result' && editable) foot = toneControls;
   } else if (state.phase === 'saved' && notice) {
     // Saved, but not typed where the cursor was: say so, and why, never a plain "Saved".
@@ -1533,8 +1563,13 @@ function Hud() {
       data-size={size}
       data-swap={swap % 2 ? 'a' : 'b'}
       data-marking={video && live && marking.tool ? 'true' : undefined}
-      data-translucent={(look.translucent && !video) || undefined}
-      style={state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } as CSSProperties : undefined}
+      data-translucent={(look.opacity < 100 && !video) || undefined}
+      data-tint={look.tint === DEFAULT_LOOK.tint ? undefined : look.tint}
+      data-options={(choosing && state.phase === 'recording') || undefined}
+      style={{
+        ...(look.opacity < 100 && !video ? { '--ctl-alpha': look.opacity / 100 } : null),
+        ...(state.phase === 'recording' || state.phase === 'transcribing' ? { '--ctl-lines': look.lines } : null),
+      } as CSSProperties}
       onMouseDown={pressSurface}
       onMouseEnter={(event) => { if (pointer !== 'over') overSince.current = Date.now(); setPointer('over'); if (receipt && !(event.target as HTMLElement).closest('button')) openPeek(); }}
       onMouseMove={(event) => {
@@ -1550,7 +1585,7 @@ function Hud() {
       className="launcher-scope ev eavesy-control"
     >
       <div className="ctl-top">{top}</div>
-      {below && <div className="ctl-below" data-busy={rewriting || undefined} data-finding={finding || undefined} onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
+      {below && <div className="ctl-below" data-busy={rewriting || undefined} data-finding={finding || choosing || undefined} onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
       {foot && <div className="ctl-foot" onMouseDown={(event) => event.stopPropagation()}>{foot}</div>}
     </div>
   );

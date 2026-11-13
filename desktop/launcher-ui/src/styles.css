@@ -134,22 +134,30 @@ body {
   }
 }
 
-/* HUD: a capsule that floats over whatever is on screen: light by day, navy
-   by night (DESIGN.md → HUD). It draws its own shape, so the window and
-   the pill always agree. Coral only while the mic is live. */
+/* HUD: a capsule that floats over whatever is on screen. Unless a colour is
+   chosen (Settings → Pill) it follows the appearance: paper by day, navy by
+   night (DESIGN.md → HUD). It draws its own shape, so the window and the
+   pill always agree. Coral only while the mic is live. */
 .eavesy-control {
-  --ctl-ink: var(--ev-pill-ink);
-  --ctl-ink-2: var(--ev-pill-ink-2);
-  --ctl-ink-3: var(--ev-pill-ink-3);
-  --ctl-hover: rgb(var(--ev-pill-ink-rgb) / 0.11);
-  --ctl-line: var(--ev-pill-line);
+  /* Its colour is --ctl-bg; what is drawn on it is --ctl-fg at some strength,
+     and --ctl-on-ink is text on a button filled with --ctl-ink. */
+  --ctl-bg: 255 254 250;
+  --ctl-fg: 22 33 63;
+  --ctl-on-ink: #fbf8f1;
+  --ctl-ink: #16213f;
+  --ctl-ink-2: rgb(22 33 63 / 0.74);
+  --ctl-ink-3: rgb(22 33 63 / 0.64);
+  --ctl-line: rgb(22 33 63 / 0.18);
+  --ctl-warn: #9a5b00;
+  --ctl-text-shadow: none;
+  --ctl-hover: rgb(var(--ctl-fg) / 0.11);
   display: flex;
   flex-direction: column;
   height: 100%;
   width: 100%;
   overflow: hidden;
   border-radius: 18px;
-  background: var(--ev-pill);
+  background: rgb(var(--ctl-bg) / 0.97);
   box-shadow: inset 0 0 0 1px var(--ctl-line), inset 0 1px 0 rgb(255 255 255 / 0.09);
   color: var(--ctl-ink);
   font: 550 12.5px/16px var(--ev-font-round);
@@ -181,10 +189,42 @@ body {
    Neutral grey at 64% keeps cream text at 4.5:1 even over white; a hairline
    edge, no coral ring, and the words keep a soft shadow. */
 .eavesy-control[data-translucent] {
-  --ctl-line: var(--ev-pill-line);
-  background: var(--ev-pill-glass);
+  background: rgb(var(--ctl-bg) / var(--ctl-alpha, 0.64));
   box-shadow: inset 0 0 0 1px var(--ctl-line);
-  text-shadow: var(--ev-pill-text-shadow);
+  text-shadow: var(--ctl-text-shadow);
+}
+
+/* Its colour (Settings → Pill). The dark ones are deep enough to keep cream
+   text at 4.5:1 when solid; Paper is the light pill at any hour. */
+.eavesy-control:is([data-tint="charcoal"], [data-tint="ink"], [data-tint="forest"], [data-tint="plum"], [data-tint="slate"]) {
+  --ctl-bg: 34 32 30;
+  --ctl-fg: 255 248 238;
+  --ctl-on-ink: #221e1b;
+  --ctl-ink: #f7f1e8;
+  --ctl-ink-2: rgb(247 241 232 / 0.74);
+  --ctl-ink-3: rgb(247 241 232 / 0.5);
+  --ctl-line: rgb(255 244 228 / 0.16);
+  --ctl-warn: #ffc870;
+  --ctl-text-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+}
+.eavesy-control[data-tint="charcoal"][data-translucent] { --ctl-bg: 28 28 30; }
+.eavesy-control[data-tint="ink"] { --ctl-bg: 22 30 52; }
+.eavesy-control[data-tint="forest"] { --ctl-bg: 22 44 36; }
+.eavesy-control[data-tint="plum"] { --ctl-bg: 48 28 50; }
+.eavesy-control[data-tint="slate"] { --ctl-bg: 52 58 66; }
+/* No colour chosen: navy after hours. */
+@media (prefers-color-scheme: dark) {
+  .eavesy-control:not([data-tint]) {
+    --ctl-bg: 30 40 72;
+    --ctl-fg: 238 240 247;
+    --ctl-on-ink: #16213f;
+    --ctl-ink: #eef0f7;
+    --ctl-ink-2: rgb(238 240 247 / 0.74);
+    --ctl-ink-3: rgb(238 240 247 / 0.52);
+    --ctl-line: rgb(255 255 255 / 0.14);
+    --ctl-warn: #ffc870;
+    --ctl-text-shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+  }
 }
 
 /* The fill takes any spare room, so this only matters when there is none:
@@ -243,37 +283,65 @@ body {
    the window never has to hold it); For AI is a switch, lit cream when on;
    Translate, at the row's end, opens the language finder over the words. */
 .ctl-foot { flex: none; padding: 0 7px 7px; }
-/* On the recording bar: how the words are written, and whether they are typed live. */
-.ctl-live-opts { display: inline-flex; align-items: center; gap: 2px; margin-right: 2px; }
-.ctl-live-opts .ctl-field { padding-left: 0; }
-.ctl-live-opts .ctl-field > span:first-child { display: none; }
-.ctl-live-opts .ctl-select > select { max-width: 132px; }
-/* The voice bars keep their width beside them: they say the mic hears you. */
-.eavesy-control:is([data-size="bar"], [data-size="wide"]) .ctl-bars { flex: none; }
-.ctl-tones { display: flex; align-items: center; gap: 2px; }
-.ctl-field { display: inline-flex; align-items: center; gap: 6px; padding-left: 4px; color: var(--ctl-ink-2); font: 600 11.5px/24px var(--ev-font-round); }
-.ctl-select { position: relative; display: inline-flex; align-items: center; }
-.ctl-select > select {
+/* How the words are written: a chip that names the choice and opens the
+   menu below it. On the recording bar it sits before Cancel and Stop. */
+.ctl-write-chip {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
   height: 24px;
-  max-width: 150px;
-  padding: 0 24px 0 9px;
-  border: 0;
+  padding: 0 7px 0 10px;
   border-radius: 12px;
-  outline: 0;
-  appearance: none;
-  -webkit-appearance: none;
-  background: rgb(var(--ev-pill-ink-rgb) / 0.1);
+  background: rgb(var(--ctl-fg) / 0.1);
   box-shadow: inset 0 0 0 1px var(--ctl-line);
   color: var(--ctl-ink);
   font: 600 11.5px/24px var(--ev-font-round);
-  text-overflow: ellipsis;
-  cursor: default;
   transition: background var(--ev-d-press) ease;
 }
-.ctl-select > select:hover:not(:disabled) { background: rgb(var(--ev-pill-ink-rgb) / 0.16); }
-.ctl-select > select:focus-visible { outline: 2px solid var(--ctl-ink-3); outline-offset: 1px; }
-.ctl-select > select:disabled { opacity: 0.5; }
-.ctl-select-icon { position: absolute; right: 7px; width: 12px; height: 12px; color: var(--ctl-ink-3); pointer-events: none; }
+.ctl-write-chip > span { overflow: hidden; text-overflow: ellipsis; }
+.ctl-write-chip > svg { flex: none; color: var(--ctl-ink-3); transition: transform var(--ev-d-state) var(--ev-ease-out); }
+.ctl-write-chip[aria-expanded="true"] { background: rgb(var(--ctl-fg) / 0.18); }
+.ctl-write-chip[aria-expanded="true"] > svg { transform: rotate(180deg); }
+.ctl-write-chip:hover:not(:disabled) { background: rgb(var(--ctl-fg) / 0.16); }
+.ctl-write-chip:disabled { opacity: 0.5; }
+.ctl-write-chip:focus-visible { outline: 2px solid var(--ctl-ink-3); outline-offset: 1px; }
+.eavesy-control[data-size="bar"] .ctl-write-chip { margin-right: 2px; }
+/* The menu: one row a choice, its name then what it does, a tick on the one
+   in force. In the drawer it takes the words' place, two to a row. */
+.ctl-write-menu { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; }
+.ctl-write {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  color: var(--ctl-ink-2);
+  font: 600 11.5px/28px var(--ev-font-round);
+  text-align: left;
+  white-space: nowrap;
+  transition: background var(--ev-d-press) ease, color var(--ev-d-press) ease;
+}
+.ctl-write:hover:not(:disabled) { background: var(--ctl-hover); color: var(--ctl-ink); }
+.ctl-write[aria-checked="true"] { background: rgb(var(--ctl-fg) / 0.12); color: var(--ctl-ink); }
+.ctl-write:disabled { opacity: 0.5; }
+.ctl-write:focus-visible { outline: 2px solid var(--ctl-ink-3); outline-offset: -2px; }
+.ctl-write-name { flex: none; }
+.ctl-write-hint { flex: 1 1 0; min-width: 0; overflow: hidden; color: var(--ctl-ink-3); font-weight: 500; text-overflow: ellipsis; }
+.ctl-write-tick { flex: none; width: 12px; height: 12px; margin-left: auto; }
+.eavesy-control[data-size="result"] .ctl-write-menu { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px; }
+.eavesy-control[data-size="result"] .ctl-write { height: 26px; line-height: 26px; }
+.eavesy-control[data-size="result"] .ctl-write-hint { display: none; }
+/* Under the recording controls: the menu, a hairline, then "Type as I talk". */
+.eavesy-control[data-options] .ctl-below { margin: 2px 6px 6px; padding: 0; overflow-x: hidden; overflow-y: auto; user-select: none; -webkit-user-select: none; }
+.ctl-options { display: flex; flex-direction: column; gap: 5px; }
+.ctl-option-switch { justify-content: space-between; height: 30px; padding: 0 8px; border-radius: 8px; box-shadow: 0 -1px 0 var(--ctl-line); margin-top: 1px; }
+/* The voice bars keep their width beside them: they say the mic hears you. */
+.eavesy-control:is([data-size="bar"], [data-size="wide"]) .ctl-bars { flex: none; }
+.ctl-tones { display: flex; align-items: center; gap: 2px; }
 .ctl-switch-row {
   display: inline-flex;
   align-items: center;
@@ -295,7 +363,7 @@ body {
   width: 26px;
   height: 16px;
   border-radius: 8px;
-  background: rgb(var(--ev-pill-ink-rgb) / 0.22);
+  background: rgb(var(--ctl-fg) / 0.22);
   box-shadow: inset 0 0 0 1px var(--ctl-line);
   transition: background var(--ev-d-state) var(--ev-ease-out);
 }
@@ -311,8 +379,8 @@ body {
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
   transition: transform var(--ev-d-state) var(--ev-ease-spring), background var(--ev-d-state) var(--ev-ease-out);
 }
-.ctl-switch-row[aria-checked="true"] .ctl-switch { background: var(--ev-brand); box-shadow: none; }
-.ctl-switch-row[aria-checked="true"] .ctl-switch::after { transform: translateX(10px); background: var(--ev-on-brand); }
+.ctl-switch-row[aria-checked="true"] .ctl-switch { background: var(--ctl-ink); box-shadow: none; }
+.ctl-switch-row[aria-checked="true"] .ctl-switch::after { transform: translateX(10px); background: var(--ctl-on-ink); }
 /* Translate, and the language finder it opens in place of the words: a
    search box, then the languages as chips (recent ones first), so the one
    you want is a couple of keystrokes or one click away. */
@@ -326,7 +394,7 @@ body {
   border: 0;
   border-radius: 12px;
   outline: 0;
-  background: rgb(var(--ev-pill-ink-rgb) / 0.1);
+  background: rgb(var(--ctl-fg) / 0.1);
   box-shadow: inset 0 0 0 1px var(--ctl-line);
   color: var(--ctl-ink);
   font: 600 11.5px/24px var(--ev-font-round);
@@ -359,7 +427,7 @@ body {
 }
 .ctl-lang[data-recent] { color: var(--ctl-ink); box-shadow: inset 0 0 0 1px var(--ctl-line); }
 .ctl-lang[data-active] { background: var(--ctl-hover); color: var(--ctl-ink); }
-.ctl-lang[aria-selected="true"] { background: rgb(var(--ev-pill-ink-rgb) / 0.16); color: var(--ctl-ink); }
+.ctl-lang[aria-selected="true"] { background: rgb(var(--ctl-fg) / 0.16); color: var(--ctl-ink); }
 @media (prefers-reduced-motion: reduce) {
   .ctl-switch, .ctl-switch::after { transition: none; }
 }
@@ -372,7 +440,7 @@ body {
   transition: background var(--ev-d-press) ease, color var(--ev-d-press) ease;
 }
 .ctl-tone:hover:not(:disabled) { background: var(--ctl-hover); color: var(--ctl-ink); }
-.ctl-tone[aria-pressed="true"] { background: rgb(var(--ev-pill-ink-rgb) / 0.16); color: var(--ctl-ink); }
+.ctl-tone[aria-pressed="true"] { background: rgb(var(--ctl-fg) / 0.16); color: var(--ctl-ink); }
 .ctl-tone:disabled { cursor: default; }
 .ctl-tone:focus-visible { outline: 2px solid var(--ctl-ink-3); outline-offset: 1px; }
 /* In the drawer the words take all the room above the tones, and a long
@@ -404,8 +472,8 @@ body {
 .ctl-btn:hover:not(:disabled) { background: var(--ctl-hover); color: var(--ctl-ink); }
 .ctl-btn:disabled { opacity: 0.35; }
 .ctl-icon { width: 24px; padding: 0; }
-.ctl-primary { background: var(--ev-brand); color: var(--ev-on-brand); font-weight: 650; padding: 0 10px 0 9px; }
-.ctl-primary:hover:not(:disabled) { background: var(--ev-brand-hover); color: var(--ev-on-brand); }
+.ctl-primary { background: var(--ctl-ink); color: var(--ctl-on-ink); font-weight: 650; padding: 0 10px 0 9px; }
+.ctl-primary:hover:not(:disabled) { background: color-mix(in srgb, var(--ctl-ink) 88%, rgb(var(--ctl-bg))); color: var(--ctl-on-ink); }
 .ctl-talk { color: var(--ctl-ink); padding: 0 6px 0 8px; }
 /* Open Eavesy, first on the resting pill: a hairline sets it apart from the capture buttons. */
 .ctl-home { position: relative; margin-right: 4px; }
@@ -419,7 +487,7 @@ body {
   margin-left: 1px;
   padding: 0 5px;
   border-radius: 5px;
-  background: rgb(var(--ev-pill-ink-rgb) / 0.08);
+  background: rgb(var(--ctl-fg) / 0.08);
   color: var(--ctl-ink-3);
   font: 600 10.5px/16px var(--ev-font-round);
 }
@@ -433,13 +501,13 @@ body {
   font-weight: 650;
 }
 .ctl-stop:hover:not(:disabled) { background: color-mix(in srgb, var(--ev-rec) 86%, #fff); color: #fff; }
-.ctl-discard { color: var(--ev-warn-ink); padding: 0 8px; font-weight: 650; }
+.ctl-discard { color: var(--ctl-warn); padding: 0 8px; font-weight: 650; }
 
 .ctl-say { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-left: 2px; }
 .ctl-quiet { color: var(--ctl-ink-2); }
 .ctl-mic { display: inline-flex; flex: none; color: var(--ctl-ink-2); }
 .ctl-mic[data-heard] { color: var(--ctl-ink); }
-.ctl-warn { color: var(--ev-warn-ink); }
+.ctl-warn { color: var(--ctl-warn); }
 
 /* Marking during a screen recording: evidence tags are manila. */
 .ctl-sep { flex: none; width: 1px; height: 16px; margin: 0 4px; background: var(--ctl-line); }
@@ -457,9 +525,9 @@ body {
   font: 700 11px/18px var(--ev-font-round);
   font-variant-numeric: tabular-nums;
 }
-.ctl-marker { color: var(--ctl-ink); background: rgb(var(--ev-pill-ink-rgb) / 0.08); padding: 0 6px 0 8px; margin-left: 4px; }
+.ctl-marker { color: var(--ctl-ink); background: rgb(var(--ctl-fg) / 0.08); padding: 0 6px 0 8px; margin-left: 4px; }
 .ctl-marker > svg { color: var(--ev-manila); }
-.ctl-seg { display: inline-flex; flex: none; gap: 2px; padding: 2px; border-radius: 999px; background: rgb(var(--ev-pill-ink-rgb) / 0.08); }
+.ctl-seg { display: inline-flex; flex: none; gap: 2px; padding: 2px; border-radius: 999px; background: rgb(var(--ctl-fg) / 0.08); }
 .ctl-seg-btn {
   display: inline-flex;
   align-items: center;
@@ -549,8 +617,10 @@ body {
 /* Live words sit back while you talk and while they're written down: a
    glance, not the thing to read. Clicking in to fix one brings full ink. */
 .eavesy-control[data-phase="recording"] .ctl-words:not(:focus),
-.eavesy-control[data-phase="transcribing"] .ctl-words:not(:focus) { color: rgb(var(--ev-pill-ink-rgb) / 0.62); }
-.eavesy-control[data-translucent][data-size="wide"]:is([data-phase="recording"], [data-phase="transcribing"]) { background: var(--ev-pill-glass-strong); }
+.eavesy-control[data-phase="transcribing"] .ctl-words:not(:focus) { color: rgb(var(--ctl-fg) / 0.62); }
+.eavesy-control[data-translucent][data-size="wide"]:is([data-phase="recording"], [data-phase="transcribing"]):not([data-options]) { background: rgb(var(--ctl-bg) / calc(var(--ctl-alpha, 0.64) + 0.08)); }
+/* A menu is read, not glanced at: nearly solid while it is open, however see-through the pill is. */
+.eavesy-control[data-translucent][data-options] { background: rgb(var(--ctl-bg) / 0.94); }
 .ctl-hint { color: var(--ctl-ink-2); }
 
 .ctl-dots { display: inline-flex; gap: 2px; margin-left: 2px; }
@@ -563,7 +633,7 @@ body {
 
 /* A rubber stamp on the case file: what just happened to the capture. */
 .ctl-stamp {
-  --stamp: var(--ev-leaf);
+  --stamp: #7fd8a4;
   display: inline-flex;
   flex: 0 1 auto;
   min-width: 0;
@@ -578,11 +648,11 @@ body {
   font: 650 12px/22px var(--ev-font-round);
   animation: ctl-stamp 240ms var(--ev-ease-spring) both;
 }
-.ctl-stamp[data-tone="manila"] { --stamp: var(--ev-manila-ink); }
+.ctl-stamp[data-tone="manila"] { --stamp: #f0c879; }
 /* A stamp with a word in it gives way in a narrow pill instead of pushing Close out. */
 .ctl-stamp[data-fit] { flex: 0 1 auto; min-width: 0; }
 .ctl-stamp-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ctl-stamp[data-tone="warn"] { --stamp: var(--ev-warn-ink); }
+.ctl-stamp[data-tone="warn"] { --stamp: var(--ctl-warn); }
 @keyframes ctl-stamp {
   from { opacity: 0; transform: scale(0.85); }
   to { opacity: 1; transform: scale(1); }
@@ -596,7 +666,7 @@ body {
   padding: 0;
   overflow: hidden;
   border-radius: 12px;
-  background: rgb(var(--ev-pill-ink-rgb) / 0.05);
+  background: rgb(var(--ctl-fg) / 0.05);
   cursor: zoom-in;
 }
 .ctl-shot img { display: block; width: 100%; height: 100%; object-fit: cover; }
@@ -768,15 +838,15 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
   height: 26px;
   padding: 0 10px;
   border-radius: 999px;
-  background: rgb(255 248 238 / 0.1);
+  background: rgb(var(--ctl-fg) / 0.1);
   color: var(--ev-hud-ink);
   font: inherit;
 }
-.mk-btn:hover { background: rgb(255 248 238 / 0.18); }
+.mk-btn:hover { background: rgb(var(--ctl-fg) / 0.18); }
 .mk-kbd {
   padding: 0 6px;
   border-radius: 5px;
-  background: rgb(255 248 238 / 0.1);
+  background: rgb(var(--ctl-fg) / 0.1);
   color: var(--ev-hud-ink-2);
   font: 600 11px/18px var(--ev-font-round);
 }
@@ -965,24 +1035,24 @@ html:has(.ev-meeting-card), html:has(.ev-meeting-card) body { margin: 0; overflo
 /* A meeting: the pill opened into a box with everything said so far. It
    scrolls back; the newest words stay in view until you scroll up. */
 .eavesy-control[data-size="meeting"] .ctl-below { position: relative; display: flex; flex-direction: column; margin: 2px 4px 8px; padding: 0; overflow: hidden; }
-.eavesy-control[data-translucent][data-size="meeting"] { background: var(--ev-pill-glass-solid); }
+.eavesy-control[data-translucent][data-size="meeting"] { background: rgb(var(--ctl-bg) / 0.86); }
 .ctl-meeting { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 2px 10px 6px; scrollbar-width: thin; outline: none; }
 .ctl-meeting:focus-visible { box-shadow: inset 0 0 0 1px var(--ctl-line); border-radius: 10px; }
 .ctl-turn { margin: 0 0 10px; color: var(--ctl-ink); font: 400 13px/19px var(--ev-font-text); overflow-wrap: anywhere; }
 .ctl-turn:last-child { margin-bottom: 0; }
-.ctl-turn[data-live] { color: rgb(var(--ev-pill-ink-rgb) / 0.66); }
+.ctl-turn[data-live] { color: rgb(247 241 232 / 0.66); }
 .ctl-turn-head { display: flex; align-items: baseline; gap: 6px; font: 600 11px/16px var(--ev-font-text); color: var(--ctl-ink-2); }
 .ctl-turn-head > b { font-weight: 600; }
 .ctl-turn[data-who="you"] .ctl-turn-head > b { color: var(--ev-rec); }
 .ctl-turn-head > time { font-weight: 400; font-variant-numeric: tabular-nums; opacity: 0.8; }
 .ctl-meeting-empty { margin: auto; max-width: 280px; padding: 0 12px; text-align: center; color: var(--ctl-ink-2); font: 400 12.5px/18px var(--ev-font-text); user-select: none; -webkit-user-select: none; }
-.ctl-latest { position: absolute; right: 10px; bottom: 6px; gap: 4px; background: var(--ev-pill-raised); box-shadow: 0 2px 8px rgb(0 0 0 / 0.35); }
+.ctl-latest { position: absolute; right: 10px; bottom: 6px; gap: 4px; background: rgb(60 60 64 / 0.96); box-shadow: 0 2px 8px rgb(0 0 0 / 0.35); }
 
 /* The box's three views and the question box under them. */
 .ctl-tabs { display: flex; flex: none; gap: 2px; padding: 0 8px 4px; }
 .ctl-tab { appearance: none; border: 0; background: transparent; color: var(--ctl-ink-2); font: 500 11.5px/16px var(--ev-font-text); padding: 3px 9px; border-radius: 999px; cursor: default; }
 .ctl-tab:hover { color: var(--ctl-ink); background: var(--ctl-hover); }
-.ctl-tab[aria-selected="true"] { color: var(--ctl-ink); background: rgb(var(--ev-pill-ink-rgb) / 0.12); }
+.ctl-tab[aria-selected="true"] { color: var(--ctl-ink); background: rgb(255 255 255 / 0.12); }
 .ctl-tab:focus-visible { outline: 1px solid var(--ctl-line); }
 .ctl-pane { position: relative; display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; }
 .ctl-overview { font: 400 13px/19px var(--ev-font-text); color: var(--ctl-ink); }
@@ -992,14 +1062,14 @@ html:has(.ev-meeting-card), html:has(.ev-meeting-card) body { margin: 0; overflo
 .ctl-overview li { margin: 0 0 3px; }
 .ctl-overview li > b { font-weight: 600; }
 .ctl-ask { margin: 0 0 8px; white-space: pre-wrap; overflow-wrap: anywhere; font: 400 13px/19px var(--ev-font-text); color: var(--ctl-ink); }
-.ctl-ask[data-role="user"] { padding: 4px 9px; border-radius: 10px; background: rgb(var(--ev-pill-ink-rgb) / 0.1); width: fit-content; max-width: calc(100% - 48px); align-self: flex-end; margin-left: auto; }
+.ctl-ask[data-role="user"] { padding: 4px 9px; border-radius: 10px; background: rgb(255 255 255 / 0.1); width: fit-content; max-width: calc(100% - 48px); align-self: flex-end; margin-left: auto; }
 .ctl-asks { display: flex; flex-direction: column; }
 .ctl-askbar { display: flex; flex: none; align-items: center; gap: 4px; margin: 6px 6px 0; padding: 2px 2px 2px 10px; border-radius: 999px; background: rgb(255 255 255 / 0.08); box-shadow: inset 0 0 0 1px var(--ctl-line); }
-.ctl-askbar:focus-within { background: rgb(var(--ev-pill-ink-rgb) / 0.12); }
+.ctl-askbar:focus-within { background: rgb(255 255 255 / 0.12); }
 .ctl-askbar > input { flex: 1 1 auto; min-width: 0; height: 26px; border: 0; outline: 0; background: transparent; color: var(--ctl-ink); font: 400 13px/18px var(--ev-font-text); user-select: text; -webkit-user-select: text; }
 .ctl-askbar > input::placeholder { color: var(--ctl-ink-2); }
 .ctl-send { border-radius: 999px; background: var(--ev-rec); color: #fff; }
-.ctl-send:disabled { background: rgb(var(--ev-pill-ink-rgb) / 0.1); color: var(--ctl-ink-2); }
+.ctl-send:disabled { background: rgb(255 255 255 / 0.1); color: var(--ctl-ink-2); }
 /* The clipboard panel (clipboard.tsx, clipboard.rs): what you copied and your screenshots.
    Paper like the launcher, one window-sized sheet. No coral here. */
 html:has(.ev-clip), html:has(.ev-clip) body, html:has(.ev-clip) #root { margin: 0; height: 100%; overflow: hidden; }

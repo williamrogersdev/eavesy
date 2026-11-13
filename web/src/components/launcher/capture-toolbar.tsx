@@ -123,7 +123,7 @@ const LIVE_LABEL: Record<CaptureKind, string> = { talk: 'Listening', meeting: 'M
 export const LIVE_CARD_LINES = 4;
 
 /**
- * The pill, carried into the panel: the same charcoal card, coral light and
+ * The pill, carried into the panel: the same card, coral light and
  * newest lines, in place of the capture shelf. The title bar's mascot is the
  * only mascot while it runs.
  */
