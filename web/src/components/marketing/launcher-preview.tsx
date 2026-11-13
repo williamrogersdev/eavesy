@@ -7,7 +7,7 @@ const CHIPS = ['All', 'Voice', 'Meetings', 'Screens', 'Notes'];
 
 export function LauncherPreview({ className }: { className?: string }) {
   return (
-    <div aria-hidden inert className={cn('relative mx-auto w-full max-w-[420px] select-none', className)}>
+    <div aria-hidden inert className={cn('ev-app-type relative mx-auto w-full max-w-[420px] select-none', className)}>
       <div className="overflow-hidden rounded-[var(--ev-r-panel)] bg-ev-paper text-left shadow-[var(--ev-e-3)]">
         <div className="flex h-11 items-center gap-2 px-3.5">
           <span className="grid h-[18px] w-[18px] place-items-center rounded-full text-ev-ink-3">
@@ -128,7 +128,7 @@ const LEVELS = [0.35, 0.7, 0.5, 0.95, 0.6, 0.8, 0.45, 0.65, 0.3];
 /** The floating dictation bar (DESIGN.md §5 HUD): glass, mascot with the coral light on, timer. */
 export function HudPreview({ className, words }: { className?: string; words?: [string, string] }) {
   return (
-    <div aria-hidden className={cn('w-[300px] select-none', className)}>
+    <div aria-hidden className={cn('ev-app-type w-[300px] select-none', className)}>
       <div className="flex h-[34px] items-center gap-2 rounded-full border border-[var(--ev-pill-line)] bg-[var(--ev-pill)] px-2 text-[var(--ev-pill-ink)] shadow-[var(--ev-e-3)] backdrop-blur-[30px] backdrop-saturate-[160%]">
         <Mascot size={18} state="listening" level={0.6} recording />
         <span className="font-round text-[12.5px] font-semibold">Listening</span>

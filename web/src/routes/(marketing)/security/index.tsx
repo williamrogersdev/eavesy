@@ -110,6 +110,22 @@ function SecurityPage() {
               ))}
             </dl>
           </div>
+
+          <div className="mt-14 max-w-3xl">
+            <h2 className="text-xl font-extrabold tracking-tight text-ev-ink">
+              Audits and certifications
+            </h2>
+            <p className="mt-3 text-sm leading-relaxed text-ev-ink-2">
+              Eavesy has no SOC 2 or ISO 27001 report today, and we would rather say so than imply
+              one. The code is open source, so your team can read how recordings are captured,
+              stored and deleted. If you need a security questionnaire answered or a data
+              processing agreement,{' '}
+              <Link href="/contact" className="text-ev-coat underline underline-offset-2">
+                get in touch
+              </Link>
+              .
+            </p>
+          </div>
         </Container>
       </section>
 
