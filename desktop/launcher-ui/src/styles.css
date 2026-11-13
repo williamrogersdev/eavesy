@@ -805,6 +805,7 @@ html:has(.mk-root), html:has(.mk-root) body { margin: 0; overflow: hidden; }
 }
 .mk-hint[data-top] { top: 72px; bottom: auto; }
 .mk-mascot {
+  /* On the dark glass in both appearances, so the night colours always. */
   --ev-mascot-body: #f5c04e;
   --ev-mascot-hat: #7186c9;
   --ev-mascot-band: #eef0f7;

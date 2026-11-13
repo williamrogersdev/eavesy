@@ -15,7 +15,7 @@ const html = `
   </div>
   <div style="display:flex;flex-direction:column;">
     <div style="display:flex;font-size:80px;font-weight:700;line-height:1.04;letter-spacing:-0.02em;max-width:900px;">Drop it in.</div>
-    <div style="display:flex;font-size:80px;font-weight:700;line-height:1.04;letter-spacing:-0.02em;color:#16213F;max-width:900px;">Paste it to your AI<span style="color:#F2B233;">.</span></div>
+    <div style="display:flex;font-size:80px;font-weight:700;line-height:1.04;letter-spacing:-0.02em;color:#16213F;max-width:900px;">Paste it to your AI.</div>
     <div style="display:flex;font-size:32px;color:#505A75;max-width:880px;margin-top:28px;">Capture text, screenshots, dictation and recordings as plain files on your Mac.</div>
   </div>
   <div style="display:flex;font-size:30px;font-weight:700;color:#16213F;">eavesy.com</div>
