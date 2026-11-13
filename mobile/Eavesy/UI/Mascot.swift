@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Eavesy, the Little Snoop (`desktop/DESIGN.md` §3). The hat is up only
+/// Eavesy, the marigold bean in a navy hat (`desktop/DESIGN.md` §3). The hat is up only
 /// while the mic is live, and the coral lens shows only while recording.
 struct Mascot: View {
     enum Pose { case idle, listening, thinking, happy, confused, sleeping }
@@ -27,13 +27,14 @@ struct Mascot: View {
 
     private func draw(_ ctx: inout GraphicsContext) {
         let body = GraphicsContext.Shading.color(Ev.mascotBody)
+        let hatShade = GraphicsContext.Shading.color(Ev.mascotHat)
         let eye = GraphicsContext.Shading.color(Ev.mascotEye)
         let listening = pose == .listening
         let lift = listening ? 2 + level * 4 : (pose == .sleeping ? -2.5 : 0)
         let bob = listening ? -2.5 * level : 0
 
         if size >= 40 {
-            ctx.fill(Path(ellipseIn: CGRect(x: 15, y: 58.8, width: 34, height: 4.4)), with: .color(Ev.mascotBody.opacity(0.12)))
+            ctx.fill(Path(ellipseIn: CGRect(x: 15, y: 58.8, width: 34, height: 4.4)), with: .color(Ev.mascotHat.opacity(0.12)))
         }
 
         var head = ctx
@@ -45,9 +46,9 @@ struct Mascot: View {
         var hat = head
         hat.translateBy(x: 0, y: -lift)
         if listening { Self.rotate(&hat, -3, around: CGPoint(x: 32, y: 27)) }
-        hat.fill(Path(ellipseIn: CGRect(x: 2, y: 22, width: 60, height: 10)), with: body)
+        hat.fill(Path(ellipseIn: CGRect(x: 2, y: 22, width: 60, height: 10)), with: hatShade)
         let crown = crownPath()
-        hat.fill(crown, with: body)
+        hat.fill(crown, with: hatShade)
         var band = hat
         band.clip(to: crown)
         band.fill(Path(CGRect(x: 10, y: 20, width: 44, height: 4.6)), with: .color(Ev.mascotBand))
@@ -56,8 +57,8 @@ struct Mascot: View {
             var handle = Path()
             handle.move(to: CGPoint(x: 53, y: 56))
             handle.addLine(to: CGPoint(x: 59, y: 63))
-            ctx.stroke(handle, with: .color(Ev.mascotBand), style: StrokeStyle(lineWidth: 3.4, lineCap: .round))
-            ctx.fill(Path(ellipseIn: CGRect(x: 41.9, y: 43.9, width: 15.2, height: 15.2)), with: body)
+            ctx.stroke(handle, with: hatShade, style: StrokeStyle(lineWidth: 3.4, lineCap: .round))
+            ctx.fill(Path(ellipseIn: CGRect(x: 41.9, y: 43.9, width: 15.2, height: 15.2)), with: hatShade)
             ctx.fill(Path(ellipseIn: CGRect(x: 44.5, y: 46.5, width: 10, height: 10)), with: .color(Ev.rec))
             ctx.fill(Path(ellipseIn: CGRect(x: 46.5, y: 48.5, width: 2.6, height: 2.6)), with: .color(.white.opacity(0.7)))
         }
