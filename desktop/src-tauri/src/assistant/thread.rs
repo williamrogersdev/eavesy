@@ -30,7 +30,7 @@ const NOTE_CHARS: usize = 7_000;
 /// Longest request the C7 check takes.
 const CHECK_CHARS: usize = 4_000;
 /// Longest line of the conversation its brief reads (the cloud takes 8,000 per entry).
-const ENTRY_CHARS: usize = 4_000;
+pub(super) const ENTRY_CHARS: usize = 4_000;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -621,6 +621,9 @@ pub(super) fn done_briefing(app: &AppHandle, conversation: &str) {
 /// Stores a brief written from `snapshot`, unless the thread no longer agrees with it.
 /// The check and the write happen under the thread's lock, so "Don't remember this"
 /// lands either before the check or after the brief is in, where it removes it.
+///
+/// `store` runs only while the snapshot still stands, with the thread locked, so it is
+/// also how brief.rs asks "may this still be sent?" before each request.
 pub(super) fn store_brief(app: &AppHandle, snapshot: &Snapshot, store: impl FnOnce(&rusqlite::Connection) -> Result<bool, String>) -> Result<bool, String> {
     let state = app.state::<Mutex<Thread>>();
     let thread = state.lock().unwrap();

@@ -209,6 +209,12 @@ pub fn brief(conn: &Connection, source_type: &str, source_id: &str) -> Result<Op
         .map_err(failed("read a brief"))
 }
 
+/// Whether you forgot this source's brief, or took it off the record: it isn't briefed again.
+pub fn forgotten(conn: &Connection, source_type: &str, source_id: &str) -> Result<bool, String> {
+    conn.query_row("SELECT EXISTS(SELECT 1 FROM brief_skips WHERE source_type=?1 AND source_id=?2)", params![source_type, source_id], |row| row.get(0))
+        .map_err(failed("read the briefs"))
+}
+
 /// The newest `limit` briefs that read, by when their source last changed.
 pub fn briefs(conn: &Connection, limit: usize) -> Result<Vec<Kept>, String> {
     let mut statement = conn
@@ -350,8 +356,10 @@ mod tests {
         assert_eq!(titles, vec!["Newer", "Older"]);
         let newest: Vec<String> = briefs(&conn, 1).unwrap().into_iter().map(|kept| kept.brief.title).collect();
         assert_eq!(newest, vec!["Newer"], "the unreadable one is newest, and doesn't count toward the limit");
+        assert!(!forgotten(&conn, CONVERSATION, "c1").unwrap());
         assert!(forget_brief(&conn, CONVERSATION, "c1").unwrap());
         assert!(!forget_brief(&conn, CONVERSATION, "c1").unwrap());
+        assert!(forgotten(&conn, CONVERSATION, "c1").unwrap() && !forgotten(&conn, CONVERSATION, "c2").unwrap());
         assert_eq!(forget_briefs(&conn, CONVERSATION, &["open"]).unwrap(), 2);
     }
 

@@ -48,7 +48,9 @@ struct BriefResponse {
 
 /// The newest entries that fit, and whether older ones were left out. The newest one
 /// always goes, whatever its size: the cloud takes no request without an entry, and one
-/// entry (thread.rs caps its length) is far under the request's limit.
+/// entry is far under the request's limit. thread.rs cuts an entry to `ENTRY_CHARS`
+/// characters, and a character is at most six bytes of JSON (a control character,
+/// escaped), so one entry is under 25 KB.
 fn newest(entries: &[Entry]) -> (&[Entry], bool) {
     let mut size = 0;
     let mut start = entries.len();
@@ -125,6 +127,16 @@ fn write_once(app: &AppHandle, snapshot: &Snapshot) -> Wrote {
     };
     if previous.as_ref().is_some_and(|kept| kept.covers >= snapshot.covers) {
         return Wrote::Settled;
+    }
+    // Asked again before every try, so a retry never sends words you have since marked
+    // "Don't remember this", taken off the record or forgotten.
+    match thread::store_brief(app, snapshot, |conn| saved::forgotten(conn, CONVERSATION, &snapshot.conversation).map(|forgotten| !forgotten)) {
+        Ok(true) => {}
+        Ok(false) => return Wrote::Settled,
+        Err(error) => {
+            tracing::warn!(%error, "assistant: couldn't read the brief");
+            return Wrote::Failed;
+        }
     }
     let (entries, cut) = newest(&snapshot.entries);
     // The earlier brief goes along only when the entries aren't the whole conversation.
@@ -244,6 +256,9 @@ mod tests {
         let huge = vec![entry("older"), entry(&"x".repeat(SENT_BYTES * 2))];
         let (sent, cut) = newest(&huge);
         assert_eq!((sent.len(), cut), (1, true));
+        // The longest entry thread.rs makes, at its largest as JSON, fits many times over.
+        let longest = serde_json::to_string(&entry(&"\u{1}".repeat(thread::ENTRY_CHARS))).unwrap();
+        assert!(longest.len() * 3 < SENT_BYTES, "{}", longest.len());
         // Counted as the JSON that's sent: a newline is two bytes there.
         let escaped: Vec<Entry> = (0..10).map(|_| entry(&"\n".repeat(SENT_BYTES / 16))).collect();
         assert_eq!(newest(&escaped).0.len(), 7);
