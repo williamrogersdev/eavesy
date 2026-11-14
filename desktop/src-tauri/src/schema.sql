@@ -232,3 +232,45 @@ CREATE TABLE IF NOT EXISTS recording_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_recording_sessions_status
   ON recording_sessions(status, updated_at);
+
+-- Eavesy's conversation, saved so it survives a restart (docs/plans/macro-awareness.md P6).
+-- Only the current conversation's turns are here: Clear removes them, and a conversation
+-- taken off the record is never written.
+CREATE TABLE IF NOT EXISTS assistant_turns (
+  conversation_id TEXT NOT NULL,
+  id INTEGER NOT NULL,
+  -- How many turns the conversation had before this one: ids keep counting across Clear.
+  position INTEGER NOT NULL DEFAULT 0,
+  at_ms INTEGER NOT NULL,
+  message TEXT NOT NULL,
+  spoken INTEGER NOT NULL DEFAULT 0,
+  notes TEXT NOT NULL DEFAULT '[]',
+  failed INTEGER NOT NULL DEFAULT 0,
+  unremembered INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (conversation_id, id)
+);
+
+-- One brief per piece of work (macro-awareness.md P): a short summary, replaced by the
+-- next version. `covers` is how far into its source the brief reads (a conversation's
+-- newest turn id), and `search_text` is what word search will match.
+CREATE TABLE IF NOT EXISTS briefs (
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  version INTEGER NOT NULL DEFAULT 1,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL,
+  content TEXT NOT NULL,
+  search_text TEXT NOT NULL,
+  covers INTEGER NOT NULL DEFAULT 0,
+  source_updated_ms INTEGER NOT NULL,
+  updated_ms INTEGER NOT NULL,
+  PRIMARY KEY (source_type, source_id)
+);
+CREATE INDEX IF NOT EXISTS idx_briefs_updated ON briefs(source_updated_ms DESC);
+
+-- Sources you told Eavesy to forget: no brief is written for one again.
+CREATE TABLE IF NOT EXISTS brief_skips (
+  source_type TEXT NOT NULL,
+  source_id TEXT NOT NULL,
+  PRIMARY KEY (source_type, source_id)
+);

@@ -174,6 +174,9 @@ pub fn run() {
             assistant::voice::hud_assistant,
             assistant::voice::assistant_talk,
             assistant::thread::assistant_clear,
+            assistant::brief::assistant_briefs,
+            assistant::brief::assistant_forget_brief,
+            assistant::brief::assistant_forget_briefs,
             commands::set_capture_sounds,
             meeting_watch::set_auto_record_meetings,
             meeting_watch::answer_meeting_prompt,
@@ -305,6 +308,8 @@ pub fn run() {
                 telemetry::capture("sqlite.initialize", &error);
                 return Err(std::io::Error::other(error).into());
             }
+            // Eavesy's conversation, as it was when the app last quit.
+            assistant::thread::restore(&handle);
 
             if let Err(e) = panel::install(&handle) {
                 telemetry::capture("panel.install", &e);
