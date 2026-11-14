@@ -282,6 +282,7 @@ describe('briefs', () => {
     links: [
       { label: 'The issue', url: 'https://example.com/issue/7' },
       { label: 'Invented', url: 'https://example.com/other' },
+      { label: 'A prefix of one it read', url: 'https://example.com/issue' },
       { label: 'Not a link', url: 'javascript:alert(1)' },
     ],
     keywords: ['HUD', 'hud', 'Phase Sync'],
@@ -324,6 +325,10 @@ describe('briefs', () => {
     const input = briefInput.parse({ kind: 'conversation', entries });
     await expect(runBrief(fakeClient([text('{"title": "x"')], 'max_tokens').client, input)).rejects.toThrow();
     await expect(runBrief(fakeClient([text('not json')]).client, input)).rejects.toThrow();
+    // A URL that ends a sentence is found without the full stop, and only whole URLs match.
+    const sentence = briefInput.parse({ kind: 'conversation', entries: [{ role: 'you', text: 'It is at https://example.com/issue/77.' }] });
+    const links = [{ label: 'Whole', url: 'https://example.com/issue/77' }, { label: 'Part', url: 'https://example.com/issue/7' }];
+    expect((await runBrief(fakeClient([text(JSON.stringify({ ...answer, links }))]).client, sentence)).brief.links).toEqual([links[0]]);
     await expect(runBrief(fakeClient([text(JSON.stringify({ ...answer, outcome: { status: 'finished', text: '' } }))]).client, input)).rejects.toThrow();
     await expect(runBrief(fakeClient([text(JSON.stringify({ ...answer, summary: ' ' }))]).client, input)).rejects.toThrow('empty');
     expect(briefInput.safeParse({ kind: 'conversation', entries: [] }).success).toBe(false);

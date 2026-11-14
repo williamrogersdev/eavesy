@@ -598,7 +598,7 @@ fn snapshot_of(thread: &Thread, settled: Option<u64>) -> Option<Snapshot> {
 }
 
 /// The conversation for its brief, if it has been quiet since turn `since`. The caller
-/// writes the brief and then calls `briefed`.
+/// writes the brief and then calls `done_briefing`.
 pub(super) fn quiet_snapshot(app: &AppHandle, since: u64) -> Option<Snapshot> {
     let state = app.state::<Mutex<Thread>>();
     let mut thread = state.lock().unwrap();
@@ -607,8 +607,10 @@ pub(super) fn quiet_snapshot(app: &AppHandle, since: u64) -> Option<Snapshot> {
     Some(snapshot)
 }
 
-/// The brief of `conversation` is no longer being written.
-pub(super) fn briefed(app: &AppHandle, conversation: &str) {
+/// The brief of `conversation` is no longer being written, whether or not one was
+/// stored. This only takes it off the list Forget All reads; it doesn't mark anything
+/// as done, so the next answer, Clear or restart asks for a brief again.
+pub(super) fn done_briefing(app: &AppHandle, conversation: &str) {
     let state = app.state::<Mutex<Thread>>();
     let mut thread = state.lock().unwrap();
     if let Some(at) = thread.briefing.iter().position(|id| id == conversation) {

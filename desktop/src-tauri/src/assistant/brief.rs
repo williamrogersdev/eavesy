@@ -46,13 +46,15 @@ struct BriefResponse {
     brief: Brief,
 }
 
-/// The newest entries that fit, and whether older ones were left out.
+/// The newest entries that fit, and whether older ones were left out. The newest one
+/// always goes, whatever its size: the cloud takes no request without an entry, and one
+/// entry (thread.rs caps its length) is far under the request's limit.
 fn newest(entries: &[Entry]) -> (&[Entry], bool) {
     let mut size = 0;
     let mut start = entries.len();
     while start > 0 && entries.len() - start < SENT_ENTRIES {
         size += serde_json::to_string(&entries[start - 1]).map_or(usize::MAX / 2, |json| json.len() + 1);
-        if size > SENT_BYTES {
+        if size > SENT_BYTES && start < entries.len() {
             break;
         }
         start -= 1;
@@ -79,24 +81,50 @@ async fn ask(app: &AppHandle, entries: &[Entry], previous: Option<&Brief>) -> Re
 
 /// Writes the brief of the conversation in `snapshot`, unless one already reads that far.
 /// Blocking. A failure is logged and the brief already kept stays.
+///
+/// A try that fails is made again, so this can block for a few minutes. After the last
+/// one the brief already kept stays, until the next answer, Clear or restart asks again.
+/// The conversation counts as being briefed (thread.rs `briefing`) until this returns,
+/// so Forget All reaches it through every try.
 fn write(app: &AppHandle, snapshot: Snapshot) {
-    write_registered(app, &snapshot);
-    thread::briefed(app, &snapshot.conversation);
+    for attempt in 1..=TRIES {
+        if write_once(app, &snapshot) == Wrote::Settled {
+            break;
+        }
+        if attempt < TRIES {
+            std::thread::sleep(RETRY);
+        }
+    }
+    thread::done_briefing(app, &snapshot.conversation);
 }
 
-fn write_registered(app: &AppHandle, snapshot: &Snapshot) {
+/// How one try at a brief ended.
+#[derive(Debug, PartialEq, Eq)]
+enum Wrote {
+    /// Stored, or there was nothing to do: memory is off, a brief already reads this far,
+    /// or you forgot the conversation meanwhile.
+    Settled,
+    /// The cloud or the database didn't answer. Worth another try.
+    Failed,
+}
+
+/// Tries at one brief, and the wait between them.
+const TRIES: usize = 3;
+const RETRY: Duration = Duration::from_secs(60);
+
+fn write_once(app: &AppHandle, snapshot: &Snapshot) -> Wrote {
     if !crate::settings::load(app).assistant_memory() {
-        return;
+        return Wrote::Settled;
     }
     let previous = match crate::sqlite::with_open(app, |conn| saved::brief(conn, CONVERSATION, &snapshot.conversation)).and_then(|result| result) {
         Ok(previous) => previous,
         Err(error) => {
             tracing::warn!(%error, "assistant: couldn't read the brief");
-            return;
+            return Wrote::Failed;
         }
     };
     if previous.as_ref().is_some_and(|kept| kept.covers >= snapshot.covers) {
-        return;
+        return Wrote::Settled;
     }
     let (entries, cut) = newest(&snapshot.entries);
     // The earlier brief goes along only when the entries aren't the whole conversation.
@@ -109,20 +137,26 @@ fn write_registered(app: &AppHandle, snapshot: &Snapshot) {
         Ok(brief) => brief,
         Err(error) => {
             tracing::warn!(%error, "assistant: the brief wasn't written");
-            return;
+            return Wrote::Failed;
         }
     };
     // Memory may have been switched off while the cloud was writing.
     if !crate::settings::load(app).assistant_memory() {
-        return;
+        return Wrote::Settled;
     }
     // Refused when an exchange it read was marked "Don't remember this" meanwhile
     // (thread.rs), or when you forgot this conversation or took it off the record (saved.rs).
     let stored = thread::store_brief(app, snapshot, |conn| saved::put_brief(conn, CONVERSATION, &snapshot.conversation, &brief, snapshot.covers, snapshot.updated_ms, super::now_ms()));
     match stored {
-        Ok(true) => changed(app),
-        Ok(false) => {}
-        Err(error) => tracing::warn!(%error, "assistant: couldn't save the brief"),
+        Ok(true) => {
+            changed(app);
+            Wrote::Settled
+        }
+        Ok(false) => Wrote::Settled,
+        Err(error) => {
+            tracing::warn!(%error, "assistant: couldn't save the brief");
+            Wrote::Failed
+        }
     }
 }
 
@@ -140,9 +174,17 @@ pub(super) fn write_soon(app: &AppHandle, snapshot: Snapshot) {
 /// Briefs the conversation once it has been quiet for a while. Called after each answer
 /// and after a restart; if something is said in the meantime, that answer's call takes over.
 pub(super) fn schedule(app: &AppHandle) {
+    // The one wait in progress. A newer answer replaces it, so a run of messages leaves
+    // one sleeping task, not one each. A brief already being written isn't stopped by
+    // this: that part runs on its own thread.
+    static WAITING: std::sync::Mutex<Option<tauri::async_runtime::JoinHandle<()>>> = std::sync::Mutex::new(None);
     let Some(since) = thread::newest(app) else { return };
     let app = app.clone();
-    tauri::async_runtime::spawn(async move {
+    let mut waiting = WAITING.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(earlier) = waiting.take() {
+        earlier.abort();
+    }
+    *waiting = Some(tauri::async_runtime::spawn(async move {
         tokio::time::sleep(QUIET).await;
         let _ = tauri::async_runtime::spawn_blocking(move || {
             if let Some(snapshot) = thread::quiet_snapshot(&app, since) {
@@ -150,7 +192,7 @@ pub(super) fn schedule(app: &AppHandle) {
             }
         })
         .await;
-    });
+    }));
 }
 
 /// The briefs Eavesy keeps, newest first.
@@ -197,6 +239,10 @@ mod tests {
         assert_eq!((sent.len(), cut, sent.last().unwrap().text.as_str()), (SENT_ENTRIES, true, "404"));
         let big = vec![entry(&"x".repeat(SENT_BYTES)), entry("last")];
         let (sent, cut) = newest(&big);
+        assert_eq!((sent.len(), cut, sent[0].text.as_str()), (1, true, "last"));
+        // The newest entry goes even when it alone is over the size: never an empty request.
+        let huge = vec![entry("older"), entry(&"x".repeat(SENT_BYTES * 2))];
+        let (sent, cut) = newest(&huge);
         assert_eq!((sent.len(), cut), (1, true));
         // Counted as the JSON that's sent: a newline is two bytes there.
         let escaped: Vec<Entry> = (0..10).map(|_| entry(&"\n".repeat(SENT_BYTES / 16))).collect();

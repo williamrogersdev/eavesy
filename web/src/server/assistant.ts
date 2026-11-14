@@ -518,6 +518,24 @@ export function briefUserMessage(input: BriefInput): string {
   return `${previous}<conversation>\n${lines}\n</conversation>`;
 }
 
+/**
+ * Every URL in `texts`, whole, plus `urls` as they are. A URL in running text often ends
+ * at punctuation that isn't part of it ("see https://x.test/7."), so each is also kept
+ * without its trailing punctuation. Matching is exact: ".../issue/7" is not found in
+ * ".../issue/77".
+ */
+function urlsIn(texts: readonly string[], urls: readonly string[]): Set<string> {
+  const found = new Set(urls);
+  for (const text of texts) {
+    for (const [url] of text.matchAll(/https?:\/\/[^\s<>"]+/g)) {
+      found.add(url);
+      let end = url.length;
+      while (end > 0 && /[.,;:!?)\]}'’”]/.test(url[end - 1])) found.add(url.slice(0, --end));
+    }
+  }
+  return found;
+}
+
 /** One plain line, unfenced, cut to `max` characters. */
 function briefLine(value: string, max: number): string {
   return keepStart(unfence(value).replace(/[\p{Cc}\u2028\u2029]/gu, ' ').replace(/\s+/g, ' ').trim(), max);
@@ -537,7 +555,7 @@ export async function runBrief(client: AssistantClient, input: BriefInput): Prom
   const raw = message.content.map((part) => (part.type === 'text' ? part.text : '')).join('');
   const parsed = briefShape.parse(JSON.parse(raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1)));
   // A link is kept only when its URL was in what the model read: it can't add one of its own.
-  const seen = `${input.entries.map((entry) => entry.text).join('\n')}\n${(input.previous?.links ?? []).map((link) => link.url).join('\n')}`;
+  const seen = urlsIn(input.entries.map((entry) => entry.text), (input.previous?.links ?? []).map((link) => link.url));
   const lines = (values: string[], count: number) => values.map((value) => briefLine(value, BRIEF_LINE)).filter(Boolean).slice(0, count);
   const brief: Brief = {
     title: briefLine(parsed.title, BRIEF_TITLE),
@@ -548,7 +566,7 @@ export async function runBrief(client: AssistantClient, input: BriefInput): Prom
     facts: lines(parsed.facts, BRIEF_FACTS),
     links: parsed.links
       .map((link) => ({ label: briefLine(link.label, BRIEF_LINE), url: unfence(link.url).trim() }))
-      .filter((link) => link.label && /^https?:\/\/\S+$/.test(link.url) && link.url.length <= 2_048 && seen.includes(link.url))
+      .filter((link) => link.label && /^https?:\/\/\S+$/.test(link.url) && link.url.length <= 2_048 && seen.has(link.url))
       .slice(0, BRIEF_LINKS),
     keywords: [...new Set(lines(parsed.keywords, BRIEF_KEYWORDS * 2).map((word) => word.toLowerCase()))].slice(0, BRIEF_KEYWORDS),
   };

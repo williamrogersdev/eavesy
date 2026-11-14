@@ -43,7 +43,8 @@ pub fn load(conn: &Connection) -> Result<Option<(String, u64, Vec<Turn>)>, Strin
         let notes = serde_json::from_str(&notes).unwrap_or_default();
         turns.push(Turn { id: id.max(0) as u64, message, at_ms: at_ms.max(0) as u64, spoken, notes, failed, unremembered });
     }
-    Ok(Some((conversation, first_turn, turns)))
+    // Nothing of it reads: there's no conversation to bring back.
+    Ok((!turns.is_empty()).then_some((conversation, first_turn, turns)))
 }
 
 /// Saves one turn, and drops the turns before `first_kept`: the same ones the thread
@@ -167,17 +168,13 @@ pub struct Kept {
 /// changes nothing, so a slow answer never replaces a newer one; and nothing is stored
 /// for a source you had forgotten. True when stored.
 pub fn put_brief(conn: &Connection, source_type: &str, source_id: &str, brief: &Brief, covers: u64, source_updated_ms: u64, now_ms: u64) -> Result<bool, String> {
-    let skipped: bool = conn
-        .query_row("SELECT EXISTS(SELECT 1 FROM brief_skips WHERE source_type=?1 AND source_id=?2)", params![source_type, source_id], |row| row.get(0))
-        .map_err(failed("save a brief"))?;
-    if skipped {
-        return Ok(false);
-    }
     let content = serde_json::to_string(brief).map_err(|error| format!("save a brief: {error}"))?;
     let changed = conn
         .execute(
+            // One statement, so the check for a forgotten source and the write can't come apart.
             "INSERT INTO briefs (source_type, source_id, version, title, status, content, search_text, covers, source_updated_ms, updated_ms)
-             VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             SELECT ?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, ?8, ?9
+             WHERE NOT EXISTS (SELECT 1 FROM brief_skips WHERE source_type=?1 AND source_id=?2)
              ON CONFLICT(source_type, source_id) DO UPDATE SET
                version=briefs.version+1, title=excluded.title, status=excluded.status, content=excluded.content,
                search_text=excluded.search_text, covers=excluded.covers, source_updated_ms=excluded.source_updated_ms,
@@ -212,13 +209,21 @@ pub fn brief(conn: &Connection, source_type: &str, source_id: &str) -> Result<Op
         .map_err(failed("read a brief"))
 }
 
-/// The newest briefs, by when their source last changed.
+/// The newest `limit` briefs that read, by when their source last changed.
 pub fn briefs(conn: &Connection, limit: usize) -> Result<Vec<Kept>, String> {
     let mut statement = conn
-        .prepare(&format!("SELECT {KEPT_COLUMNS} FROM briefs ORDER BY source_updated_ms DESC, source_id LIMIT ?1"))
+        .prepare(&format!("SELECT {KEPT_COLUMNS} FROM briefs ORDER BY source_updated_ms DESC, source_id"))
         .map_err(failed("read the briefs"))?;
-    let rows = statement.query_map([limit as i64], kept).map_err(failed("read the briefs"))?;
-    Ok(rows.collect::<rusqlite::Result<Vec<_>>>().map_err(failed("read the briefs"))?.into_iter().flatten().collect())
+    let rows = statement.query_map([], kept).map_err(failed("read the briefs"))?;
+    let mut briefs = Vec::new();
+    // The limit counts briefs that read, so one in an older shape doesn't hide a newer one.
+    for row in rows {
+        if briefs.len() == limit {
+            break;
+        }
+        briefs.extend(row.map_err(failed("read the briefs"))?);
+    }
+    Ok(briefs)
 }
 
 /// Removes a source's brief and keeps one from being written for it again: an answer
@@ -316,6 +321,8 @@ mod tests {
         save_turn(&conn, "c1", &turn(2, Role::User, "more"), 2, 0).unwrap();
         conn.execute("UPDATE assistant_turns SET message='{\"role\":\"robot\"}' WHERE id=1", []).unwrap();
         assert_eq!(load(&conn).unwrap().unwrap().2.len(), 1);
+        conn.execute("UPDATE assistant_turns SET message='{\"role\":\"robot\"}' WHERE id=0", []).unwrap();
+        assert_eq!(load(&conn).unwrap(), None, "nothing reads, so there is nothing to restore");
     }
 
     #[test]
@@ -341,7 +348,8 @@ mod tests {
         conn.execute("INSERT INTO briefs (source_type, source_id, title, status, content, search_text, source_updated_ms, updated_ms) VALUES ('conversation','c3','x','done','{}','x',3000,1)", []).unwrap();
         let titles: Vec<String> = briefs(&conn, 10).unwrap().into_iter().map(|kept| kept.brief.title).collect();
         assert_eq!(titles, vec!["Newer", "Older"]);
-        assert_eq!(briefs(&conn, 1).unwrap().len(), 0, "the unreadable one is newest and is skipped");
+        let newest: Vec<String> = briefs(&conn, 1).unwrap().into_iter().map(|kept| kept.brief.title).collect();
+        assert_eq!(newest, vec!["Newer"], "the unreadable one is newest, and doesn't count toward the limit");
         assert!(forget_brief(&conn, CONVERSATION, "c1").unwrap());
         assert!(!forget_brief(&conn, CONVERSATION, "c1").unwrap());
         assert_eq!(forget_briefs(&conn, CONVERSATION, &["open"]).unwrap(), 2);
