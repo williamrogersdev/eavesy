@@ -561,6 +561,47 @@ export async function setAssistantMemory(on: boolean): Promise<void> {
   await invoke('set_assistant_memory', { on });
 }
 
+/** How a piece of work stands (assistant/saved.rs `Status`). */
+export type AssistantBriefStatus = 'in_progress' | 'answered' | 'done' | 'partial' | 'blocked' | 'abandoned';
+
+/** A brief Eavesy keeps of a piece of work (assistant/saved.rs `Kept`). */
+export interface AssistantBrief {
+  source_type: string;
+  source_id: string;
+  version: number;
+  source_updated_ms: number;
+  brief: {
+    title: string;
+    summary: string;
+    intent: string;
+    outcome: { status: AssistantBriefStatus; text: string };
+    decisions: { text: string; kind: string }[];
+    facts: string[];
+    links: { label: string; url: string }[];
+    keywords: string[];
+  };
+}
+
+export async function getAssistantBriefs(): Promise<AssistantBrief[]> {
+  return invoke<AssistantBrief[]>('assistant_briefs');
+}
+
+/** Forgets one brief; its source isn't briefed again. */
+export async function forgetAssistantBrief(sourceType: string, sourceId: string): Promise<void> {
+  await invoke('assistant_forget_brief', { sourceType, sourceId });
+}
+
+export async function forgetAllAssistantBriefs(): Promise<void> {
+  await invoke('assistant_forget_briefs');
+}
+
+/** A brief was written or forgotten: look again. */
+export async function onAssistantBriefs(cb: () => void): Promise<UnlistenFn> {
+  const t = tauri();
+  if (!t) return () => {};
+  return t.event.listen<unknown>('assistant:briefs', () => cb());
+}
+
 /** Opens memory.md (or about-you.md) in the default editor. */
 export async function openAssistantMemory(book: AssistantBook = 'setup'): Promise<void> {
   await invoke('open_assistant_memory', { book });

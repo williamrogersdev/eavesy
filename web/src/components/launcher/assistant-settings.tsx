@@ -7,9 +7,12 @@ import {
   addAssistantRule,
   DEFAULT_ASSISTANT_STYLE,
   discardAssistantRuleChange,
+  forgetAllAssistantBriefs,
   forgetAllAssistantNotes,
+  forgetAssistantBrief,
   forgetAssistantNote,
   getAssistantActivity,
+  getAssistantBriefs,
   getAssistantMemory,
   addAssistantInstruction,
   getAssistantRules,
@@ -19,6 +22,7 @@ import {
   openAssistantMemory,
   openAssistantRules,
   removeAssistantInstruction,
+  onAssistantBriefs,
   onAssistantRules,
   pickFolder,
   removeAssistantRule,
@@ -30,6 +34,8 @@ import {
   undoAssistantMerge,
   type AssistantBook,
   type AssistantActivity,
+  type AssistantBrief,
+  type AssistantBriefStatus,
   type AssistantMemory,
   type AssistantRuleChange,
   type AssistantRuleKind,
@@ -126,6 +132,53 @@ function NoteList({ title, hint, notes, path, book, act }: {
   );
 }
 
+const BRIEF_STATUS: Record<AssistantBriefStatus, string> = {
+  in_progress: 'In progress',
+  answered: 'Answered',
+  done: 'Done',
+  partial: 'Partly done',
+  blocked: 'Blocked',
+  abandoned: 'Dropped',
+};
+
+/** The briefs of past conversations, each deletable, with Forget All behind a second click. */
+function BriefList({ briefs, now, act }: {
+  briefs: AssistantBrief[];
+  now: number;
+  act: (run: () => Promise<void>, failed: string) => void;
+}) {
+  const [confirmForget, setConfirmForget] = useState(false);
+  return (
+    <div className="ev-set-row flex-col">
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="ev-set-label">Conversations · {briefs.length === 1 ? '1 brief' : `${briefs.length} briefs`}</div>
+          <div className="ev-set-hint">A short summary of each conversation, written once it goes quiet, so Eavesy can find it later. Off the record, none is written.</div>
+        </div>
+        {briefs.length > 0 && (
+          confirmForget
+            ? <Button variant="primary" size="sm" onClick={() => { setConfirmForget(false); act(forgetAllAssistantBriefs, 'Couldn’t forget everything.'); }}>Forget All {briefs.length}</Button>
+            : <Button variant="quiet" size="sm" onClick={() => setConfirmForget(true)}>Forget All…</Button>
+        )}
+      </div>
+      {briefs.length > 0 && (
+        <ul className="ev-assistant-folders ev-assistant-briefs">
+          {briefs.map(({ source_type, source_id, source_updated_ms, brief }) => (
+            <li key={`${source_type}:${source_id}`}>
+              <span className="min-w-0 flex-1">
+                <span className="ev-set-label ev-assistant-note">{brief.title}</span>
+                <span className="ev-set-hint block">{BRIEF_STATUS[brief.outcome.status] ?? brief.outcome.status} · {formatRelative(source_updated_ms, now)}</span>
+                <span className="ev-set-hint block">{brief.summary}</span>
+              </span>
+              <IconButton label={`Forget “${brief.title}”`} icon={Trash2} size={24} onClick={() => act(() => forgetAssistantBrief(source_type, source_id), 'Couldn’t forget that.')} />
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
 function modeChoice(state: AssistantState): ModeChoice {
   if (state.effective === 'bypass') return state.until_ms === null ? 'bypass' : 'bypass-hour';
   return state.effective;
@@ -174,6 +227,21 @@ export function AssistantSettings({ active, settings, onSettings }: {
   const memoryAction = (run: () => Promise<void>, failed: string) => {
     setError(null);
     void run().then(loadMemory).catch((e: unknown) => setError(errMsg(e, failed)));
+  };
+  const [briefs, setBriefs] = useState<AssistantBrief[]>([]);
+  const loadBriefs = useCallback(() => {
+    void getAssistantBriefs().then(setBriefs).catch((e: unknown) => setError(errMsg(e, 'Couldn’t read the briefs.')));
+  }, []);
+  // Read each time, and again when one is written: a conversation is briefed a while after it goes quiet.
+  useEffect(() => {
+    if (!active) return;
+    loadBriefs();
+    const off = onAssistantBriefs(loadBriefs);
+    return () => void off.then((stop) => stop());
+  }, [active, loadBriefs]);
+  const briefAction = (run: () => Promise<void>, failed: string) => {
+    setError(null);
+    void run().then(loadBriefs).catch((e: unknown) => setError(errMsg(e, failed)));
   };
   const toggleMemory = (on: boolean) => {
     setError(null);
@@ -312,7 +380,7 @@ export function AssistantSettings({ active, settings, onSettings }: {
           disabled={!memory}
           onCheckedChange={toggleMemory}
           label="Remember things I ask it to"
-          hint="Eavesy keeps short notes when you ask it to remember something, and sends them to its model with each message. Off: no notes are sent or added."
+          hint="Eavesy keeps short notes when you ask it to remember something, and sends them to its model with each message. Off: no notes are sent or added, and no conversation is briefed."
         />
         {memory?.merged && (
           <div className="ev-set-row">
@@ -340,6 +408,7 @@ export function AssistantSettings({ active, settings, onSettings }: {
           book="setup"
           act={memoryAction}
         />
+        <BriefList briefs={briefs} now={now} act={briefAction} />
       </Card>
 
       <Card title="Permission">

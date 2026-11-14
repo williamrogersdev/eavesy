@@ -68,6 +68,8 @@ export const MODELS = {
   assistant: DEFAULT_ASSISTANT_MODEL,
   /** The second-model check on each tier 2 or 3 action (assistant.md C7). */
   assistantCheck: 'claude-haiku-5-5',
+  /** The brief of a conversation, written after it goes quiet (macro-awareness.md P4). */
+  assistantBrief: 'claude-haiku-5-5',
   vision: 'claude-sonnet-5-5',
   embed: 'voyage-3',
 } as const;

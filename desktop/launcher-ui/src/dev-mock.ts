@@ -544,6 +544,22 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
   let about = empty ? [] : ['Goes by Robin', 'Works from Leeds, UK time'];
   let merged: { at_ms: number; before: number; after: number } | null = empty ? null : { at_ms: now - 3_600_000, before: 50, after: 31 };
   let memoryOn = true;
+  let briefs = empty ? [] : [
+    {
+      source_type: 'conversation', source_id: 'c2', version: 2, source_updated_ms: Date.now() - 40 * 60_000,
+      brief: {
+        title: 'HUD stuck on Listening', summary: 'Worked out that the HUD phase does not sync after a restart, and where to fix it.', intent: 'Find out why the HUD sticks',
+        outcome: { status: 'in_progress', text: 'Cause found; the fix is not written.' }, decisions: [], facts: [], links: [], keywords: ['hud'],
+      },
+    },
+    {
+      source_type: 'conversation', source_id: 'c1', version: 1, source_updated_ms: Date.now() - 26 * 3_600_000,
+      brief: {
+        title: 'Which worktrees can go', summary: 'Listed the finished worktrees under ~/Developer and removed four of them.', intent: 'Clean up old worktrees',
+        outcome: { status: 'done', text: 'Four removed, two kept.' }, decisions: [], facts: [], links: [], keywords: ['worktrees'],
+      },
+    },
+  ];
   type RuleKind = 'remove_worktrees' | 'stop_leftovers';
   type MockRule = { kind: RuleKind; under: string };
   const ruleText = (rule: MockRule) => `${rule.kind === 'remove_worktrees' ? 'Remove finished worktrees under' : 'Stop leftover processes under'} ${rule.under.replace('/Users/w', '~')}`;
@@ -669,6 +685,9 @@ function assistantMock(empty: boolean, emit: (event: string, payload: unknown) =
     assistant_undo_merge: () => { merged = null; },
     assistant_keep_merge: () => { merged = null; },
     set_assistant_memory: ({ on }: Record<string, unknown>) => { memoryOn = on === true; },
+    assistant_briefs: () => [...briefs],
+    assistant_forget_brief: ({ sourceId }: Record<string, unknown>) => { briefs = briefs.filter((kept) => kept.source_id !== sourceId); },
+    assistant_forget_briefs: () => { briefs = []; },
     open_assistant_memory: () => null,
     assistant_rules: () => rulesView(),
     add_assistant_rule: ({ kind, folder }: Record<string, unknown>) => {

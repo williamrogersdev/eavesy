@@ -172,6 +172,17 @@ Each step ships on its own and is useful alone.
 
 1. **Save the conversation and write briefs** (P). A table for threads, a
    table for briefs, the brief call, and briefs listed on each item's page.
+   Built: Eavesy's conversation is saved as it grows and comes back after a
+   restart (`assistant/saved.rs`). It gets a brief two minutes after it goes
+   quiet and again on Clear, written by `/api/assistant/brief` on the small
+   model and kept in the Mac's `briefs` table. Settings → Assistant → Memory
+   lists the briefs, each with Forget. Off the record, nothing is saved or
+   briefed, and what was saved before goes. Clear keeps the brief unless you
+   also forget what the conversation taught. "Don't remember this" drops the
+   brief, and the next one leaves that exchange out. Briefs follow the
+   Memory switch until step 2 gives them their own.
+   Still to do: briefs for meetings, dictations, notes, screenshots and
+   agent sessions (P2), and a brief on each item's own page.
 2. **Related work in a turn, by word match** (Q), with the "Looked at" line
    and the off switch.
 3. **Meaning search over briefs**: widen `embeddings.source_type`, embed one

@@ -2,7 +2,8 @@
 //! Eavesy's cloud, runs the tools the model asks for through the core, and sends the
 //! results back until the model answers in words.
 //!
-//! The thread lives in memory for now; it's cleared when Eavesy quits.
+//! The thread is saved in the local database as it grows (saved.rs), so it's still
+//! there after a restart. Off the record, nothing is saved.
 
 use std::sync::Mutex;
 use std::time::Duration;
@@ -28,6 +29,8 @@ const TEXT_CHARS: usize = 4_000;
 const NOTE_CHARS: usize = 7_000;
 /// Longest request the C7 check takes.
 const CHECK_CHARS: usize = 4_000;
+/// Longest line of the conversation its brief reads (the cloud takes 8,000 per entry).
+pub(super) const ENTRY_CHARS: usize = 4_000;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -50,23 +53,23 @@ pub struct Message {
     pub content: Vec<Block>,
 }
 
-#[derive(Clone, Debug)]
-struct Turn {
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Turn {
     /// Stays the same when older turns are dropped, unlike its place in the thread.
-    id: u64,
-    message: Message,
-    at_ms: u64,
+    pub(super) id: u64,
+    pub(super) message: Message,
+    pub(super) at_ms: u64,
     /// Your turns: said or typed (B7).
-    spoken: bool,
+    pub(super) spoken: bool,
     /// What happened since the last turn (a card you decided), sent to the model ahead
     /// of your words but never counted as them.
-    notes: Vec<String>,
+    pub(super) notes: Vec<String>,
     /// An error shown in Eavesy's place. It's for you, so the model never sees it as
     /// something it said.
-    failed: bool,
+    pub(super) failed: bool,
     /// Your turn, marked "Don't remember this" (H3): what it taught was forgotten, and
     /// its words no longer count when a note or rule is checked.
-    unremembered: bool,
+    pub(super) unremembered: bool,
 }
 
 impl Turn {
@@ -87,8 +90,17 @@ pub struct Thread {
     busy: bool,
     /// Notes waiting for your next turn.
     notes: Vec<String>,
-    /// Off the record (H3): memory is neither sent nor written until the thread is cleared.
+    /// Off the record (H3): memory is neither sent nor written until the thread is cleared,
+    /// and the conversation is neither saved nor briefed.
     off_record: bool,
+    /// Names this conversation in the database and on its brief. Empty until its first
+    /// turn; Clear starts a new one.
+    conversation: String,
+    /// The id of this conversation's first turn: ids keep counting across Clear.
+    first_turn: u64,
+    /// Conversations whose brief is being written right now, so Forget All reaches a
+    /// brief that hasn't been stored yet.
+    briefing: Vec<String>,
 }
 
 /// What the panel draws: your words, Eavesy's words, and the tools between them.
@@ -261,6 +273,19 @@ fn push(app: &AppHandle, message: Message, spoken: bool) {
     record(app, message, spoken, false);
 }
 
+/// Runs `write` on the local database. A failure is logged and the conversation goes on:
+/// the thread in memory is what you're talking to.
+///
+/// Call it while holding the thread's lock: what's saved then changes in the same order
+/// as the thread does, so a turn can't be written after the conversation went off the
+/// record. The order is always thread lock, then database; nothing takes them the other
+/// way round.
+fn persist(app: &AppHandle, write: impl FnOnce(&rusqlite::Connection) -> Result<(), String>) {
+    if let Err(error) = crate::sqlite::with_open(app, write).and_then(|result| result) {
+        tracing::warn!(%error, "assistant: couldn't save the conversation");
+    }
+}
+
 fn record(app: &AppHandle, message: Message, spoken: bool, failed: bool) {
     {
         let state = app.state::<Mutex<Thread>>();
@@ -268,12 +293,22 @@ fn record(app: &AppHandle, message: Message, spoken: bool, failed: bool) {
         let notes = if is_your_words(&message) { std::mem::take(&mut thread.notes) } else { Vec::new() };
         let id = thread.next_id;
         thread.next_id += 1;
-        thread.turns.push(Turn { id, message, at_ms: super::now_ms(), spoken, notes, failed, unremembered: false });
+        if thread.conversation.is_empty() {
+            thread.conversation = uuid::Uuid::new_v4().to_string();
+            thread.first_turn = id;
+        }
+        let turn = Turn { id, message, at_ms: super::now_ms(), spoken, notes, failed, unremembered: false };
+        thread.turns.push(turn.clone());
         if thread.turns.len() > KEPT_MESSAGES {
             let messages: Vec<Message> = thread.turns.iter().map(|turn| turn.message.clone()).collect();
             let keep = window(&messages, KEPT_MESSAGES).len();
             let cut = thread.turns.len() - keep;
             thread.turns.drain(..cut);
+        }
+        if !thread.off_record {
+            let first_kept = thread.turns.first().map_or(id, |first| first.id);
+            let position = id.saturating_sub(thread.first_turn);
+            persist(app, |conn| super::saved::save_turn(conn, &thread.conversation, &turn, position, first_kept));
         }
     }
     emit(app);
@@ -433,6 +468,192 @@ pub fn init(app: &AppHandle) {
     app.manage(Mutex::new(Thread::default()));
 }
 
+/// What a tool call gets for an answer when Eavesy quit before it finished.
+const QUIT: &str = "Stopped: Eavesy quit before this finished.";
+
+/// The answers a restored thread still owes: when Eavesy quit between a tool call and its
+/// result, the model must not get the call without one.
+fn unanswered(turns: &[Turn]) -> Option<Message> {
+    let last = turns.last().filter(|turn| turn.message.role == Role::Assistant)?;
+    let results: Vec<Block> = last
+        .message
+        .content
+        .iter()
+        .filter_map(|block| match block {
+            Block::ToolUse { id, .. } => Some(Block::ToolResult { tool_use_id: id.clone(), content: QUIT.into(), is_error: true }),
+            _ => None,
+        })
+        .collect();
+    (!results.is_empty()).then_some(Message { role: Role::User, content: results })
+}
+
+/// Brings the saved conversation back. Called once from setup, after the database is open.
+pub fn restore(app: &AppHandle) {
+    let (conversation, first_turn, turns) = match crate::sqlite::with_open(app, super::saved::load).and_then(|result| result) {
+        Ok(Some(saved)) if !saved.2.is_empty() => saved,
+        Ok(_) => return,
+        Err(error) => {
+            tracing::warn!(%error, "assistant: couldn't read the saved conversation");
+            return;
+        }
+    };
+    let owed = unanswered(&turns);
+    {
+        let state = app.state::<Mutex<Thread>>();
+        let mut thread = state.lock().unwrap();
+        // Something was said before the database opened: that conversation stands.
+        if !thread.turns.is_empty() {
+            return;
+        }
+        thread.next_id = turns.last().map_or(0, |turn| turn.id + 1);
+        thread.turns = turns;
+        thread.conversation = conversation;
+        thread.first_turn = first_turn;
+    }
+    if let Some(message) = owed {
+        push(app, message, false);
+    }
+    super::brief::schedule(app);
+}
+
+/// One line of the conversation as the brief reads it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(super) struct Entry {
+    /// `you`, `eavesy` or `tool`.
+    pub(super) role: &'static str,
+    pub(super) text: String,
+}
+
+/// The conversation at one moment, for its brief.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct Snapshot {
+    pub(super) conversation: String,
+    /// The newest turn's id and time.
+    pub(super) covers: u64,
+    pub(super) updated_ms: u64,
+    pub(super) entries: Vec<Entry>,
+    /// Older turns are gone from the thread, so the entries aren't all of it.
+    pub(super) partial: bool,
+}
+
+/// The start of `text`, at most `max` characters.
+fn first_chars(text: &str, max: usize) -> &str {
+    text.char_indices().nth(max).map_or(text, |(end, _)| &text[..end])
+}
+
+/// What was said and done, oldest first: your words, Eavesy's, and a line per tool call
+/// with the first line of its result. Errors shown in Eavesy's place are left out, and so
+/// is an exchange you marked "Don't remember this".
+fn entries(turns: &[Turn]) -> Vec<Entry> {
+    let results = results(turns);
+    let mut entries = Vec::new();
+    let mut forgotten = false;
+    for turn in turns.iter().filter(|turn| !turn.failed) {
+        if is_your_words(&turn.message) {
+            forgotten = turn.unremembered;
+        }
+        if forgotten {
+            continue;
+        }
+        let text = text_of(&turn.message);
+        let text = first_chars(text.trim(), ENTRY_CHARS);
+        match turn.message.role {
+            Role::User if is_your_words(&turn.message) && !text.is_empty() => entries.push(Entry { role: "you", text: text.to_string() }),
+            Role::User => {}
+            Role::Assistant => {
+                if !text.is_empty() {
+                    entries.push(Entry { role: "eavesy", text: text.to_string() });
+                }
+                for block in &turn.message.content {
+                    let Block::ToolUse { id, name, .. } = block else { continue };
+                    let line = match results.get(id.as_str()) {
+                        Some((line, true)) => format!("{name}: {line}"),
+                        Some((line, false)) => format!("{name} failed: {line}"),
+                        None => name.clone(),
+                    };
+                    entries.push(Entry { role: "tool", text: first_chars(&line, ENTRY_CHARS).to_string() });
+                }
+            }
+        }
+    }
+    entries
+}
+
+/// The conversation as its brief would read it now, when it may have one: something was
+/// said, on the record. With `settled`, only when Eavesy isn't answering and the newest
+/// turn is still that one.
+fn snapshot_of(thread: &Thread, settled: Option<u64>) -> Option<Snapshot> {
+    let last = thread.turns.last()?;
+    if thread.off_record || thread.conversation.is_empty() {
+        return None;
+    }
+    if settled.is_some_and(|id| thread.busy || last.id != id) {
+        return None;
+    }
+    let entries = entries(&thread.turns);
+    if !entries.iter().any(|entry| entry.role == "you") {
+        return None;
+    }
+    Some(Snapshot { conversation: thread.conversation.clone(), covers: last.id, updated_ms: last.at_ms, entries, partial: thread.turns.first().is_some_and(|turn| turn.id != thread.first_turn) })
+}
+
+/// The conversation for its brief, if it has been quiet since turn `since`. The caller
+/// writes the brief and then calls `done_briefing`.
+pub(super) fn quiet_snapshot(app: &AppHandle, since: u64) -> Option<Snapshot> {
+    let state = app.state::<Mutex<Thread>>();
+    let mut thread = state.lock().unwrap();
+    let snapshot = snapshot_of(&thread, Some(since))?;
+    thread.briefing.push(snapshot.conversation.clone());
+    Some(snapshot)
+}
+
+/// The brief of `conversation` is no longer being written, whether or not one was
+/// stored. This only takes it off the list Forget All reads; it doesn't mark anything
+/// as done, so the next answer, Clear or restart asks for a brief again.
+pub(super) fn done_briefing(app: &AppHandle, conversation: &str) {
+    let state = app.state::<Mutex<Thread>>();
+    let mut thread = state.lock().unwrap();
+    if let Some(at) = thread.briefing.iter().position(|id| id == conversation) {
+        thread.briefing.swap_remove(at);
+    }
+}
+
+/// Stores a brief written from `snapshot`, unless the thread no longer agrees with it.
+/// The check and the write happen under the thread's lock, so "Don't remember this"
+/// lands either before the check or after the brief is in, where it removes it.
+///
+/// `store` runs only while the snapshot still stands, with the thread locked, so it is
+/// also how brief.rs asks "may this still be sent?" before each request.
+pub(super) fn store_brief(app: &AppHandle, snapshot: &Snapshot, store: impl FnOnce(&rusqlite::Connection) -> Result<bool, String>) -> Result<bool, String> {
+    let state = app.state::<Mutex<Thread>>();
+    let thread = state.lock().unwrap();
+    if !stands_in(&thread, snapshot) {
+        return Ok(false);
+    }
+    crate::sqlite::with_open(app, store).and_then(|result| result)
+}
+
+/// Forgets every brief: the stored ones, the open conversation's, and any still being
+/// written. How many stored ones went.
+pub(super) fn forget_briefs(app: &AppHandle) -> Result<usize, String> {
+    let state = app.state::<Mutex<Thread>>();
+    let thread = state.lock().unwrap();
+    let open: Vec<&str> = thread.briefing.iter().map(String::as_str).chain((!thread.conversation.is_empty()).then_some(thread.conversation.as_str())).collect();
+    crate::sqlite::with_open(app, |conn| super::saved::forget_briefs(conn, super::saved::CONVERSATION, &open)).and_then(|result| result)
+}
+
+/// Whether a brief written from `snapshot` is still true to the thread: false once an
+/// exchange it read was marked "Don't remember this" while the brief was being written.
+/// A conversation that has since been cleared has nothing left to disagree with.
+fn stands_in(thread: &Thread, snapshot: &Snapshot) -> bool {
+    thread.conversation != snapshot.conversation || entries(&thread.turns).starts_with(&snapshot.entries)
+}
+
+/// The newest turn's id.
+pub(super) fn newest(app: &AppHandle) -> Option<u64> {
+    app.state::<Mutex<Thread>>().lock().unwrap().turns.last().map(|turn| turn.id)
+}
+
 /// Tells the model, with your next message, how a card ended, so it doesn't offer the
 /// same thing again.
 pub fn note(app: &AppHandle, text: String) {
@@ -485,8 +706,11 @@ pub fn send(app: &AppHandle, text: String, spoken: bool) -> Result<(), String> {
             emit(self.0);
         }
     }
-    let _done = Done(app);
-    converse(app, text, spoken);
+    {
+        let _done = Done(app);
+        converse(app, text, spoken);
+    }
+    super::brief::schedule(app);
     Ok(())
 }
 
@@ -520,6 +744,9 @@ pub fn mark_spoken(app: &AppHandle, id: u64) {
             Some(turn) if turn.message.role == Role::Assistant => turn.spoken = true,
             _ => return,
         }
+        if !thread.off_record {
+            persist(app, |conn| super::saved::set_spoken(conn, &thread.conversation, id));
+        }
     }
     emit(app);
 }
@@ -549,13 +776,30 @@ pub fn off_record(app: &AppHandle) -> bool {
 #[tauri::command]
 pub fn set_assistant_off_record(app: AppHandle, window: WebviewWindow, on: bool) -> Result<(), String> {
     super::from_ui(&window)?;
-    {
+    let went_off = {
         let state = app.state::<Mutex<Thread>>();
         let mut thread = state.lock().unwrap();
         if !on && thread.off_record && !thread.turns.is_empty() {
             return Err("Clear the conversation to go back on the record.".into());
         }
+        let going_off = on && !thread.off_record;
         thread.off_record = on;
+        if going_off {
+            // What was saved of it goes, and so does its brief: the whole conversation
+            // is off the record, not only what comes next.
+            let conversation = std::mem::take(&mut thread.conversation);
+            persist(&app, |conn| {
+                super::saved::clear_turns(conn)?;
+                if !conversation.is_empty() {
+                    super::saved::forget_brief(conn, super::saved::CONVERSATION, &conversation)?;
+                }
+                Ok(())
+            });
+        }
+        going_off
+    };
+    if went_off {
+        super::brief::changed(&app);
     }
     emit(&app);
     Ok(())
@@ -634,15 +878,30 @@ pub fn assistant_dont_remember(app: AppHandle, window: WebviewWindow, id: u64) -
             return Ok(forgot_line(0, 0));
         }
         turn.unremembered = true;
-        taught(&thread.turns, Some(id))
+        let saved = !thread.off_record;
+        if saved {
+            // Its brief may say what you just asked Eavesy not to remember: it goes, and
+            // is written again without that exchange once the conversation is quiet.
+            persist(&app, |conn| {
+                super::saved::set_unremembered(conn, &thread.conversation, id)?;
+                super::saved::drop_brief(conn, super::saved::CONVERSATION, &thread.conversation)
+            });
+        }
+        (taught(&thread.turns, Some(id)), saved)
     };
+    let (notes, saved) = notes;
+    if saved {
+        super::brief::changed(&app);
+        super::brief::schedule(&app);
+    }
     let (forgot, gone) = forget_taught(&notes);
     emit(&app);
     Ok(forgot_line(forgot, gone))
 }
 
-/// Clears the conversation. With `forget`, the notes it taught Eavesy go too, worked out
-/// here from the thread, never taken from the UI. `expected` is how many you were shown:
+/// Clears the conversation. Its brief stays, written now if what was said since the last
+/// one would change it. With `forget`, the brief goes, and so do the notes it taught
+/// Eavesy, worked out here from the thread, never taken from the UI. `expected` is how many you were shown:
 /// if that changed since, nothing is cleared, so you never forget notes you didn't see.
 #[tauri::command(async)]
 pub fn assistant_clear(app: AppHandle, window: WebviewWindow, forget: Option<bool>, expected: Option<usize>) -> Result<String, String> {
@@ -657,12 +916,29 @@ pub fn assistant_clear(app: AppHandle, window: WebviewWindow, forget: Option<boo
         if forget == Some(true) && expected.is_some_and(|shown| still_kept(notes.clone()).len() != shown) {
             return Err(CHANGED.into());
         }
+        let last_words = if forget == Some(true) { None } else { snapshot_of(&thread, None) };
+        if let Some(snapshot) = &last_words {
+            thread.briefing.push(snapshot.conversation.clone());
+        }
+        let conversation = std::mem::take(&mut thread.conversation);
         thread.turns.clear();
         thread.notes.clear();
         // A new conversation is on the record again.
         thread.off_record = false;
-        notes
+        persist(&app, |conn| {
+            super::saved::clear_turns(conn)?;
+            if forget == Some(true) && !conversation.is_empty() {
+                super::saved::forget_brief(conn, super::saved::CONVERSATION, &conversation)?;
+            }
+            Ok(())
+        });
+        (notes, last_words)
     };
+    let (notes, last_words) = notes;
+    match last_words {
+        Some(snapshot) => super::brief::write_soon(&app, snapshot),
+        None => super::brief::changed(&app),
+    }
     emit(&app);
     if notes.is_empty() {
         return Ok(String::new());
@@ -695,7 +971,7 @@ mod tests {
     #[test]
     fn the_view_hangs_tool_results_on_the_call() {
         let turns = [said("anyone waiting?"), call("t1"), result("t1")].into_iter().map(|message| Turn { id: 0, message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false, unremembered: false }).collect();
-        let view = view(&Thread { turns, next_id: 3, busy: true, notes: Vec::new(), off_record: false });
+        let view = view(&Thread { turns, next_id: 3, busy: true, notes: Vec::new(), off_record: false, ..Thread::default() });
         assert!(view.busy);
         assert_eq!(view.turns.len(), 2);
         assert_eq!(view.turns[0].who, "you");
@@ -709,7 +985,7 @@ mod tests {
         let refused = Message { role: Role::Assistant, content: vec![Block::ToolUse { id: "s".into(), name: "remember".into(), input: serde_json::json!({ "note": "x" }) }] };
         let no = Message { role: Role::User, content: vec![Block::ToolResult { tool_use_id: "s".into(), content: "I only keep notes you ask me to keep.".into(), is_error: true }] };
         let turns = [said("remember I use bun"), remember, kept, refused, no].into_iter().map(|message| Turn { id: 0, message, at_ms: 1, spoken: false, notes: Vec::new(), failed: false, unremembered: false }).collect();
-        let view = view(&Thread { turns, next_id: 5, busy: false, notes: Vec::new(), off_record: false });
+        let view = view(&Thread { turns, next_id: 5, busy: false, notes: Vec::new(), off_record: false, ..Thread::default() });
         assert_eq!(view.turns[1].steps[0].remembered.as_deref(), Some("Prefers Bun"));
         assert_eq!(view.turns[1].steps[0].book, Some(super::super::memory::Book::Setup));
         assert_eq!(view.turns[2].steps[0].remembered, None);
@@ -825,7 +1101,7 @@ mod tests {
         turns[0].unremembered = true;
         // Already forgotten: Clear doesn't count it again.
         assert_eq!(taught(&turns, None).len(), 1);
-        let view = view(&Thread { turns, next_id: 9, busy: false, notes: Vec::new(), off_record: false });
+        let view = view(&Thread { turns, next_id: 9, busy: false, notes: Vec::new(), off_record: false, ..Thread::default() });
         assert!(view.turns[0].unremembered);
         assert_eq!(view.turns[1].steps[0].remembered, None);
         assert_eq!(view.turns[4].steps[0].remembered.as_deref(), Some("Lives in Leeds"));
@@ -833,6 +1109,66 @@ mod tests {
         turns[5].unremembered = true;
         let yours: Vec<&Turn> = turns.iter().filter(|turn| is_your_words(&turn.message)).collect();
         assert_eq!(asked_for_notes(&yours), "I use bun\nthanks");
+    }
+
+    #[test]
+    fn a_call_cut_off_by_quitting_gets_an_answer() {
+        let [call, result] = kept("t1", "Remembered: Uses bun");
+        let turns = vec![turn(0, said("remember I use bun")), turn(1, call)];
+        let owed = unanswered(&turns).unwrap();
+        assert_eq!(owed.content, vec![Block::ToolResult { tool_use_id: "t1".into(), content: QUIT.into(), is_error: true }]);
+        let mut answered = turns.clone();
+        answered.push(turn(2, result));
+        assert_eq!(unanswered(&answered), None);
+        assert_eq!(unanswered(&[turn(0, said("hello"))]), None);
+        assert_eq!(unanswered(&[]), None);
+    }
+
+    #[test]
+    fn the_brief_reads_words_and_tool_lines_but_no_errors() {
+        let [call, result] = kept("t1", "Remembered: Uses bun");
+        let mut error = turn(3, Message { role: Role::Assistant, content: vec![Block::Text { text: "I can't reach Eavesy's cloud right now.".into() }] });
+        error.failed = true;
+        let turns = vec![turn(0, said("remember I use bun")), turn(1, call), turn(2, result), error];
+        let lines: Vec<(&str, String)> = entries(&turns).into_iter().map(|entry| (entry.role, entry.text)).collect();
+        assert_eq!(lines, vec![("you", "remember I use bun".to_string()), ("tool", "remember: Remembered: Uses bun".to_string())]);
+        let mut unremembered = turns.clone();
+        unremembered[0].unremembered = true;
+        unremembered.push(turn(4, said("what time is it")));
+        assert_eq!(entries(&unremembered), vec![Entry { role: "you", text: "what time is it".into() }]);
+        assert_eq!(first_chars("héllo", 2), "hé");
+        assert_eq!(first_chars("hi", 5), "hi");
+    }
+
+    #[test]
+    fn a_conversation_is_briefed_only_on_the_record_and_once_quiet() {
+        let mut thread = Thread { turns: vec![turn(4, said("hello")), turn(5, Message { role: Role::Assistant, content: vec![Block::Text { text: "hi".into() }] })], conversation: "c1".into(), ..Thread::default() };
+        let snapshot = snapshot_of(&thread, Some(5)).unwrap();
+        assert_eq!((snapshot.conversation.as_str(), snapshot.covers, snapshot.entries.len()), ("c1", 5, 2));
+        assert!(snapshot.partial, "turns before 4 are gone");
+        thread.first_turn = 4;
+        assert!(!snapshot_of(&thread, Some(5)).unwrap().partial, "it began at 4, after a Clear");
+        assert_eq!(snapshot_of(&thread, Some(3)), None, "something was said since");
+        thread.busy = true;
+        assert_eq!(snapshot_of(&thread, Some(5)), None);
+        assert!(snapshot_of(&thread, None).is_some(), "Clear takes it as it stands");
+        thread.busy = false;
+        thread.off_record = true;
+        assert_eq!(snapshot_of(&thread, None), None);
+        assert_eq!(snapshot_of(&Thread::default(), None), None);
+    }
+
+    #[test]
+    fn a_brief_of_words_since_unremembered_does_not_stand() {
+        let reply = |text: &str| Message { role: Role::Assistant, content: vec![Block::Text { text: text.into() }] };
+        let mut thread = Thread { turns: vec![turn(0, said("my door code is 1234")), turn(1, reply("Noted."))], conversation: "c1".into(), ..Thread::default() };
+        let snapshot = snapshot_of(&thread, None).unwrap();
+        thread.turns.push(turn(2, said("thanks")));
+        assert!(stands_in(&thread, &snapshot), "more was said, nothing was taken back");
+        thread.turns[0].unremembered = true;
+        assert!(!stands_in(&thread, &snapshot));
+        thread.conversation = "c2".into();
+        assert!(stands_in(&thread, &snapshot), "cleared: the brief is all that's left of it");
     }
 
     #[test]
