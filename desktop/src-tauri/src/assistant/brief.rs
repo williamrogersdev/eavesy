@@ -128,8 +128,10 @@ fn write_once(app: &AppHandle, snapshot: &Snapshot) -> Wrote {
     if previous.as_ref().is_some_and(|kept| kept.covers >= snapshot.covers) {
         return Wrote::Settled;
     }
-    // Asked again before every try, so a retry never sends words you have since marked
-    // "Don't remember this", taken off the record or forgotten.
+    // Asked again at the start of every try, so a later try doesn't send words you have
+    // since marked "Don't remember this", taken off the record or forgotten. A request
+    // already on its way can't be called back: the cloud keeps nothing, and its answer is
+    // refused below, where the same check runs again before anything is stored.
     match thread::store_brief(app, snapshot, |conn| saved::forgotten(conn, CONVERSATION, &snapshot.conversation).map(|forgotten| !forgotten)) {
         Ok(true) => {}
         Ok(false) => return Wrote::Settled,
@@ -258,7 +260,7 @@ mod tests {
         assert_eq!((sent.len(), cut), (1, true));
         // The longest entry thread.rs makes, at its largest as JSON, fits many times over.
         let longest = serde_json::to_string(&entry(&"\u{1}".repeat(thread::ENTRY_CHARS))).unwrap();
-        assert!(longest.len() * 3 < SENT_BYTES, "{}", longest.len());
+        assert!(longest.len() < 25 * 1024 && 25 * 1024 * 3 < SENT_BYTES, "{}", longest.len());
         // Counted as the JSON that's sent: a newline is two bytes there.
         let escaped: Vec<Entry> = (0..10).map(|_| entry(&"\n".repeat(SENT_BYTES / 16))).collect();
         assert_eq!(newest(&escaped).0.len(), 7);
