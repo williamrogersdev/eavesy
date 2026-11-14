@@ -6,6 +6,13 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-11-14 - desktop
+
+### Added
+
+- Mac app: save the conversation and write briefs ([#399](https://github.com/williamrogersdev/eavesy/pull/399))
+- Mac app: choose the Claude model for meeting notes and for the assistant ([#388](https://github.com/williamrogersdev/eavesy/pull/388))
+
 ## [0.10.0] - 2026-11-13 - desktop
 
 ### Added
