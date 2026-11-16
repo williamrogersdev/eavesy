@@ -358,11 +358,8 @@ fn fit_for_on_main(app: &AppHandle, state: &HudState) {
     let prefs = prefs(app);
     let meeting = is_meeting(state);
     let size = if meeting {
-        // Already a meeting's box: it keeps the size it has, which the user
-        // may be dragging right now. Otherwise the size they left it at.
-        let kept = MEETING_FITTED.load(std::sync::atomic::Ordering::SeqCst) && from.2 >= MEETING_MIN.0 && from.3 >= MEETING_MIN.1;
-        let wanted = if kept { Some((from.2, from.3)) } else { prefs.meeting.map(|size| (size.width, size.height)) };
-        meeting_size(wanted, screen_of(app, from))
+        let fitted = MEETING_FITTED.load(std::sync::atomic::Ordering::SeqCst);
+        meeting_size(meeting_wanted(fitted, (from.2, from.3), prefs.meeting.map(|size| (size.width, size.height))), screen_of(app, from))
     } else {
         size_for(state, prefs.lines, peeking(state) || opens_by_itself(state, prefs.preview), options_open())
     };
@@ -380,6 +377,15 @@ fn fit_for_on_main(app: &AppHandle, state: &HudState) {
     let low = crate::placement::in_lower_half(app, from.0 + from.2 / 2.0, from.1, from.3);
     imp::resize(&window, size, low);
     note_placed(&window);
+}
+
+/// The size a meeting's box should take. One already on screen (`fitted`,
+/// and no smaller than a box gets: a pill shown again is not one) keeps the
+/// size it has, which the user may be dragging right now. Otherwise it opens
+/// at the size they left it at. Fits and the grip's resizes all run on the
+/// main thread, so none comes between this reading and the resize.
+fn meeting_wanted(fitted: bool, window: (f64, f64), saved: Option<(f64, f64)>) -> Option<(f64, f64)> {
+    if fitted && window.0 >= MEETING_MIN.0 && window.1 >= MEETING_MIN.1 { Some(window) } else { saved }
 }
 
 /// The window was last sized as a meeting's box.
@@ -1033,10 +1039,12 @@ mod imp {
         unsafe {
             let mask: u64 = msg_send![ns_window, styleMask];
             let wanted = if limits.is_some() { mask | NS_WINDOW_STYLE_MASK_RESIZABLE } else { mask & !NS_WINDOW_STYLE_MASK_RESIZABLE };
-            if let Some((smallest, largest)) = limits {
-                let _: () = msg_send![ns_window, setContentMinSize: NSSize::new(smallest.0, smallest.1)];
-                let _: () = msg_send![ns_window, setContentMaxSize: NSSize::new(largest.0, largest.1)];
-            }
+            // With no limits they go back to none at all: AppKit also holds
+            // `setContentSize` to them, which would keep the pill at the
+            // meeting's smallest size once the meeting ends.
+            let (smallest, largest) = limits.unwrap_or(((0.0, 0.0), (f64::from(f32::MAX), f64::from(f32::MAX))));
+            let _: () = msg_send![ns_window, setContentMinSize: NSSize::new(smallest.0, smallest.1)];
+            let _: () = msg_send![ns_window, setContentMaxSize: NSSize::new(largest.0, largest.1)];
             if wanted != mask {
                 let _: () = msg_send![ns_window, setStyleMask: wanted];
             }
@@ -1120,7 +1128,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{Prefs, OPTIONS_HEIGHT, meeting_size, MEETING_MAX, MEETING_MIN, anchored, is_active, keeps_tuck, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, MEETING, MEETING_MODE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
+    use super::{Prefs, OPTIONS_HEIGHT, meeting_size, meeting_wanted, MEETING_MAX, MEETING_MIN, anchored, is_active, keeps_tuck, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, MEETING, MEETING_MODE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
 
     #[test]
     fn a_hidden_recording_stays_hidden_until_it_fails_or_ends() {
@@ -1156,6 +1164,16 @@ mod tests {
         assert_eq!(meeting_size(Some((800.0, 1100.0)), Some((1440.0, 875.0))), (800.0, 875.0));
         assert_eq!(meeting_size(Some((800.0, 1100.0)), Some((200.0, 100.0))), MEETING_MIN);
         assert_eq!(meeting_size(Some((f64::NAN, 300.0)), None), MEETING);
+    }
+
+    #[test]
+    fn a_meeting_box_on_screen_keeps_its_size_and_a_new_one_opens_at_the_saved_one() {
+        let saved = Some((560.0, 620.0));
+        assert_eq!(meeting_wanted(true, (480.0, 300.0), saved), Some((480.0, 300.0)));
+        assert_eq!(meeting_wanted(false, (480.0, 300.0), saved), saved);
+        // Shown again as a pill mid-meeting: back to the saved size, not the pill's.
+        assert_eq!(meeting_wanted(true, (300.0, 36.0), saved), saved);
+        assert_eq!(meeting_wanted(false, (300.0, 36.0), None), None);
     }
 
     #[test]

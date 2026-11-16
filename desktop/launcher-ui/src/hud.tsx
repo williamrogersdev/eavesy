@@ -1559,14 +1559,28 @@ function Hud() {
     e.preventDefault();
     e.stopPropagation();
     const from = { x: e.screenX, y: e.screenY, width: window.innerWidth, height: window.innerHeight };
-    const move = (ev: globalThis.MouseEvent) => {
-      if (!tauri()) return;
-      void invoke('resize_meeting_control', { width: from.width + ev.screenX - from.x, height: from.height + ev.screenY - from.y }).catch(() => {});
+    // One resize at a time, always to the newest size asked for.
+    let next: { width: number; height: number } | null = null;
+    let sending = false;
+    const send = () => {
+      if (sending || !next || !tauri()) return;
+      const size = next;
+      next = null;
+      sending = true;
+      void invoke('resize_meeting_control', size).catch(() => {}).finally(() => { sending = false; send(); });
     };
     const up = () => {
       window.removeEventListener('mousemove', move);
       window.removeEventListener('mouseup', up);
+      window.removeEventListener('blur', up);
     };
+    function move(ev: globalThis.MouseEvent) {
+      // Let go where the window never heard of it: the drag is over.
+      if (!(ev.buttons & 1)) { up(); return; }
+      next = { width: from.width + ev.screenX - from.x, height: from.height + ev.screenY - from.y };
+      send();
+    }
+    window.addEventListener('blur', up);
     window.addEventListener('mousemove', move);
     window.addEventListener('mouseup', up);
   };
