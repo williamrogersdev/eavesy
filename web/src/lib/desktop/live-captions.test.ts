@@ -63,6 +63,38 @@ describe('liveView', () => {
     expect(liveView([line(7_000, 'Final.')], [partial(7_000, 'Final.', true)])).toEqual([{ text: 'Final.', provisional: false, label: 'You', startMs: 7_000 }]);
   });
 
+  it('leaves out what the mic heard of the other side through the speakers', () => {
+    const theirs = { ...line(10_000, 'On pricing, the annual plan comes to eighteen a seat.', true), track: 'system' };
+    const echo = line(10_400, 'on pricing the annual plan comes to eighteen a seat', true);
+    const mine = line(13_000, 'Let me take that to finance.', true);
+    expect(liveView([theirs, echo, mine], [], 10).map((row) => `${row.label}: ${row.text}`)).toEqual([
+      'Others: On pricing, the annual plan comes to eighteen a seat.',
+      'You: Let me take that to finance.',
+    ]);
+    // Still being heard, too: the echo never shows up as yours.
+    const hearing = { ...partial(10_400, 'on pricing the annual plan'), endMs: 12_000 };
+    expect(liveView([theirs], [hearing], 10).map((row) => row.label)).toEqual(['Others']);
+  });
+
+  it('leaves out an echo the mic heard badly, and keeps what you said over them', () => {
+    const theirs = { ...line(10_000, 'On pricing, the annual plan comes to eighteen a seat and we would hold that for two years.', true), track: 'system' };
+    const garbled = line(10_600, 'on pricing annual plan come to eighteen seat and we hold that two years', true);
+    const mine = line(11_000, 'Sorry, can you say that number again?', true);
+    const yeah = line(12_000, 'Yeah.', true);
+    expect(liveView([theirs, garbled, mine, yeah], [], 10).map((row) => `${row.label}: ${row.text}`)).toEqual([
+      'Others: On pricing, the annual plan comes to eighteen a seat and we would hold that for two years.',
+      'You: Sorry, can you say that number again?',
+      'You: Yeah.',
+    ]);
+  });
+
+  it('keeps your own words when you say the same thing much later, or the cloud has settled them', () => {
+    const theirs = { ...line(10_000, 'The annual plan comes to eighteen a seat.', true), track: 'system' };
+    const later = line(60_000, 'The annual plan comes to eighteen a seat.', true);
+    const settled = line(10_400, 'The annual plan comes to eighteen a seat.');
+    expect(liveView([theirs, settled, later], [], 10).map((row) => row.label)).toEqual(['Others', 'You', 'You']);
+  });
+
   it('keeps only the most recent few', () => {
     const view = liveView([line(0, '1'), line(1_000, '2'), line(2_000, '3'), line(3_000, '4')], [], 2);
     expect(view.map((row) => row.text)).toEqual(['3', '4']);
