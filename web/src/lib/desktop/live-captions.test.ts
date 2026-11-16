@@ -76,6 +76,18 @@ describe('liveView', () => {
     expect(liveView([theirs], [hearing], 10).map((row) => row.label)).toEqual(['Others']);
   });
 
+  it('leaves out an echo the mic heard badly, and keeps what you said over them', () => {
+    const theirs = { ...line(10_000, 'On pricing, the annual plan comes to eighteen a seat and we would hold that for two years.', true), track: 'system' };
+    const garbled = line(10_600, 'on pricing annual plan come to eighteen seat and we hold that two years', true);
+    const mine = line(11_000, 'Sorry, can you say that number again?', true);
+    const yeah = line(12_000, 'Yeah.', true);
+    expect(liveView([theirs, garbled, mine, yeah], [], 10).map((row) => `${row.label}: ${row.text}`)).toEqual([
+      'Others: On pricing, the annual plan comes to eighteen a seat and we would hold that for two years.',
+      'You: Sorry, can you say that number again?',
+      'You: Yeah.',
+    ]);
+  });
+
   it('keeps your own words when you say the same thing much later, or the cloud has settled them', () => {
     const theirs = { ...line(10_000, 'The annual plan comes to eighteen a seat.', true), track: 'system' };
     const later = line(60_000, 'The annual plan comes to eighteen a seat.', true);

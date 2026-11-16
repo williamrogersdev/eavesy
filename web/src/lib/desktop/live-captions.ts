@@ -1,4 +1,4 @@
-import { findEchoLines } from '@/lib/transcription/two-track';
+import { ECHO_WINDOW_MS, findEchoLines } from '@/lib/transcription/two-track';
 
 /** A caption from the Mac's on-device recognizer (`recording:caption`). */
 export interface LiveCaption {
@@ -70,18 +70,36 @@ export function liveView(lines: LiveLine[], partials: LiveCaption[], keep = 3): 
 }
 
 /**
- * Without speakers on headphones, the mic hears the call too, and the Mac
- * writes the other side's words down a second time as yours. The cloud takes
- * those out of the lines it stores; this does the same for the words heard
- * on this Mac that are still provisional, by the same test.
+ * Without headphones, the mic hears the call too, and the Mac writes the
+ * other side's words down a second time as yours. The cloud takes those out
+ * of the lines it stores; this does it for the words heard on this Mac that
+ * are still provisional. It is stricter than the cloud's test: the mic hears
+ * the speakers badly, so its copy seldom matches word for word, and a line
+ * wrongly left out here comes back when the cloud's line replaces it.
  */
 function withoutEchoes(heard: LiveLine[]): LiveLine[] {
-  if (!heard.some((line) => line.provisional && line.track === 'mic') || !heard.some((line) => line.track === 'system')) return heard;
+  const theirs = heard.filter((line) => line.track === 'system');
+  if (!theirs.length || !heard.some((line) => line.provisional && line.track === 'mic')) return heard;
   const candidates = heard.flatMap((line, index) => (line.track === 'system' || (line.track === 'mic' && line.provisional)
     ? [{ id: String(index), speakerId: line.track === 'mic' ? 'you' : 'them', startMs: line.startMs, endMs: line.endMs, text: line.text }]
     : []));
   const echoes = new Set(findEchoLines(candidates));
-  return echoes.size ? heard.filter((_, index) => !echoes.has(String(index))) : heard;
+  return heard.filter((line, index) => !echoes.has(String(index)) && !(line.provisional && line.track === 'mic' && mostlyTheirWords(line, theirs)));
+}
+
+const wordsOf = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}']+/u).filter(Boolean);
+
+/** Most of what the mic heard here is what the call was saying at that moment. */
+function mostlyTheirWords(mine: LiveLine, theirs: LiveLine[]): boolean {
+  const said = wordsOf(mine.text);
+  if (!said.length) return false;
+  const around = new Set(theirs
+    .filter((other) => other.startMs <= mine.endMs + ECHO_WINDOW_MS && other.endMs >= mine.startMs - ECHO_WINDOW_MS)
+    .flatMap((other) => wordsOf(other.text)));
+  if (!around.size) return false;
+  const shared = said.filter((word) => around.has(word)).length;
+  // A word or two must all be theirs ("yeah" is too easily your own); longer lines, most of them.
+  return said.length < 4 ? shared === said.length && said.length > 1 : shared * 10 >= said.length * 6;
 }
 
 /** Everything heard so far in one recording: the settled lines and, per track, what is still being heard. */
