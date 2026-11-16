@@ -83,19 +83,22 @@ function withoutEchoes(heard: LiveLine[]): LiveLine[] {
   const candidates = heard.flatMap((line, index) => (line.track === 'system' || (line.track === 'mic' && line.provisional)
     ? [{ id: String(index), speakerId: line.track === 'mic' ? 'you' : 'them', startMs: line.startMs, endMs: line.endMs, text: line.text }]
     : []));
+  // `findEchoLines` only ever names lines of `you`: the call's own words always stay.
   const echoes = new Set(findEchoLines(candidates));
-  return heard.filter((line, index) => !echoes.has(String(index)) && !(line.provisional && line.track === 'mic' && mostlyTheirWords(line, theirs)));
+  // Split into words once, not once for every line of yours.
+  const said = theirs.map((other) => ({ startMs: other.startMs, endMs: other.endMs, words: wordsOf(other.text) }));
+  return heard.filter((line, index) => !(line.provisional && line.track === 'mic' && (echoes.has(String(index)) || mostlyTheirWords(line, said))));
 }
 
 const wordsOf = (text: string) => text.toLowerCase().split(/[^\p{L}\p{N}']+/u).filter(Boolean);
 
 /** Most of what the mic heard here is what the call was saying at that moment. */
-function mostlyTheirWords(mine: LiveLine, theirs: LiveLine[]): boolean {
+function mostlyTheirWords(mine: LiveLine, theirs: { startMs: number; endMs: number; words: string[] }[]): boolean {
   const said = wordsOf(mine.text);
   if (!said.length) return false;
   const around = new Set(theirs
     .filter((other) => other.startMs <= mine.endMs + ECHO_WINDOW_MS && other.endMs >= mine.startMs - ECHO_WINDOW_MS)
-    .flatMap((other) => wordsOf(other.text)));
+    .flatMap((other) => other.words));
   if (!around.size) return false;
   const shared = said.filter((word) => around.has(word)).length;
   // A word or two must all be theirs ("yeah" is too easily your own); longer lines, most of them.
