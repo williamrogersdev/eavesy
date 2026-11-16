@@ -187,6 +187,7 @@ pub fn run() {
             commands::set_hud_look,
             commands::set_hud_style,
             commands::set_hud_visibility,
+            commands::resize_meeting_control,
             commands::hud_options,
             commands::set_dictation_in_panel,
             commands::ack_dictation_text,

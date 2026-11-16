@@ -202,6 +202,25 @@ const DEFAULT_SIZE: (f64, f64) = (300.0, 36.0);
 const WIDE: (f64, f64) = (400.0, 142.0);
 /// A meeting recording: the controls above everything said so far, to scroll back through.
 const MEETING: (f64, f64) = (400.0, 380.0);
+/// How small and how large a meeting's box can be dragged. At its narrowest
+/// the controls above it still fit.
+const MEETING_MIN: (f64, f64) = (320.0, 200.0);
+const MEETING_MAX: (f64, f64) = (900.0, 1200.0);
+
+fn is_meeting(state: &HudState) -> bool {
+    state.phase == Phase::Recording && state.mode.as_deref() == Some(MEETING_MODE)
+}
+
+/// A meeting's box at the size `wanted` (the one the user dragged it to, or
+/// the usual one), within its limits and the screen it is on (`area`).
+fn meeting_size(wanted: Option<(f64, f64)>, area: Option<(f64, f64)>) -> (f64, f64) {
+    let (width, height) = wanted.filter(|(width, height)| width.is_finite() && height.is_finite()).unwrap_or(MEETING);
+    let (max_width, max_height) = match area {
+        Some((width, height)) => (MEETING_MAX.0.min(width).max(MEETING_MIN.0), MEETING_MAX.1.min(height).max(MEETING_MIN.1)),
+        None => MEETING_MAX,
+    };
+    (width.clamp(MEETING_MIN.0, max_width).round(), height.clamp(MEETING_MIN.1, max_height).round())
+}
 /// Recording with the live words turned off: the light, the time, the voice
 /// bars, how the words are written, Cancel and Stop. The fixed parts take about
 /// 205pt; the rest is the write chip's, which shortens its own name with an
@@ -337,7 +356,19 @@ fn fit_for_on_main(app: &AppHandle, state: &HudState) {
     let Some(window) = app.get_webview_window("hud") else { return };
     let Some(from) = frame_of(&window) else { return };
     let prefs = prefs(app);
-    let size = size_for(state, prefs.lines, peeking(state) || opens_by_itself(state, prefs.preview), options_open());
+    let meeting = is_meeting(state);
+    let size = if meeting {
+        // Already a meeting's box: it keeps the size it has, which the user
+        // may be dragging right now. Otherwise the size they left it at.
+        let kept = MEETING_FITTED.load(std::sync::atomic::Ordering::SeqCst) && from.2 >= MEETING_MIN.0 && from.3 >= MEETING_MIN.1;
+        let wanted = if kept { Some((from.2, from.3)) } else { prefs.meeting.map(|size| (size.width, size.height)) };
+        meeting_size(wanted, screen_of(app, from))
+    } else {
+        size_for(state, prefs.lines, peeking(state) || opens_by_itself(state, prefs.preview), options_open())
+    };
+    MEETING_FITTED.store(meeting, std::sync::atomic::Ordering::SeqCst);
+    // Only a meeting's box can be dragged by its edges.
+    imp::set_user_resizable(&window, meeting.then_some((MEETING_MIN, MEETING_MAX)));
     // The NSPanel is resized through Cocoa below. Keep the embedded webview's
     // viewport in step too, including when the outer frame already matches.
     // Otherwise the toolbar can still render inside the resting pill's width.
@@ -349,6 +380,32 @@ fn fit_for_on_main(app: &AppHandle, state: &HudState) {
     let low = crate::placement::in_lower_half(app, from.0 + from.2 / 2.0, from.1, from.3);
     imp::resize(&window, size, low);
     note_placed(&window);
+}
+
+/// The window was last sized as a meeting's box.
+static MEETING_FITTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The size of the screen's usable area under `frame`.
+fn screen_of(app: &AppHandle, frame: Frame) -> Option<(f64, f64)> {
+    crate::placement::work_area_at(app, frame.0 + frame.2 / 2.0, frame.1 + frame.3 / 2.0).map(|(_, _, width, height)| (width, height))
+}
+
+/// The grip in the corner of a meeting's box was dragged: the box becomes
+/// `width` by `height`, and its top left stays where it is.
+pub fn resize_meeting_on_main(app: &AppHandle, width: f64, height: f64) {
+    if !width.is_finite() || !height.is_finite() || !is_meeting(&current()) {
+        return;
+    }
+    let Some(window) = app.get_webview_window("hud") else { return };
+    let Some(from) = frame_of(&window) else { return };
+    let size = meeting_size(Some((width, height)), screen_of(app, from));
+    if (from.2 - size.0).abs() < 1.0 && (from.3 - size.1).abs() < 1.0 {
+        return;
+    }
+    let webview: &tauri::Webview = window.as_ref();
+    let _ = webview.set_size(tauri::LogicalSize::new(size.0, size.1));
+    // Not noted as placed: this is the user's size, and `save_frame` keeps it.
+    imp::resize_from_top_left(&window, size);
 }
 
 /// The dictation options are open under the recording controls.
@@ -501,6 +558,7 @@ fn is_active(phase: &Phase) -> bool {
 #[derive(Clone, Copy)]
 struct Prefs {
     frame: Option<HudFrame>,
+    meeting: Option<settings::PanelSize>,
     hidden: bool,
     quiet: bool,
     lines: u8,
@@ -509,7 +567,7 @@ struct Prefs {
 
 impl Prefs {
     fn of(config: &Settings) -> Self {
-        Prefs { frame: config.hud_frame, hidden: config.hud_hidden, quiet: config.hud_quiet, lines: config.hud_preview_lines(), preview: config.hud_result_preview() }
+        Prefs { frame: config.hud_frame, meeting: config.hud_meeting_size, hidden: config.hud_hidden, quiet: config.hud_quiet, lines: config.hud_preview_lines(), preview: config.hud_result_preview() }
     }
 
     /// Whether the control is on screen for `state`. Hidden, it still shows
@@ -794,6 +852,14 @@ fn save_frame(app: &AppHandle) {
     if PLACED.lock().unwrap_or_else(|error| error.into_inner()).is_some_and(|placed| near(placed, current)) {
         return;
     }
+    // A meeting's box the user dragged to a new size opens at it next time.
+    if is_meeting(&self::current()) && current.2 >= MEETING_MIN.0 && current.3 >= MEETING_MIN.1 {
+        let (width, height) = meeting_size(Some((current.2, current.3)), None);
+        let size = settings::PanelSize { width, height };
+        if prefs(app).meeting.map_or((width, height) != MEETING, |saved| saved != size) {
+            update_prefs(app, |config| config.hud_meeting_size = Some(size));
+        }
+    }
     let low = crate::placement::in_lower_half(app, current.0 + current.2 / 2.0, current.1, current.3);
     let frame = resting(current, low);
     if prefs(app).frame != Some(frame) {
@@ -954,6 +1020,45 @@ mod imp {
         }
     }
 
+    const NS_WINDOW_STYLE_MASK_RESIZABLE: u64 = 1 << 3;
+
+    /// Lets the user drag the window's edges between `limits` (smallest,
+    /// largest), or not at all. The style mask is only written when it
+    /// changes: writing it drops the keyboard focus inside the window.
+    pub fn set_user_resizable(window: &WebviewWindow, limits: Option<((f64, f64), (f64, f64))>) {
+        use tauri_nspanel::cocoa::{base::id, foundation::NSSize};
+        use tauri_nspanel::objc::{msg_send, sel, sel_impl};
+        let Ok(ns_window) = window.ns_window() else { return };
+        let ns_window = ns_window as id;
+        unsafe {
+            let mask: u64 = msg_send![ns_window, styleMask];
+            let wanted = if limits.is_some() { mask | NS_WINDOW_STYLE_MASK_RESIZABLE } else { mask & !NS_WINDOW_STYLE_MASK_RESIZABLE };
+            if let Some((smallest, largest)) = limits {
+                let _: () = msg_send![ns_window, setContentMinSize: NSSize::new(smallest.0, smallest.1)];
+                let _: () = msg_send![ns_window, setContentMaxSize: NSSize::new(largest.0, largest.1)];
+            }
+            if wanted != mask {
+                let _: () = msg_send![ns_window, setStyleMask: wanted];
+            }
+        }
+    }
+
+    /// Gives the window `size` with its top left corner where it is.
+    pub fn resize_from_top_left(window: &WebviewWindow, size: (f64, f64)) {
+        use tauri_nspanel::cocoa::{base::id, foundation::NSRect};
+        use tauri_nspanel::objc::{msg_send, sel, sel_impl};
+        let Ok(ns_window) = window.ns_window() else { return };
+        let ns_window = ns_window as id;
+        unsafe {
+            let mut target: NSRect = msg_send![ns_window, frame];
+            target.origin.y += target.size.height - size.1;
+            target.size.width = size.0;
+            target.size.height = size.1;
+            let _: () = msg_send![ns_window, setFrame: target display: true animate: false];
+            let _: () = msg_send![ns_window, invalidateShadow];
+        }
+    }
+
     const NS_WINDOW_STYLE_MASK_NONACTIVATING_PANEL: i32 = 1 << 7;
     const HUD_WINDOW_LEVEL: i32 = 25;
 
@@ -969,6 +1074,9 @@ mod imp {
         // No native glass: the pill draws itself, so its corners and the
         // window's always agree.
         panel.set_style_mask(NS_WINDOW_STYLE_MASK_NONACTIVATING_PANEL);
+        if super::is_meeting(&super::current()) {
+            set_user_resizable(window, Some((super::MEETING_MIN, super::MEETING_MAX)));
+        }
         panel.set_level(HUD_WINDOW_LEVEL);
         panel.set_collection_behaviour(
             NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces
@@ -992,6 +1100,12 @@ mod imp {
     pub fn show(_app: &AppHandle, window: &WebviewWindow) {
         let _ = window.show();
     }
+    pub fn set_user_resizable(window: &WebviewWindow, limits: Option<((f64, f64), (f64, f64))>) {
+        let _ = window.set_resizable(limits.is_some());
+    }
+    pub fn resize_from_top_left(window: &WebviewWindow, size: (f64, f64)) {
+        let _ = window.set_size(tauri::LogicalSize::new(size.0, size.1));
+    }
     static PLACEMENT: std::sync::Mutex<Option<super::Placement>> = std::sync::Mutex::new(None);
 
     pub fn resize(window: &WebviewWindow, size: (f64, f64), keep_bottom: bool) {
@@ -1006,7 +1120,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{Prefs, OPTIONS_HEIGHT, anchored, is_active, keeps_tuck, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, MEETING, MEETING_MODE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
+    use super::{Prefs, OPTIONS_HEIGHT, meeting_size, MEETING_MAX, MEETING_MIN, anchored, is_active, keeps_tuck, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, MEETING, MEETING_MODE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
 
     #[test]
     fn a_hidden_recording_stays_hidden_until_it_fails_or_ends() {
@@ -1030,6 +1144,18 @@ mod tests {
         assert_eq!(size_for(&meeting, 0, false, false), MEETING);
         assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 0, false, false), BAR);
         assert_eq!(size_for(&state(Phase::Recording, Some("audio"), None), 4, false, false), WIDE);
+    }
+
+    #[test]
+    fn a_meeting_box_opens_at_the_size_it_was_dragged_to() {
+        assert_eq!(meeting_size(None, None), MEETING);
+        assert_eq!(meeting_size(Some((560.4, 620.0)), None), (560.0, 620.0));
+        assert_eq!(meeting_size(Some((100.0, 100.0)), None), MEETING_MIN);
+        assert_eq!(meeting_size(Some((5000.0, 5000.0)), None), MEETING_MAX);
+        // Never larger than the screen it is on, nor smaller than its controls need.
+        assert_eq!(meeting_size(Some((800.0, 1100.0)), Some((1440.0, 875.0))), (800.0, 875.0));
+        assert_eq!(meeting_size(Some((800.0, 1100.0)), Some((200.0, 100.0))), MEETING_MIN);
+        assert_eq!(meeting_size(Some((f64::NAN, 300.0)), None), MEETING);
     }
 
     #[test]
@@ -1165,7 +1291,7 @@ mod tests {
 
     #[test]
     fn a_quiet_pill_only_comes_up_to_ask_or_to_say_what_went_wrong() {
-        let quiet = Prefs { frame: None, hidden: true, quiet: true, lines: 0, preview: false };
+        let quiet = Prefs { frame: None, meeting: None, hidden: true, quiet: true, lines: 0, preview: false };
         assert!(!quiet.shows(&state(Phase::Recording, Some("audio"), None)));
         assert!(!quiet.shows(&state(Phase::Transcribing, Some("audio"), None)));
         assert!(!quiet.shows(&state(Phase::Done, Some("audio"), Some("words"))));
