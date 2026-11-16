@@ -466,6 +466,14 @@ pub fn set_hud_visibility(app: AppHandle, show: String) -> Result<(), String> {
         .map_err(|error| format!("could not reach the pill: {error}"))
 }
 
+/// The grip in the corner of a meeting recording's box was dragged to this size.
+#[tauri::command]
+pub fn resize_meeting_control(app: AppHandle, width: f64, height: f64) -> Result<(), String> {
+    let handle = app.clone();
+    app.run_on_main_thread(move || crate::hud::resize_meeting_on_main(&handle, width, height))
+        .map_err(|error| format!("could not reach the pill: {error}"))
+}
+
 /// Opens or closes the dictation options under the recording controls;
 /// returns once the control has their size, with whether they are open.
 #[tauri::command]

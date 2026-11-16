@@ -1552,6 +1552,25 @@ function Hud() {
     );
   }
 
+  // The grip in the corner of a meeting's box: drag it to make the box any
+  // size. Rust keeps the top left where it is and remembers the size.
+  const pressGrip = (e: MouseEvent) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const from = { x: e.screenX, y: e.screenY, width: window.innerWidth, height: window.innerHeight };
+    const move = (ev: globalThis.MouseEvent) => {
+      if (!tauri()) return;
+      void invoke('resize_meeting_control', { width: from.width + ev.screenX - from.x, height: from.height + ev.screenY - from.y }).catch(() => {});
+    };
+    const up = () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+    };
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+  };
+
   if (saveError && ['recording', 'transcribing'].includes(state.phase)) {
     top = <>{top}<button type="button" className="ctl-btn ctl-warn" title={saveError} onClick={sendLiveEdit}>Retry save</button></>;
   }
@@ -1587,6 +1606,7 @@ function Hud() {
       <div className="ctl-top">{top}</div>
       {below && <div className="ctl-below" data-busy={rewriting || undefined} data-finding={finding || choosing || undefined} onMouseDown={(event) => event.stopPropagation()}>{below}</div>}
       {foot && <div className="ctl-foot" onMouseDown={(event) => event.stopPropagation()}>{foot}</div>}
+      {size === 'meeting' && <span className="ctl-grip" aria-hidden title="Drag to resize" onMouseDown={pressGrip} />}
     </div>
   );
 }

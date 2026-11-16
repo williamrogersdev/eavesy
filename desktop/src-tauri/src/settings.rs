@@ -90,6 +90,9 @@ pub struct Settings {
     pub hud_hidden: bool,
     #[serde(default)]
     pub panel_size: Option<PanelSize>,
+    /// The size the user dragged a meeting recording's box to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hud_meeting_size: Option<PanelSize>,
     /// Self-hosting: origin of your own Eavesy server (e.g. `https://eavesy.example.com`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_base_url: Option<String>,
@@ -339,6 +342,7 @@ impl Default for Settings {
             hud_frame: None,
             hud_hidden: false,
             panel_size: None,
+            hud_meeting_size: None,
             api_base_url: None,
             segment_sec: None,
             live_captions: None,
