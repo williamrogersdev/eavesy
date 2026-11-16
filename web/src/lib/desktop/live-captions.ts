@@ -1,3 +1,5 @@
+import { findEchoLines } from '@/lib/transcription/two-track';
+
 /** A caption from the Mac's on-device recognizer (`recording:caption`). */
 export interface LiveCaption {
   sessionId: string;
@@ -53,9 +55,6 @@ export interface LiveRow {
 }
 
 export function liveView(lines: LiveLine[], partials: LiveCaption[], keep = 3): LiveRow[] {
-  const recent = lines
-    .slice(-keep)
-    .map(({ text, provisional, track, startMs }) => ({ text, provisional, label: trackLabel(track), startMs }));
   // Keep the last final on screen until its persisted row arrives. Tracks
   // advance independently: computer audio must not hide newer mic words.
   const hearing = partials
@@ -64,8 +63,25 @@ export function liveView(lines: LiveLine[], partials: LiveCaption[], keep = 3): 
       return caption.text.trim() && caption.endMs > lastEnd;
     })
     .sort((a, b) => a.startMs - b.startMs)
-    .map((caption) => ({ text: caption.text, provisional: true, label: trackLabel(caption.track), startMs: caption.startMs }));
-  return [...recent, ...hearing].slice(-keep);
+    .map(({ text, track, startMs, endMs }): LiveLine => ({ text, provisional: true, track, startMs, endMs }));
+  return withoutEchoes([...lines, ...hearing])
+    .slice(-keep)
+    .map(({ text, provisional, track, startMs }) => ({ text, provisional, label: trackLabel(track), startMs }));
+}
+
+/**
+ * Without speakers on headphones, the mic hears the call too, and the Mac
+ * writes the other side's words down a second time as yours. The cloud takes
+ * those out of the lines it stores; this does the same for the words heard
+ * on this Mac that are still provisional, by the same test.
+ */
+function withoutEchoes(heard: LiveLine[]): LiveLine[] {
+  if (!heard.some((line) => line.provisional && line.track === 'mic') || !heard.some((line) => line.track === 'system')) return heard;
+  const candidates = heard.flatMap((line, index) => (line.track === 'system' || (line.track === 'mic' && line.provisional)
+    ? [{ id: String(index), speakerId: line.track === 'mic' ? 'you' : 'them', startMs: line.startMs, endMs: line.endMs, text: line.text }]
+    : []));
+  const echoes = new Set(findEchoLines(candidates));
+  return echoes.size ? heard.filter((_, index) => !echoes.has(String(index))) : heard;
 }
 
 /** Everything heard so far in one recording: the settled lines and, per track, what is still being heard. */
