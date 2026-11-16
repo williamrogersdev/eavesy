@@ -6,6 +6,17 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-11-16 - desktop
+
+### Added
+
+- Mac app: resize the meeting box while it records ([#402](https://github.com/williamrogersdev/eavesy/pull/402))
+
+### Fixed
+
+- Mac app: release the meeting box's size limits when the meeting ends ([#403](https://github.com/williamrogersdev/eavesy/pull/403))
+- Mac app: don't show the other side's words twice in a live meeting ([#405](https://github.com/williamrogersdev/eavesy/pull/405))
+
 ## [0.10.1] - 2026-11-14 - desktop
 
 ### Added
