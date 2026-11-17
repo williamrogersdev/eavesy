@@ -1,5 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { Users } from 'lucide-react';
+import { Link } from '@/components/ui/app-link';
+import { formatDuration } from '@/lib/utils';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { z } from 'zod';
 import { AppAlert, AppEmptyState, AppPage, AppPageHeader, AppSection, appButton, appInput } from '@/components/ui/app-page';
@@ -25,6 +27,24 @@ type TeamState = z.infer<typeof teamSchema>;
 type InTeam = Extract<TeamState, { me: string }>;
 
 const ROLE: Record<Role, string> = { owner: 'Owner', admin: 'Admin', member: 'Member' };
+
+/** Said to everyone before they join and while they're in: what the team's owners and admins can see. */
+const RECORDINGS_NOTICE = 'The team’s owners and admins can see the recordings you make after you join. Recordings from before stay private.';
+
+const recordingsSchema = z.object({
+  items: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      startedAt: z.number(),
+      durationSec: z.number().nullable(),
+      status: z.string(),
+      ownerName: z.string().nullable(),
+      ownerEmail: z.string().nullable(),
+    }),
+  ),
+});
+type TeamRecording = z.infer<typeof recordingsSchema>['items'][number];
 const failureSchema = z.object({ message: z.string().optional() });
 
 /** Calls the team API; throws the server's own sentence when it sends one. */
@@ -100,9 +120,12 @@ function NoTeam({ invitations, busy, change }: { invitations: Extract<TeamState,
           <ul className="flex flex-col gap-2">
             {invitations.map((invitation) => (
               <li key={invitation.id} className="flex items-center justify-between gap-3 rounded-[var(--ev-r-panel)] bg-ev-well px-4 py-3">
-                <p className="min-w-0 truncate text-sm text-ev-ink">
-                  Join <span className="font-round font-bold">{invitation.teamName}</span> as {invitation.role === 'admin' ? 'an admin' : 'a member'}
-                </p>
+                <div className="min-w-0">
+                  <p className="truncate text-sm text-ev-ink">
+                    Join <span className="font-round font-bold">{invitation.teamName}</span> as {invitation.role === 'admin' ? 'an admin' : 'a member'}
+                  </p>
+                  <p className="text-[13px] text-ev-ink-2">{RECORDINGS_NOTICE}</p>
+                </div>
                 <span className="flex shrink-0 gap-2">
                   <button type="button" disabled={busy} onClick={() => void change(() => call('POST', '/api/team/invites/answer', { id: invitation.id, accept: false }))} className={appButton('ghost', 'sm')}>
                     Decline
@@ -218,8 +241,10 @@ function Team({ state, busy, change }: { state: InTeam; busy: boolean; change: C
         </ul>
       </AppSection>
 
+      {manages ? <TeamRecordings /> : <p className="text-[13px] text-ev-ink-2">{RECORDINGS_NOTICE}</p>}
+
       {manages ? (
-        <AppSection title="Invite someone" description="They join by signing in to Eavesy with this email address. No email is sent yet, so let them know.">
+        <AppSection title="Invite someone" description="They join by signing in to Eavesy with this email address. No email is sent yet, so let them know. Once in, owners and admins can see the recordings they make.">
           <form onSubmit={invite} className="flex flex-col gap-2 sm:flex-row">
             <input
               type="email"
@@ -289,5 +314,55 @@ function Team({ state, busy, change }: { state: InTeam; busy: boolean; change: C
         )}
       </AppSection>
     </div>
+  );
+}
+
+/** Teammates' recordings since they joined, for owners and admins. Opening one shows it read-only. */
+function TeamRecordings() {
+  const [items, setItems] = useState<TeamRecording[] | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    void fetch('/api/team/recordings?limit=50')
+      .then(async (response) => {
+        if (!response.ok) throw new Error('load');
+        const parsed = recordingsSchema.parse(await response.json());
+        if (live) setItems(parsed.items);
+      })
+      .catch(() => {
+        if (live) setFailed(true);
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  return (
+    <AppSection title="Team recordings" description="What your teammates recorded since they joined. You can read and play them; only the person who recorded one can change or delete it.">
+      {failed ? (
+        <p className="text-sm text-ev-ink-2">Couldn’t load the team’s recordings. Refresh to retry.</p>
+      ) : !items ? (
+        <p role="status" className="text-sm text-ev-ink-2">Loading…</p>
+      ) : items.length === 0 ? (
+        <p className="text-sm text-ev-ink-2">Nothing yet. Recordings your teammates make from now on show up here.</p>
+      ) : (
+        <ul className="divide-y divide-ev-line rounded-[var(--ev-r-panel)] bg-ev-raised shadow-[0_0_0_0.5px_var(--ev-line-strong)]">
+          {items.map((item) => (
+            <li key={item.id}>
+              <Link href={`/app/meetings/${encodeURIComponent(item.id)}`} className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-ev-well">
+                <span className="min-w-0">
+                  <span className="block truncate font-round text-sm font-bold text-ev-ink">{item.title}</span>
+                  <span className="block truncate text-[13px] text-ev-ink-2">
+                    {item.ownerName || item.ownerEmail || 'A teammate'} · {new Date(item.startedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })}
+                    {item.durationSec ? ` · ${formatDuration(item.durationSec * 1000)}` : ''}
+                  </span>
+                </span>
+                {item.status !== 'complete' ? <span className="shrink-0 text-xs text-ev-ink-2">{item.status}</span> : null}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      )}
+    </AppSection>
   );
 }

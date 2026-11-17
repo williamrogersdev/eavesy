@@ -601,6 +601,9 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
       },
     },
   },
+  '/api/team/recordings': {
+    GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/team/recordings' }, status: 404 } },
+  },
   '/api/team/invites/answer': {
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'answers only an invitation addressed to the caller’s own email (team.test.ts covers another address)' },
   },

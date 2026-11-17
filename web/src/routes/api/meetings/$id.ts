@@ -5,6 +5,7 @@ import { getDb } from '@/db/client';
 import { folders } from '@/db/schema';
 import * as activityRepo from '@/db/repo/activity';
 import * as meetingsRepo from '@/db/repo/meetings';
+import * as teamAccess from '@/db/repo/team-access';
 import { parseSpeakerNames } from '@/lib/transcription/two-track';
 import { refreshAgentTranscriptLater } from '@/server/agent-transcript-refresh';
 import { resolveActor } from '@/server/auth';
@@ -31,12 +32,18 @@ export const Route = createFileRoute('/api/meetings/$id')({
         } catch {
           return Response.json({ error: 'unauthenticated' }, { status: 401 });
         }
-        const data = await meetingsRepo.getFull(getDb(), {
-          meetingId: id,
-          userId: actor.userId,
+        const db = getDb();
+        const data = await meetingsRepo.getFull(db, { meetingId: id, userId: actor.userId });
+        if (data) return Response.json({ ...data, access: { kind: 'owner' } });
+        // A team owner or admin reads a teammate's recording, without its private notes.
+        const team = await teamAccess.teamReadableMeeting(db, { viewerId: actor.userId, meetingId: id });
+        const shared = team ? await meetingsRepo.getFull(db, { meetingId: id, userId: team.ownerId }) : null;
+        if (!team || !shared) return Response.json({ error: 'not found' }, { status: 404 });
+        return Response.json({
+          ...shared,
+          notes: null,
+          access: { kind: 'team', ownerName: team.ownerName || team.ownerEmail || 'A teammate' },
         });
-        if (!data) return Response.json({ error: 'not found' }, { status: 404 });
-        return Response.json(data);
       },
 
       PATCH: async ({ request, params }) => {
