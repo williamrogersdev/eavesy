@@ -33,6 +33,82 @@ final class WalkthroughTests: XCTestCase {
         return try XCTUnwrap(sample)
     }
 
+    /// The engine pauses whichever recorder it has through the protocol; that
+    /// call has to reach the screen recorder, not the do-nothing default.
+    func testPausingThroughTheRecorderProtocolReachesTheScreenRecorder() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let recorder = ScreenRecorder(outPath: dir.appendingPathComponent("screen.mp4").path, includeMic: true)
+        recorder.setupWriter(width: 960, height: 540)
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+        let engine: Recorder = recorder
+        engine.setPaused(true)
+        // Frames stamped after the pause began (it is on the host clock).
+        let later = CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock())) + 1
+        for index in 0..<10 { recorder.appendVideo(try frame(later + Double(index) / 30, label: "Paused")) }
+        // Resumed (also on the host clock, so before `later + 5`): these are kept.
+        engine.setPaused(false)
+        for index in 0..<15 {
+            recorder.appendVideo(try frame(later + 5 + Double(index) / 30, label: "Kept"))
+            let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1600)!
+            pcm.frameLength = 1600
+            for n in 0..<1600 { pcm.floatChannelData![0][n] = Float(sin(Double(index * 1600 + n) * 0.03)) * 0.15 }
+            recorder.appendMicrophone(try XCTUnwrap(AudioRecorder.toCMSampleBuffer(pcm, pts: CMTime(seconds: later + 5 + Double(index) / 30, preferredTimescale: 48_000))))
+            try await Task.sleep(nanoseconds: 33_333_333)
+        }
+        let stopped = expectation(description: "stopped")
+        recorder.stop { duration in
+            // Only the half second after the resume: with the pause ignored it would be over five.
+            XCTAssertEqual(duration, 14.0 / 30, accuracy: 0.1)
+            stopped.fulfill()
+        }
+        await fulfillment(of: [stopped], timeout: 20)
+    }
+
+    func testAPausedStretchIsLeftOutOfTheFile() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let video = dir.appendingPathComponent("screen.mp4")
+        let recorder = ScreenRecorder(outPath: video.path, includeMic: true)
+        recorder.setupWriter(width: 960, height: 540)
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+        // Three seconds are captured; the middle one is paused.
+        for index in 0..<90 {
+            let seconds = Double(index) / 30
+            if index == 30 { recorder.setPaused(true, at: CMTime(seconds: seconds, preferredTimescale: 600)) }
+            if index == 60 { recorder.setPaused(false, at: CMTime(seconds: seconds, preferredTimescale: 600)) }
+            recorder.appendVideo(try frame(seconds, label: index < 30 ? "Before" : index < 60 ? "Secret" : "After"))
+            let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1600)!
+            pcm.frameLength = 1600
+            for n in 0..<1600 { pcm.floatChannelData![0][n] = Float(sin(Double(index * 1600 + n) * 0.03)) * 0.15 }
+            recorder.appendMicrophone(try XCTUnwrap(AudioRecorder.toCMSampleBuffer(pcm, pts: CMTime(seconds: seconds, preferredTimescale: 48_000))))
+            try await Task.sleep(nanoseconds: 33_333_333)
+        }
+        let stopped = expectation(description: "finalized")
+        recorder.stop { duration in
+            XCTAssertEqual(duration, 2, accuracy: 0.15)
+            stopped.fulfill()
+        }
+        await fulfillment(of: [stopped], timeout: 20)
+        let asset = AVURLAsset(url: video)
+        let length = try await asset.load(.duration)
+        XCTAssertEqual(CMTimeGetSeconds(length), 2, accuracy: 0.2)
+        let sound = try await asset.loadTracks(withMediaType: .audio)
+        let soundRange = try await sound[0].load(.timeRange)
+        XCTAssertEqual(CMTimeGetSeconds(soundRange.duration), 2, accuracy: 0.2)
+        // The frame at the join is the first one after the pause, never one from inside it.
+        let processed = dir.appendingPathComponent("out", isDirectory: true)
+        try FileManager.default.createDirectory(at: processed, withIntermediateDirectories: true)
+        try await WalkthroughProcessor.run(video: video, folder: processed, audioChunkSeconds: 2) { _ in }
+        let manifest = try JSONDecoder().decode(WalkthroughProcessor.Result.self, from: Data(contentsOf: processed.appendingPathComponent("visual.json")))
+        let text = manifest.frames.map(\.text).joined(separator: " ")
+        XCTAssertTrue(text.contains("Before"))
+        XCTAssertTrue(text.contains("After"))
+        XCTAssertFalse(text.contains("Secret"))
+    }
+
     func testMicrophoneIsWrittenWithoutAnySystemAudioAndProcessorExtractsEvidence() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

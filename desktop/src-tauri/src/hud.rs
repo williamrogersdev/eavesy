@@ -24,7 +24,7 @@ pub enum Phase {
 /// A dictation that started as an answer to a Claude Code card: `{ sessionId, name }`.
 pub const EVENT_ANSWERING: &str = "hud:answering";
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct HudState {
     pub phase: Phase,
@@ -65,6 +65,52 @@ fn keeps_tuck(tucked: Option<&str>, state: &HudState) -> bool {
     tucked.is_some() && tucked == state.session_id.as_deref() && !matches!(state.phase, Phase::Failed | Phase::Idle | Phase::Prompt)
 }
 
+/// The screen recording that is paused, and since when. The control shows it
+/// with the timer stopped; see [`set_paused`].
+static PAUSED: std::sync::Mutex<Option<(String, i64)>> = std::sync::Mutex::new(None);
+
+/// Since when `state`'s recording has been paused, if it is.
+fn paused_at(paused: Option<&(String, i64)>, state: &HudState) -> Option<i64> {
+    let (session_id, at_ms) = paused?;
+    (state.phase == Phase::Recording && state.session_id.as_deref() == Some(session_id)).then_some(*at_ms)
+}
+
+/// The recording's timer start once a pause from `paused_at_ms` to `now_ms`
+/// is left out of it.
+fn started_after_pause(started_at_ms: Option<i64>, paused_at_ms: i64, now_ms: i64) -> Option<i64> {
+    started_at_ms.map(|started| started + (now_ms - paused_at_ms).max(0))
+}
+
+/// Shows `session_id`'s recording as paused, or as running again. On resume
+/// the timer's start moves on by the length of the pause, so it carries on
+/// from where it stopped. False when that recording is not the one on screen.
+pub fn set_paused(app: &AppHandle, session_id: &str, paused: bool, now_ms: i64) -> bool {
+    // Read, changed and put back in one step with the paused slot, so no
+    // other state can go out carrying half of a pause.
+    let mut unchanged = false;
+    let set = set_state_from(app, |now| {
+        if now.phase != Phase::Recording || now.session_id.as_deref() != Some(session_id) {
+            return None;
+        }
+        let mut next = now.clone();
+        let mut slot = PAUSED.lock().unwrap_or_else(|error| error.into_inner());
+        let was = slot.as_ref().filter(|(id, _)| id == session_id).map(|(_, at_ms)| *at_ms);
+        match (paused, was) {
+            (true, None) => *slot = Some((session_id.to_string(), now_ms)),
+            (false, Some(at_ms)) => {
+                *slot = None;
+                next.started_at_ms = started_after_pause(next.started_at_ms, at_ms, now_ms);
+            }
+            _ => {
+                unchanged = true;
+                return None;
+            }
+        }
+        Some(next)
+    });
+    set || unchanged
+}
+
 static TRANSITION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 /// What the control shows. Written in exactly one place, [`set_state_if`],
 /// under [`TRANSITION`]: that is what lets a check-then-set there be atomic.
@@ -89,18 +135,32 @@ pub fn advance_from(app: &AppHandle, session_id: &str, from: &[Phase], state: Hu
 /// The check and the change happen in one step: no other state can come in
 /// between. `allowed` gets the current state; it must not call [`current`].
 pub fn set_state_if(app: &AppHandle, state: HudState, allowed: impl FnOnce(&HudState) -> bool) -> bool {
+    set_state_from(app, |now| allowed(now).then_some(state))
+}
+
+/// Moves on to the state `next` makes of the one on screen now, or stays put
+/// when it returns None. `next` runs inside the transition; it must not call
+/// [`current`].
+fn set_state_from(app: &AppHandle, next: impl FnOnce(&HudState) -> Option<HudState>) -> bool {
     // Stop, completion and dismissal can arrive on different threads. Keep
     // their renderer events in the same order as CURRENT, which sizes the
     // native window. Otherwise a result can render inside an idle-sized pill.
     let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
-    if !allowed(&current()) {
+    let Some(state) = next(&current()) else {
         return false;
-    }
+    };
     let previous = CURRENT.lock().unwrap_or_else(|error| error.into_inner()).replace(state.clone());
     {
         let mut tucked = TUCKED.lock().unwrap_or_else(|error| error.into_inner());
         if !keeps_tuck(tucked.as_deref(), &state) {
             *tucked = None;
+        }
+    }
+    {
+        // A pause ends with its recording: stopped, failed or replaced.
+        let mut paused = PAUSED.lock().unwrap_or_else(|error| error.into_inner());
+        if paused_at(paused.as_ref(), &state).is_none() {
+            *paused = None;
         }
     }
     {
@@ -498,6 +558,10 @@ pub fn shown(app: &AppHandle, state: &HudState) -> serde_json::Value {
     if let Some(object) = value.as_object_mut() {
         object.insert("receipt".into(), receipt(state).into());
         object.insert("opensItself".into(), opens_by_itself(state, prefs(app).preview).into());
+        let paused = PAUSED.lock().unwrap_or_else(|error| error.into_inner());
+        if let Some(at_ms) = paused_at(paused.as_ref(), state) {
+            object.insert("pausedAtMs".into(), at_ms.into());
+        }
         if let Some(written) = state.session_id.as_deref().and_then(crate::dictation::written_as).and_then(|written| serde_json::to_value(written).ok()) {
             object.insert("written".into(), written);
         }
@@ -1139,7 +1203,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{Prefs, OPTIONS_HEIGHT, meeting_size, meeting_wanted, MEETING_MAX, MEETING_MIN, anchored, is_active, keeps_tuck, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, MEETING, MEETING_MODE, RECEIPT, RESULT, SHOT, VIDEO_DONE, VIDEO_LIVE, WIDE};
+    use super::{paused_at, started_after_pause, Prefs, OPTIONS_HEIGHT, meeting_size, meeting_wanted, MEETING_MAX, MEETING_MIN, anchored, is_active, keeps_tuck, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, MEETING, MEETING_MODE, RECEIPT, RESULT, SHOT, VIDEO_DONE, VIDEO_LIVE, WIDE};
 
     #[test]
     fn a_hidden_recording_stays_hidden_until_it_fails_or_ends() {
@@ -1221,6 +1285,26 @@ mod tests {
 
     fn state(phase: Phase, mode: Option<&str>, message: Option<&str>) -> HudState {
         HudState { phase, mode: mode.map(str::to_string), message: message.map(str::to_string), ..HudState::idle() }
+    }
+
+    #[test]
+    fn only_the_paused_recording_on_screen_shows_as_paused() {
+        let recording = |id: &str| HudState { session_id: Some(id.into()), ..state(Phase::Recording, Some("video"), None) };
+        let paused = ("a".to_string(), 7_000);
+        assert_eq!(paused_at(Some(&paused), &recording("a")), Some(7_000));
+        assert_eq!(paused_at(Some(&paused), &recording("b")), None);
+        assert_eq!(paused_at(None, &recording("a")), None);
+        // Once it stops, the saving and saved states are not "paused".
+        let saving = HudState { session_id: Some("a".into()), ..state(Phase::Transcribing, Some("video"), None) };
+        assert_eq!(paused_at(Some(&paused), &saving), None);
+    }
+
+    #[test]
+    fn the_timer_carries_on_from_where_a_pause_stopped_it() {
+        // 4s in, paused for 10s: the start moves on 10s, so it still reads 4s.
+        assert_eq!(started_after_pause(Some(1_000), 5_000, 15_000), Some(11_000));
+        assert_eq!(started_after_pause(Some(1_000), 5_000, 4_000), Some(1_000));
+        assert_eq!(started_after_pause(None, 5_000, 15_000), None);
     }
 
     #[test]

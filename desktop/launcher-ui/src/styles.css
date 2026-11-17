@@ -511,6 +511,8 @@ body {
 }
 .ctl-stop:hover:not(:disabled) { background: color-mix(in srgb, var(--ev-rec) 86%, #fff); color: #fff; }
 .ctl-discard { color: var(--ctl-warn); padding: 0 8px; font-weight: 650; }
+/* Resume, on a paused screen recording: the next thing to press. */
+.ctl-resume { color: var(--ctl-ink); background: rgb(var(--ctl-fg) / 0.1); padding: 0 10px 0 8px; font-weight: 650; }
 
 .ctl-say { min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-left: 2px; }
 .ctl-quiet { color: var(--ctl-ink-2); }
@@ -569,6 +571,8 @@ body {
   background: var(--ev-rec);
   animation: ctl-rec-pulse 1.6s ease-out infinite;
 }
+/* Paused: the dot is still and no longer red, because nothing is being kept. */
+.ctl-rec[data-paused] { background: var(--ctl-ink-2); animation: none; }
 @keyframes ctl-rec-pulse {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ev-rec) 55%, transparent); }
   70%, 100% { box-shadow: 0 0 0 5px transparent; }

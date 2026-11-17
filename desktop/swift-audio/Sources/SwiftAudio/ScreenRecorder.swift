@@ -34,6 +34,10 @@ final class ScreenRecorder: NSObject, Recorder {
     private var micSamplesWritten = 0
     private var micPeakRms = 0.0
 
+    // Pauses, on the writer queue: the one place that decides what is kept.
+    private var pauses = PauseTimeline()
+    private var warnedAboutRetiming = false
+
     private var displayWidth = 1920
     private var displayHeight = 1080
     private var displayBounds = CGRect.zero
@@ -162,9 +166,60 @@ final class ScreenRecorder: NSObject, Recorder {
         }
     }
 
+    // MARK: - Pause
+
+    /// Stops keeping what is captured, or starts again. The file has no gap:
+    /// what comes after a pause follows straight on from what came before.
+    func setPaused(_ paused: Bool) {
+        setPaused(paused, at: nil)
+    }
+
+    /// `time` is on the host time clock, which ScreenCaptureKit and the
+    /// microphone session both stamp their samples with; nil means now.
+    func setPaused(_ paused: Bool, at time: CMTime?) {
+        writerQueue.async { [weak self] in
+            guard let self, !self.finished else { return }
+            let at = time ?? CMClockGetTime(CMClockGetHostTimeClock())
+            guard paused ? self.pauses.pause(at: at) : self.pauses.resume(at: at) else { return }
+            // Computer sound from before or during the pause must not be mixed in after it.
+            self.mixLock.lock()
+            self.systemResidual.removeAll(keepingCapacity: true)
+            self.mixLock.unlock()
+        }
+    }
+
+    /// The sample moved to where it belongs in the file, or nil when it was
+    /// captured during a pause (or could not be moved).
+    private func placed(_ sampleBuffer: CMSampleBuffer) -> (buffer: CMSampleBuffer, pts: CMTime, captured: CMTime)? {
+        let captured = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        guard let pts = pauses.placed(captured, duration: CMSampleBufferGetDuration(sampleBuffer)) else { return nil }
+        if CMTimeCompare(pts, captured) == 0 { return (sampleBuffer, pts, captured) }
+        let cut = CMTimeSubtract(captured, pts)
+        guard let timings = try? sampleBuffer.sampleTimingInfos() else { return unmovable() }
+        let moved = timings.map { timing -> CMSampleTimingInfo in
+            var timing = timing
+            timing.presentationTimeStamp = CMTimeSubtract(timing.presentationTimeStamp, cut)
+            if timing.decodeTimeStamp.isValid { timing.decodeTimeStamp = CMTimeSubtract(timing.decodeTimeStamp, cut) }
+            return timing
+        }
+        guard let buffer = try? CMSampleBuffer(copying: sampleBuffer, withNewTiming: moved) else { return unmovable() }
+        return (buffer, pts, captured)
+    }
+
+    /// A sample after a pause that could not be given its new time is left
+    /// out; say so once, so a recording that stops growing is explained.
+    private func unmovable() -> (buffer: CMSampleBuffer, pts: CMTime, captured: CMTime)? {
+        if !warnedAboutRetiming {
+            warnedAboutRetiming = true
+            EventEmitter.warning("Could not place a sample after the pause; it was left out of the recording")
+        }
+        return nil
+    }
+
     // MARK: - Appending
 
-    private func startSessionIfNeeded(at pts: CMTime) -> Bool {
+    /// `pts` is the frame's place in the file, `captured` when it was taken.
+    private func startSessionIfNeeded(at pts: CMTime, captured: CMTime) -> Bool {
         guard let writer = self.writer else { return false }
         if writer.status == .unknown {
             writer.startWriting()
@@ -173,7 +228,7 @@ final class ScreenRecorder: NSObject, Recorder {
             sessionStarted = true
             // Sample times are on the host clock: say when the video's first frame
             // was, in wall time, so clicks made meanwhile land on the right frame.
-            let age = CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), pts))
+            let age = CMTimeGetSeconds(CMTimeSubtract(CMClockGetTime(CMClockGetHostTimeClock()), captured))
             EventEmitter.videoStart(
                 epochMs: Int64(((Date().timeIntervalSince1970 - max(0, age)) * 1000).rounded()),
                 display: displayBounds)
@@ -185,8 +240,8 @@ final class ScreenRecorder: NSObject, Recorder {
         writerQueue.async { [weak self] in
             guard let self, !self.finished else { return }
             guard let input = self.videoInput else { return }
-            let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-            guard self.startSessionIfNeeded(at: pts) else { return }
+            guard let (sampleBuffer, pts, captured) = self.placed(sampleBuffer) else { return }
+            guard self.startSessionIfNeeded(at: pts, captured: captured) else { return }
             if input.isReadyForMoreMediaData {
                 guard input.append(sampleBuffer) else {
                     EventEmitter.warning("Video writing stopped: \(self.writer?.error?.localizedDescription ?? "unknown error")")
@@ -209,7 +264,7 @@ final class ScreenRecorder: NSObject, Recorder {
             // Only append audio once the session has begun (video starts it).
             // Drop audio that precedes the first video frame to keep A/V aligned.
             guard self.writer?.status == .writing, self.sessionStarted else { return }
-            let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            guard let (sampleBuffer, pts, _) = self.placed(sampleBuffer) else { return }
             guard CMTimeCompare(pts, self.firstPTS) >= 0 else { return }
             if input.isReadyForMoreMediaData {
                 guard input.append(sampleBuffer) else {
