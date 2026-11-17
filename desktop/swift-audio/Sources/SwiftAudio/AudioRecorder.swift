@@ -49,6 +49,9 @@ final class AudioRecorder: NSObject, Recorder {
     /// Takes what the speakers play out of the microphone; only touched on
     /// the system audio queue.
     let echo = EchoCanceller()
+    /// The cleaned microphone comes out late; the system track waits for it,
+    /// so the two stay in step.
+    var systemDelay = Delay(samples: EchoCanceller.latency)
 
     let mixLock = NSLock()
     var micResidual: [Float] = []
