@@ -700,6 +700,12 @@ pub fn answer_with(dictation: &str, claim: voice::Claim) {
     *ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some((dictation.to_string(), claim));
 }
 
+/// The name of the session whose card a dictation answers, for the pill to
+/// say where the words are going instead of the app in front.
+pub fn answering_name(claim: voice::Claim) -> String {
+    with_queue(|queue| queue.get(claim.item).map(|item| item.name.clone())).unwrap_or_default()
+}
+
 /// Whether this dictation answers the card, without taking it.
 pub fn is_answer(dictation: &str) -> bool {
     ANSWERING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).as_ref().is_some_and(|(id, _)| id == dictation)

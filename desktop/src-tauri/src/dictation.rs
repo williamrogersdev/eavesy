@@ -274,6 +274,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     let send = crate::live_typing::send_hold(session_id);
     let text = text.trim().to_string();
     if text.is_empty() {
+        crate::telemetry::track("dictation_empty", serde_json::json!({ "card_answer": answering.is_some() }));
         // Left marked for Eavesy, so words only the cloud transcript catches still go to it.
         return;
     }
@@ -288,6 +289,7 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
     }
     // An answer to the Claude Code reply card goes there, never into an app.
     if let Some(claim) = answering {
+        crate::telemetry::track("dictation_answered_card", serde_json::json!({ "words": text.split_whitespace().count() }));
         crate::live_typing::cancel(&session_id);
         std::thread::spawn(move || crate::agents::answer(&app, &session_id, claim, &text));
         return;

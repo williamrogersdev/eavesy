@@ -21,6 +21,9 @@ pub enum Phase {
     Prompt,
 }
 
+/// A dictation that started as an answer to a Claude Code card: `{ sessionId, name }`.
+pub const EVENT_ANSWERING: &str = "hud:answering";
+
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct HudState {

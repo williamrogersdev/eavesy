@@ -559,9 +559,19 @@ const SETUP_STEPS: [&str; 3] = ["permissions", "try_it", "sign_in"];
 #[tauri::command(async)]
 pub fn setup_step_shown(app: AppHandle, step: u8) -> Result<(), String> {
     let name = setup_step_name(step).ok_or_else(|| format!("setup has no step {step}"))?;
+    // The step before, so going back (a step that confused someone) shows up.
+    static LAST_STEP: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(u8::MAX);
+    let from = LAST_STEP.swap(step, std::sync::atomic::Ordering::SeqCst);
+    let from_name = setup_step_name(from);
     crate::telemetry::track(
         "setup_step_viewed",
-        serde_json::json!({ "step": step, "step_name": name, "paired": settings::device_token(&app).is_some() }),
+        serde_json::json!({
+            "step": step,
+            "step_name": name,
+            "from_step_name": from_name,
+            "went_back": from_name.is_some() && from > step,
+            "paired": settings::device_token(&app).is_some(),
+        }),
     );
     Ok(())
 }

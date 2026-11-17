@@ -68,6 +68,7 @@ pub fn take(session_id: &str) -> bool {
 
 /// Puts the pill on a failure that names what happened to your words.
 fn fail(app: &AppHandle, session_id: &str, message: String) {
+    report("failed");
     let failed = HudState {
         phase: Phase::Failed,
         session_id: Some(session_id.to_string()),
@@ -80,6 +81,11 @@ fn fail(app: &AppHandle, session_id: &str, message: String) {
 }
 
 /// Sends what you said to the thread, then shows and says the answer. Blocking.
+/// How a Talk to Eavesy ended, for analytics: never the words or the reply.
+fn report(outcome: &'static str) {
+    crate::telemetry::track("assistant_voice_reply", serde_json::json!({ "outcome": outcome }));
+}
+
 pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
     if text.trim().is_empty() {
         fail(app, session_id, "Didn't hear anything, so nothing was sent to Eavesy.".into());
@@ -101,6 +107,7 @@ pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
     }
     let Some(super::thread::Reply { id: turn, text: reply, failed }) = super::thread::last_reply(app) else {
         hud::advance_from(app, session_id, &[Phase::Transcribing], HudState { session_id: Some(session_id.to_string()), ..HudState::idle() });
+        report("no_reply");
         return;
     };
     // The model couldn't be reached: that's for the pill, never said as Eavesy's answer.
@@ -117,6 +124,7 @@ pub fn deliver(app: &AppHandle, session_id: &str, text: &str) {
         notice: None,
     };
     let on_pill = hud::advance_from(app, session_id, &[Phase::Transcribing], shown);
+    report("answered");
     // A card waiting for your click is in the panel; open it there (voice can open a
     // card, never press it).
     if super::waiting_cards(app) > 0 {
