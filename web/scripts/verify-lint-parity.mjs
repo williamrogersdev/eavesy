@@ -16,10 +16,16 @@ const compiled = spawnSync(path.join(root, 'node_modules/.bin/oxlint'), ['--prin
 if (compiled.error || compiled.status !== 0) throw new Error(`Oxlint configuration did not compile: ${compiled.error?.message ?? compiled.stderr}`);
 const validated = JSON.parse(compiled.stdout);
 if (!validated.options?.typeAware || !['typescript', 'react'].every((plugin) => validated.plugins.includes(plugin))) throw new Error('Required native plugins or type-aware mode are disabled');
+// eslint-plugin-oxlint derives the residual ESLint rule set from the rules this
+// Oxlint version implements, so the two packages must be the same version.
+const installed = (name) => JSON.parse(readFileSync(path.join(root, 'node_modules', name, 'package.json'), 'utf8')).version;
+if (installed('oxlint') !== installed('eslint-plugin-oxlint')) throw new Error(`oxlint ${installed('oxlint')} and eslint-plugin-oxlint ${installed('eslint-plugin-oxlint')} must be the same version`);
 const severity = { deny: 2, warn: 1, allow: 0 };
 function normalizeNative(value) {
   if (typeof value === 'string' && Object.hasOwn(severity, value)) return [severity[value]];
-  if (Array.isArray(value) && Object.hasOwn(severity, value[0]) && (value[1] === undefined || Array.isArray(value[1]))) return [severity[value[0]], ...(value[1] ?? [])];
+  // Oxlint 1.94 prints options inline after the severity: ["deny", option, ...].
+  // Each option must be a real value; anything else is a shape this check does not know.
+  if (Array.isArray(value) && Object.hasOwn(severity, value[0]) && value.slice(1).every((option) => option !== null && option !== undefined)) return [severity[value[0]], ...value.slice(1)];
   throw new Error(`Missing or unsupported compiled native rule options: ${JSON.stringify(value)}`);
 }
 if (validated.overrides.length !== config.overrides.length) throw new Error('Native override compilation changed scope');
