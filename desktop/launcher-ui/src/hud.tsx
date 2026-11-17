@@ -542,6 +542,21 @@ function Hud() {
     return () => { disposed = true; unlisten?.(); };
   }, []);
 
+  // A Talk that started as an answer to a Claude Code card: the pill says where
+  // the words are going, since they won't be pasted into the app in front.
+  const [answering, setAnswering] = useState<{ sessionId: string; name: string } | null>(() => {
+    // Browser preview: ?hud=recording&reply=<session name>.
+    const name = tauri() ? null : new URLSearchParams(window.location.search).get('reply');
+    return name === null ? null : { sessionId: 'preview', name };
+  });
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void tauri()?.event?.listen('hud:answering', (e) => setAnswering(e.payload as { sessionId: string; name: string }))
+      .then((off) => { if (disposed) off?.(); else unlisten = off; });
+    return () => { disposed = true; unlisten?.(); };
+  }, []);
+
   // The words themselves come through `useLiveLines`; a caption only lifts the voice bars here.
   useEvent('recording:caption', (payload) => {
     const caption = payload as LiveCaption;
@@ -780,6 +795,8 @@ function Hud() {
   const opensItself = !!state?.opensItself && finished !== null;
   // Talking to Eavesy always shows your words as you say them (`size_for` in hud.rs).
   const eavesy = state?.mode === EAVESY_MODE;
+  // This Talk's words go to an agent's card, not the app in front.
+  const replying = !eavesy && !!state?.sessionId && answering?.sessionId === state.sessionId ? answering : null;
   const look: Look = eavesy && settingsLook.lines === 0 ? { ...settingsLook, lines: 1 } : settingsLook;
   // Drawn only once the window has room for it: until then the words stay a stamp on the pill.
   const rowOnly = viewportHeight !== null && viewportHeight < ROOM_FOR_WORDS;
@@ -1381,7 +1398,7 @@ function Hud() {
   if (state.phase === 'recording') {
     // A dictation (not a screen recording, not talking to Eavesy): how it is
     // written and whether it is typed live are always in reach.
-    const dictating = !video && !eavesy && state.mode === 'audio';
+    const dictating = !video && !eavesy && !replying && state.mode === 'audio';
     // Both sides of a call: nothing is pasted, it is saved as a meeting.
     const meeting = state.mode === 'meeting';
     const toggleTypeLive = async () => {
@@ -1436,7 +1453,8 @@ function Hud() {
           </>
         )}
         {video && !opening && !errorSay && <Marking state={marking} act={act} />}
-        {eavesy && !opening && <Stamp tone="manila" fit>Eavesy’s listening</Stamp>}
+        {eavesy && <Stamp tone="manila" fit title="Talk to Eavesy: what you say is a question for Eavesy. Nothing is typed into your app.">Asking Eavesy</Stamp>}
+        {replying && !opening && <Stamp tone="agent" fit title={`Eavesy just read out a question from ${replying.name || 'a Claude Code session'}, so this Talk is your answer to it. Nothing is typed into your app.`}>Replying to Claude</Stamp>}
         {meeting && !opening && <span className="ctl-say" role="status">Recording meeting</span>}
         <span className="ctl-fill" />
         {dictating && !opening && writeChip(prefs ?? PLAIN, cancelDisabled, () => void showOptions(!choosing))}
@@ -1447,11 +1465,13 @@ function Hud() {
         {discarding === state.sessionId
           ? <button type="button" disabled={cancelDisabled} onClick={() => cancelRecording(state.sessionId, elapsedSec)} aria-label="Discard this recording" title="Click again to throw this recording away" className="ctl-btn ctl-discard">Discard</button>
           : <button type="button" disabled={cancelDisabled} onClick={() => cancelRecording(state.sessionId, elapsedSec)} aria-label="Cancel recording" title="Cancel: throw this recording away without saving" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>}
-        <button type="button" disabled={opening || !state.sessionId || stopping === state.sessionId} onClick={() => stopRecording(state.sessionId)} aria-label={`Stop${kbd}`} title={`Stop${video ? ' and save recording' : meeting ? ' and save the meeting' : eavesy ? ' and send to Eavesy' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>
+        <button type="button" disabled={opening || !state.sessionId || stopping === state.sessionId} onClick={() => stopRecording(state.sessionId)} aria-label={`Stop${kbd}`} title={`Stop${video ? ' and save recording' : meeting ? ' and save the meeting' : eavesy ? ' and send to Eavesy' : replying ? ' and send your reply' : ' and paste'}${kbd}`} className="ctl-btn ctl-stop"><Square className="h-2.5 w-2.5" fill="currentColor" />Stop</button>
       </>
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
-    const doneHint = eavesy ? (talkShortcut ? `tap ${talkShortcut} to send` : 'press Stop to send') : shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
+    const doneHint = eavesy ? (talkShortcut ? `tap ${talkShortcut} to send` : 'press Stop to send')
+      : replying ? (shortcut ? `tap ${shortcut} to send your reply` : 'press Stop to send your reply')
+      : shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
     if (meeting) below = <MeetingPanel sessionId={state.sessionId ?? null} rows={lines.length ? lines : PREVIEW_MEETING} startedAtMs={state.startedAtMs ?? null} releaseKeys={() => void releaseEditor(state.sessionId)} empty={actionError ?? (opening ? 'Opening the mic…' : noLiveWords ? 'Live words are off on this Mac. The meeting is still recording, and its transcript is written when you press Stop.' : 'Recording both sides of the call. What is said shows up here.')} />;
     else if (dictating && choosing && !opening && !rowOnly) below = (
       <div className="ctl-options">
@@ -1463,7 +1483,7 @@ function Hud() {
         </button>
       </div>
     );
-    else if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `${eavesy ? 'Eavesy’s listening' : 'Listening'}… ${doneHint}`);
+    else if (!video && look.lines) below = transcriptEditor(opening ? 'Opening the mic…' : noLiveWords ? `Live words are off on this Mac. Talk, then ${doneHint}` : `${eavesy ? 'Ask Eavesy anything' : replying ? `Answering ${replying.name || 'Claude'}` : 'Listening'}… ${doneHint}`);
   } else if (state.phase === 'transcribing') {
     top = <>{errorSay ?? <span className="ctl-say">{video ? 'Saving' : state.mode === 'meeting' ? 'Saving the meeting' : eavesy ? 'Eavesy’s thinking' : 'Writing it down'}<span className="ctl-dots" aria-hidden><i /><i /><i /></span></span>}<span className="ctl-fill" /></>;
     if (!video && look.lines) below = transcriptEditor(eavesy ? 'Sending what you said…' : 'Turning your words into text…');
@@ -1647,6 +1667,7 @@ function Hud() {
       aria-label={live ? 'Eavesy recording' : 'Eavesy'}
       data-phase={opening ? 'starting' : state.phase}
       data-size={size}
+      data-mode={eavesy ? 'eavesy' : replying ? 'reply' : undefined}
       data-swap={swap % 2 ? 'a' : 'b'}
       data-marking={video && live && marking.tool ? 'true' : undefined}
       data-translucent={(look.opacity < 100 && !video) || undefined}
@@ -1887,7 +1908,7 @@ function Marking({ state, act }: { state: MarkingState; act: (cmd: string, args?
 }
 
 /** A rubber stamp: what just happened to the capture. */
-function Stamp({ tone, fit, title, children }: { tone: 'leaf' | 'manila' | 'warn'; fit?: boolean; title?: string; children: ReactNode }) {
+function Stamp({ tone, fit, title, children }: { tone: 'leaf' | 'manila' | 'warn' | 'agent'; fit?: boolean; title?: string; children: ReactNode }) {
   return <span className="ctl-stamp" data-tone={tone} data-fit={fit || undefined} title={title} role="status">{tone === 'leaf' && <Check className="h-3 w-3" strokeWidth={3} />}{fit ? <span className="ctl-stamp-text">{children}</span> : children}</span>;
 }
 
