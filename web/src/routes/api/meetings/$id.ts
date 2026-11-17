@@ -39,8 +39,28 @@ export const Route = createFileRoute('/api/meetings/$id')({
         const team = await teamAccess.teamReadableMeeting(db, { viewerId: actor.userId, meetingId: id });
         const shared = team ? await meetingsRepo.getFull(db, { meetingId: id, userId: team.ownerId }) : null;
         if (!team || !shared) return Response.json({ error: 'not found' }, { status: 404 });
-        // Leave out what the author wrote or set up for themselves: their notes, the context they typed before recording, their share link and local folder.
-        const { contextBlurb: _context, shareSlug: _slug, shareExpiresAt: _expires, localFolderSlug: _folder, clientSessionId: _session, ...meeting } = shared.meeting;
+        // Only what read-only playback shows: not the author's notes, the context they typed before recording,
+        // their project, calendar link, share link or device details. A new column stays out until listed here.
+        const m = shared.meeting;
+        const meeting = {
+          id: m.id,
+          title: m.title,
+          description: m.description,
+          startedAt: m.startedAt,
+          endedAt: m.endedAt,
+          durationSec: m.durationSec,
+          source: m.source,
+          platform: m.platform,
+          language: m.language,
+          status: m.status,
+          statusError: m.statusError,
+          audioR2Key: m.audioR2Key,
+          speakerNamesJson: m.speakerNamesJson,
+          summaryOverrideMd: m.summaryOverrideMd,
+          transcriptOverrideMd: m.transcriptOverrideMd,
+          agentTranscriptMd: m.agentTranscriptMd,
+          transcriptKind: m.transcriptKind,
+        };
         return Response.json({
           ...shared,
           meeting,

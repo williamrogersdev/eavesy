@@ -105,6 +105,9 @@ describe('team owners and admins reading teammates’ recordings', () => {
       expect(body.access).toEqual({ kind: 'team', ownerName: 'Bo Brown' });
       expect(body.meeting).not.toHaveProperty('contextBlurb');
       expect(body.meeting).not.toHaveProperty('shareSlug');
+      expect(body.meeting).not.toHaveProperty('folderId');
+      expect(body.meeting).not.toHaveProperty('calendarEventId');
+      expect(body.meeting).not.toHaveProperty('userId');
     }
   });
 
@@ -167,6 +170,30 @@ describe('team owners and admins reading teammates’ recordings', () => {
 
     expect((await listRecordings(BO)).status).toBe(403);
     expect((await listRecordings(DI)).status).toBe(404);
+  });
+
+  it('gives the owner of another team nothing', async () => {
+    await insertUser('user_eve');
+    await testEnv.DB.batch([
+      testEnv.DB.prepare("INSERT INTO teams (id, name, created_by, created_at, updated_at) VALUES ('team_other', 'Other', 'user_eve', ?, ?)").bind(JOINED - 20_000, JOINED - 20_000),
+      testEnv.DB.prepare("INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('team_other', 'user_eve', 'owner', ?)").bind(JOINED - 20_000),
+    ]);
+    expect((await getMeeting('user_eve', AFTER)).status).toBe(404);
+    expect((await getAudio('user_eve', audioKey(AFTER))).status).toBe(403);
+    expect((await getMedia('user_eve', shotKey(AFTER))).status).toBe(403);
+    expect((await listRecordings('user_eve')).body.items).toEqual([]);
+  });
+
+  it('ends an admin’s access when they are made a member', async () => {
+    await testEnv.DB.prepare("UPDATE team_members SET role = 'member' WHERE user_id = ?").bind(CY).run();
+    expect((await getMeeting(CY, AFTER)).status).toBe(404);
+    expect((await getAudio(CY, audioKey(AFTER))).status).toBe(403);
+    expect((await listRecordings(CY)).status).toBe(403);
+  });
+
+  it('starts from the new join time when someone leaves and comes back', async () => {
+    await testEnv.DB.prepare('UPDATE team_members SET created_at = ? WHERE user_id = ?').bind(JOINED + 100_000, BO).run();
+    expect((await getMeeting(ADA, AFTER)).status).toBe(404);
   });
 
   it('ends the access when the member leaves the team', async () => {

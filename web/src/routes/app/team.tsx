@@ -32,6 +32,7 @@ const ROLE: Record<Role, string> = { owner: 'Owner', admin: 'Admin', member: 'Me
 const RECORDINGS_NOTICE = 'The team’s owners and admins can see the recordings you make after you join. Recordings from before stay private.';
 
 const recordingsSchema = z.object({
+  nextBefore: z.number().nullable(),
   items: z.array(
     z.object({
       id: z.string(),
@@ -320,14 +321,23 @@ function Team({ state, busy, change }: { state: InTeam; busy: boolean; change: C
 /** Teammates' recordings since they joined, for owners and admins. Opening one shows it read-only. */
 function TeamRecordings() {
   const [items, setItems] = useState<TeamRecording[] | null>(null);
+  const [nextBefore, setNextBefore] = useState<number | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [failed, setFailed] = useState(false);
+
+  const page = useCallback(async (before: number | null) => {
+    const response = await fetch(`/api/team/recordings?limit=50${before ? `&before=${before}` : ''}`);
+    if (!response.ok) throw new Error('load');
+    return recordingsSchema.parse(await response.json());
+  }, []);
+
   useEffect(() => {
     let live = true;
-    void fetch('/api/team/recordings?limit=50')
-      .then(async (response) => {
-        if (!response.ok) throw new Error('load');
-        const parsed = recordingsSchema.parse(await response.json());
-        if (live) setItems(parsed.items);
+    void page(null)
+      .then((parsed) => {
+        if (!live) return;
+        setItems(parsed.items);
+        setNextBefore(parsed.nextBefore);
       })
       .catch(() => {
         if (live) setFailed(true);
@@ -335,7 +345,19 @@ function TeamRecordings() {
     return () => {
       live = false;
     };
-  }, []);
+  }, [page]);
+
+  const more = () => {
+    if (nextBefore === null) return;
+    setLoadingMore(true);
+    void page(nextBefore)
+      .then((parsed) => {
+        setItems((current) => [...(current ?? []), ...parsed.items.filter((item) => !current?.some((seen) => seen.id === item.id))]);
+        setNextBefore(parsed.nextBefore);
+      })
+      .catch(() => setFailed(true))
+      .finally(() => setLoadingMore(false));
+  };
 
   return (
     <AppSection title="Team recordings" description="What your teammates recorded since they joined. You can read and play them; only the person who recorded one can change or delete it.">
@@ -363,6 +385,11 @@ function TeamRecordings() {
           ))}
         </ul>
       )}
+      {items && nextBefore !== null ? (
+        <button type="button" disabled={loadingMore} onClick={more} className={appButton('secondary', 'sm')}>
+          {loadingMore ? 'Loading…' : 'Show older'}
+        </button>
+      ) : null}
     </AppSection>
   );
 }

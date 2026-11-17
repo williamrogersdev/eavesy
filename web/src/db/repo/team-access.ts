@@ -10,9 +10,11 @@ import { meetingAttachments, meetings, teamMembers, users } from '../schema';
  * team: from the moment they joined (`team_members.created_at`) on. Earlier
  * recordings stay private, judged by when the device says recording began
  * (`recorded_at`), so one made offline before joining and uploaded after stays
- * private too. Imports are left out: an imported file can be of any age. Reading never grants writing: every route that
- * changes a recording still filters by its own user, so a team reader can't
- * rename, move, regenerate, share or delete someone else's recording.
+ * private too. Imports are left out: an imported file can be of any age.
+ *
+ * Reading never grants writing: every route that changes a recording still
+ * filters by its own user, so a team reader can't rename, move, regenerate,
+ * share or delete someone else's recording.
  * Leaving the team ends the access, since the membership row is what grants it.
  */
 
