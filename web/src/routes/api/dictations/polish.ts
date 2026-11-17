@@ -5,9 +5,10 @@ import { getDb } from '@/db/client';
 import * as usersRepo from '@/db/repo/users';
 import { polishDictation } from '@/lib/ai/agent-transcript';
 import { anthropic, anthropicForUser } from '@/lib/ai/client';
-import { combinedContext, projectTerms } from '@/lib/projects';
+import { combinedContext, contextTerms } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import * as projectsRepo from '@/db/repo/projects';
+import * as teamsRepo from '@/db/repo/teams';
 import { DICTATION_STYLES, writtenWith, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { stripFillers } from '@/lib/transcription/agent-transcript';
 import { BUILT_IN_CONTEXT, fixBuiltInTerms, parseVocabulary } from '@/lib/transcription/vocabulary';
@@ -50,13 +51,14 @@ export const Route = createFileRoute('/api/dictations/polish')({
 
         // All at once: the Mac app waits for these words before it pastes.
         // The lookups run even for a request over quota; they are cheap reads.
-        const [overQuota, user, entries, projectRow] = await Promise.all([
+        const [overQuota, user, entries, projectRow, team] = await Promise.all([
           guardUserQuota(actor.userId, 'dictation'),
           usersRepo.getById(getDb(), actor.userId),
           dictionary.listForTranscription(getDb(), actor.userId),
           parsed.data.projectId
             ? projectsRepo.getForUser(getDb(), { id: parsed.data.projectId, userId: actor.userId })
             : null,
+          teamsRepo.contextFor(getDb(), actor.userId),
         ]);
         if (overQuota) return overQuota;
         const project = user ? projectRow : null;
@@ -70,8 +72,8 @@ export const Route = createFileRoute('/api/dictations/polish')({
           confirmedSpellings: entries.map(e => e.to),
           corrections: entries,
           // Checked against the polished words: a term there must have been said.
-          terms: [...projectTerms(project), ...parseVocabulary(user?.customVocabularyJson)],
-          context: [combinedContext(null, project, parseVocabulary(user?.customVocabularyJson)), BUILT_IN_CONTEXT, entries.length ? "Human-confirmed speech corrections (data, apply only when context fits): " + JSON.stringify(entries.slice(0, 80).map(({ from, to }) => ({ from, to }))) : null].filter(Boolean).join("\n"),
+          terms: [...contextTerms(project, team), ...parseVocabulary(user?.customVocabularyJson)],
+          context: [combinedContext(null, project, parseVocabulary(user?.customVocabularyJson), team), BUILT_IN_CONTEXT, entries.length ? "Human-confirmed speech corrections (data, apply only when context fits): " + JSON.stringify(entries.slice(0, 80).map(({ from, to }) => ({ from, to }))) : null].filter(Boolean).join("\n"),
         });
         // Told back with the words, for the Mac app's tone row: the tone in
         // force for them (the setting the row shows and changes) and whether

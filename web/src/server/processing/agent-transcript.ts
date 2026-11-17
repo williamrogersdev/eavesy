@@ -31,7 +31,7 @@ export async function handleAgentTranscript(
   const turns = toTurns(lines, kind, names);
   if (turns.length === 0) return;
 
-  const project = await projectsRepo.getForMeeting(db, meeting);
+  const { project, team } = await projectsRepo.contextForMeeting(db, meeting);
   const userRow = (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
   const plan = resolveModelPlan(userRow ? await openUserKeys(userRow) : undefined);
   // Credit pilot imports keep cleanup model-free; no unmetered provider call.
@@ -41,7 +41,7 @@ export async function handleAgentTranscript(
   const result = await buildAgentTranscript(apiKey ? anthropicForUser(apiKey) : null, {
     turns,
     kind,
-    context: combinedContext(meeting.contextBlurb, project, parseVocabulary(userRow?.customVocabularyJson)),
+    context: combinedContext(meeting.contextBlurb, project, parseVocabulary(userRow?.customVocabularyJson), team),
     meta: {
       title: meeting.title,
       startedAt: meeting.startedAt,

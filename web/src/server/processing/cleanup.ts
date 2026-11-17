@@ -63,6 +63,11 @@ export async function handlePurgeAccount(userId: string, db: Db, env: Processing
   // Before the membership row goes: hand the team to someone else, or delete it when nobody is left.
   await departTeam(db, userId);
 
+  // Their projects go with them: out of anyone else's recordings filed there first (a shared project's teammates).
+  for (const table of ['meetings', 'captures', 'meeting_bots']) {
+    await env.DB.prepare(`UPDATE ${table} SET folder_id = NULL WHERE folder_id IN (SELECT id FROM folders WHERE user_id = ?) AND user_id <> ?`).bind(userId, userId).run();
+  }
+
   // Every table whose user_id references users, children first: D1 enforces
   // foreign keys, so one missed table fails the final delete for good.
   // (meeting_bots and email_deliveries are cleared above and below.)

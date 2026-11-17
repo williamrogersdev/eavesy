@@ -1,9 +1,17 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { z } from 'zod';
 import * as teamsRepo from '@/db/repo/teams';
+import { PROJECT_LIMITS } from '@/lib/projects';
 import { asCaller, callerEmail, requireManager, requireMembership } from '@/server/team-api';
 
 const nameSchema = z.object({ name: z.string().trim().min(1).max(teamsRepo.MAX_TEAM_NAME) });
+const patchSchema = z
+  .object({
+    name: z.string().trim().min(1).max(teamsRepo.MAX_TEAM_NAME).optional(),
+    about: z.string().max(PROJECT_LIMITS.about * 2).nullable().optional(),
+    vocabulary: z.array(z.string().max(PROJECT_LIMITS.term * 2)).max(PROJECT_LIMITS.vocabulary * 2).optional(),
+  })
+  .refine((body) => body.name !== undefined || body.about !== undefined || body.vocabulary !== undefined);
 
 export const Route = createFileRoute('/api/team')({
   server: {
@@ -16,12 +24,13 @@ export const Route = createFileRoute('/api/team')({
             const email = await callerEmail(db, userId);
             return Response.json({ team: null, invitations: email ? await teamsRepo.invitesFor(db, email) : [] });
           }
-          const [members, invites] = await Promise.all([
+          const [members, invites, context] = await Promise.all([
             teamsRepo.listMembers(db, membership.teamId),
             teamsRepo.canInvite(membership.role) ? teamsRepo.listInvites(db, membership.teamId) : Promise.resolve([]),
+            teamsRepo.contextOfTeam(db, membership.teamId),
           ]);
           return Response.json({
-            team: { id: membership.teamId, name: membership.name, role: membership.role },
+            team: { id: membership.teamId, name: membership.name, role: membership.role, ...context },
             me: userId,
             members,
             invites,
@@ -37,13 +46,15 @@ export const Route = createFileRoute('/api/team')({
           return Response.json({ id });
         }),
 
-      /** Renames the team. */
+      /** Renames the team, or sets its context (what it does, its terms). Owners and admins. */
       PATCH: async ({ request }) =>
         asCaller(async ({ userId, db }) => {
-          const parsed = nameSchema.safeParse(await request.json().catch(() => null));
+          const parsed = patchSchema.safeParse(await request.json().catch(() => null));
           if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
           const membership = await requireManager(db, userId);
-          await teamsRepo.rename(db, { teamId: membership.teamId, name: parsed.data.name });
+          const { name, about, vocabulary } = parsed.data;
+          if (name !== undefined) await teamsRepo.rename(db, { teamId: membership.teamId, name });
+          if (about !== undefined || vocabulary !== undefined) await teamsRepo.setContext(db, { teamId: membership.teamId, about, vocabulary });
           return Response.json({ ok: true });
         }),
 

@@ -1,10 +1,9 @@
 import { createFileRoute } from '@tanstack/react-router';
-import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { getDb } from '@/db/client';
-import { folders } from '@/db/schema';
 import * as activityRepo from '@/db/repo/activity';
 import * as meetingsRepo from '@/db/repo/meetings';
+import * as projectsRepo from '@/db/repo/projects';
 import * as teamAccess from '@/db/repo/team-access';
 import { parseSpeakerNames } from '@/lib/transcription/two-track';
 import { refreshAgentTranscriptLater } from '@/server/agent-transcript-refresh';
@@ -83,12 +82,10 @@ export const Route = createFileRoute('/api/meetings/$id')({
         }
         const { speakerNames, ...fields } = parsed.data;
         if (fields.folderId) {
-          const folder = await getDb()
-            .select({ id: folders.id })
-            .from(folders)
-            .where(and(eq(folders.id, fields.folderId), eq(folders.userId, actor.userId)))
-            .limit(1);
-          if (folder.length === 0) return Response.json({ error: 'folder not found' }, { status: 404 });
+          // Your own project, or one your team shares.
+          if (!(await projectsRepo.canUseProject(getDb(), actor.userId, fields.folderId))) {
+            return Response.json({ error: 'folder not found' }, { status: 404 });
+          }
         }
         let speakerNamesJson: string | undefined;
         if (speakerNames) {

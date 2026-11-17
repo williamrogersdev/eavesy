@@ -90,11 +90,11 @@ export const Route = createFileRoute('/api/meetings/$id/regenerate')({
         const plan = resolveModelPlan(user);
         let generated;
         try {
-          const project = await projectsRepo.getForMeeting(db, data.meeting);
+          const { project, team } = await projectsRepo.contextForMeeting(db, data.meeting);
           generated = await summarizeMeeting({
             transcript,
             userNotes: data.notes?.contentMd,
-            contextBlurb: combinedContext(data.meeting.contextBlurb, project) || undefined,
+            contextBlurb: combinedContext(data.meeting.contextBlurb, project, [], team) || undefined,
             speakers: rendered ? speakerNote(rendered) : undefined,
             customTemplatePrompt: templatePrompt,
             openRouter: plan.openRouter,

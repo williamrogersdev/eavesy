@@ -11,6 +11,17 @@ export interface Project {
   dictationStyle?: DictationStyle | null;
   /** Whether dictations in this project are formatted for AI agents; null or missing uses the account's. */
   dictationForAgents?: boolean | null;
+  /** Shared with the creator's team. */
+  shared?: boolean;
+  /** Whether the reader may edit, share or delete it: false for a teammate's shared project they only use. */
+  canEdit?: boolean;
+}
+
+/** A team's own context, which every member's transcripts and notes use, with or without a project. */
+export interface TeamContext {
+  name: string;
+  about: string | null;
+  vocabulary: string[];
 }
 
 export const PROJECT_LIMITS = {
@@ -133,12 +144,27 @@ export function projectContext(project: Project | null | undefined): string {
   return lines.join('\n');
 }
 
+/** Ground truth about the speaker's company or team, under any project's. */
+export function teamContext(team: TeamContext | null | undefined): string {
+  if (!team) return '';
+  const lines = [`Team: ${team.name}`];
+  if (team.about?.trim()) lines.push(`About the team: ${team.about.trim()}`);
+  if (team.vocabulary.length > 0) lines.push(`Team terms (spell exactly like this): ${team.vocabulary.join(', ')}`);
+  return lines.join('\n');
+}
+
+/** Words to bias transcription toward: the project's, then the team's. */
+export function contextTerms(project: Pick<Project, 'vocabulary' | 'people'> | null | undefined, team: TeamContext | null | undefined): string[] {
+  return [...projectTerms(project), ...(team?.vocabulary ?? [])];
+}
+
 export function combinedContext(
   contextBlurb: string | null | undefined,
   project: Project | null | undefined,
   userVocabulary: readonly string[] = [],
+  team: TeamContext | null = null,
 ) {
   const words = userVocabulary.length > 0 ? `More terms (spell exactly like this): ${userVocabulary.join(', ')}` : '';
-  const parts = [projectContext(project), words, contextBlurb?.trim() ?? ''].filter(Boolean);
+  const parts = [teamContext(team), projectContext(project), words, contextBlurb?.trim() ?? ''].filter(Boolean);
   return parts.length > 0 ? parts.join('\n\n') : null;
 }

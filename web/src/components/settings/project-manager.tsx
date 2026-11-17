@@ -1,6 +1,6 @@
 'use client';
 
-import { FolderOpen, Pencil, Plus, Trash2 } from 'lucide-react';
+import { FolderOpen, Pencil, Plus, Trash2, Users } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { AppAlert, AppEmptyState, AppPageHeader, appButton } from '@/components/ui/app-page';
 import { SaveToast, useSaveToast } from '@/components/ui/save-toast';
@@ -25,6 +25,14 @@ export function ProjectManager() {
   const [error, setError] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const toast = useSaveToast();
+  // Sharing needs a team; without one the share button stays hidden.
+  const [inTeam, setInTeam] = useState(false);
+  useEffect(() => {
+    void fetch('/api/team')
+      .then(async (response) => (response.ok ? await response.json<{ team?: unknown }>() : null))
+      .then((body) => setInTeam(Boolean(body?.team)))
+      .catch(() => setInTeam(false));
+  }, []);
   const local = useRef({ added: new Set<string>(), edited: new Set<string>(), deleted: new Set<string>() });
   const saves = useRef(new Map<string, { attempt: number; confirmedAttempt: number; confirmed: ProjectSummary }>());
 
@@ -118,6 +126,22 @@ export function ProjectManager() {
       });
   };
 
+  const share = (project: ProjectSummary) => {
+    const shared = !project.shared;
+    setItems((current) => current.map((item) => (item.id === project.id ? { ...item, shared } : item)));
+    setError(null);
+    toast.show(shared ? 'Shared with your team' : 'No longer shared');
+    void updateProject(project.id, { shared })
+      .then((after) => {
+        // Unsharing a teammate's project hands it back to them: it leaves this list.
+        if (!after) setItems((current) => current.filter((item) => item.id !== project.id));
+      })
+      .catch((cause: unknown) => {
+        setItems((current) => current.map((item) => (item.id === project.id ? { ...item, shared: project.shared } : item)));
+        setError(cause instanceof Error ? `Could not change sharing for ${project.name}: ${cause.message}` : `Could not change sharing for ${project.name}.`);
+      });
+  };
+
   const remove = (project: ProjectSummary) => {
     if (confirming !== project.id) {
       setConfirming(project.id);
@@ -190,6 +214,8 @@ export function ProjectManager() {
               <ProjectRow
                 key={project.id}
                 project={project}
+                canShare={inTeam}
+                onShare={() => share(project)}
                 confirming={confirming === project.id}
                 onEdit={() => {
                   setError(null);
@@ -212,18 +238,24 @@ export function ProjectManager() {
 
 function ProjectRow({
   project,
+  canShare,
+  onShare,
   confirming,
   onEdit,
   onDelete,
   onCancelDelete,
 }: {
   project: ProjectSummary;
+  canShare: boolean;
+  onShare: () => void;
   confirming: boolean;
   onEdit: () => void;
   onDelete: () => void;
   onCancelDelete: () => void;
 }) {
   const pending = project.id.startsWith(PENDING);
+  // A teammate's shared project: you file into it, but only its creator and the team's owners and admins change it.
+  const readOnly = project.canEdit === false;
   const words = projectWords(project);
   const shown = words.slice(0, 8);
   return (
@@ -238,15 +270,21 @@ function ProjectRow({
       </span>
       <button
         type="button"
-        onClick={onEdit}
-        disabled={pending}
-        className="min-w-0 flex-1 text-left"
+        onClick={readOnly ? undefined : onEdit}
+        disabled={pending || readOnly}
+        className="min-w-0 flex-1 text-left disabled:cursor-default"
       >
         <span className="flex flex-wrap items-baseline gap-x-2">
           <span className="max-w-full truncate font-round text-[15px] font-bold text-ev-ink">{project.name}</span>
           <span className="shrink-0 text-xs text-ev-ink-2">
             {plural(project.recordingCount, 'recording')} · {plural(words.length, 'word')}
           </span>
+          {project.shared ? (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-ev-coat-soft px-2 py-0.5 text-[11.5px] font-semibold text-ev-coat">
+              <Users className="h-3 w-3" />
+              {readOnly ? 'Your team’s' : 'Shared with team'}
+            </span>
+          ) : null}
         </span>
         {project.about ? <span className="mt-0.5 block truncate text-[13px] text-ev-ink-2">{project.about}</span> : null}
         {shown.length > 0 ? (
@@ -270,8 +308,20 @@ function ProjectRow({
               Delete
             </button>
           </>
-        ) : (
+        ) : readOnly ? null : (
           <>
+            {canShare || project.shared ? (
+              <button
+                type="button"
+                onClick={onShare}
+                disabled={pending}
+                aria-label={project.shared ? `Stop sharing ${project.name} with your team` : `Share ${project.name} with your team`}
+                title={project.shared ? 'Stop sharing with your team' : 'Share with your team: everyone can file recordings into it, and its words and context help their notes'}
+                className={cn(appButton('ghost', 'sm'), project.shared && 'text-ev-coat')}
+              >
+                <Users className="h-3.5 w-3.5" />
+              </button>
+            ) : null}
             <button type="button" onClick={onEdit} disabled={pending} aria-label={`Edit ${project.name}`} className={appButton('ghost', 'sm')}>
               <Pencil className="h-3.5 w-3.5" />
             </button>

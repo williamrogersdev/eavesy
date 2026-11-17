@@ -17,7 +17,13 @@ const teamSchema = z.union([
     invitations: z.array(z.object({ id: z.string(), teamName: z.string(), role: z.enum(['admin', 'member']) })),
   }),
   z.object({
-    team: z.object({ id: z.string(), name: z.string(), role: roleSchema }),
+    team: z.object({
+      id: z.string(),
+      name: z.string(),
+      role: roleSchema,
+      about: z.string().nullable().optional(),
+      vocabulary: z.array(z.string()).optional(),
+    }),
     me: z.string(),
     members: z.array(z.object({ userId: z.string(), name: z.string().nullable(), email: z.string().nullable(), role: roleSchema })),
     invites: z.array(z.object({ id: z.string(), email: z.string(), role: z.enum(['admin', 'member']) })),
@@ -202,6 +208,8 @@ function Team({ state, busy, change }: { state: InTeam; busy: boolean; change: C
           <p className="text-sm text-ev-ink">{team.name}</p>
         )}
       </AppSection>
+
+      <TeamContextSection team={team} manages={manages} busy={busy} change={change} />
 
       <AppSection title={`People · ${members.length}`}>
         <ul className="divide-y divide-ev-line rounded-[var(--ev-r-panel)] bg-ev-raised shadow-[0_0_0_0.5px_var(--ev-line-strong)]">
@@ -390,6 +398,67 @@ function TeamRecordings() {
           {loadingMore ? 'Loading…' : 'Show older'}
         </button>
       ) : null}
+    </AppSection>
+  );
+}
+
+/** What the team does and its terms: every member's transcripts and notes use them. Owners and admins edit; members see them. */
+function TeamContextSection({ team, manages, busy, change }: { team: InTeam['team']; manages: boolean; busy: boolean; change: Change }) {
+  const savedAbout = team.about ?? '';
+  const savedTerms = (team.vocabulary ?? []).join(', ');
+  const [about, setAbout] = useState(savedAbout);
+  const [terms, setTerms] = useState(savedTerms);
+  useEffect(() => setAbout(savedAbout), [savedAbout]);
+  useEffect(() => setTerms(savedTerms), [savedTerms]);
+  const dirty = about !== savedAbout || terms !== savedTerms;
+  const description = 'Every teammate’s transcripts and notes use this, in any project. Share a project from Projects to give the team its words too.';
+
+  if (!manages) {
+    return (
+      <AppSection title="Team context" description={description}>
+        {savedAbout || savedTerms ? (
+          <div className="flex flex-col gap-1 text-sm text-ev-ink">
+            {savedAbout ? <p className="whitespace-pre-wrap">{savedAbout}</p> : null}
+            {savedTerms ? <p className="text-ev-ink-2">Terms: {savedTerms}</p> : null}
+          </div>
+        ) : (
+          <p className="text-sm text-ev-ink-2">Nothing yet. The team’s owners and admins can add it.</p>
+        )}
+      </AppSection>
+    );
+  }
+  return (
+    <AppSection title="Team context" description={description}>
+      <form
+        className="flex flex-col gap-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const vocabulary = terms.split(/[,;\n]/).map((term) => term.trim()).filter(Boolean);
+          void change(() => call('PATCH', '/api/team', { about: about.trim() || null, vocabulary }));
+        }}
+      >
+        <textarea
+          aria-label="What the team does"
+          value={about}
+          maxLength={600}
+          rows={3}
+          onChange={(event) => setAbout(event.target.value)}
+          placeholder="What the company does, its products and customers. e.g. Acme makes billing software for dentists."
+          className={`${appInput} h-auto py-2`}
+        />
+        <input
+          aria-label="Team terms"
+          value={terms}
+          onChange={(event) => setTerms(event.target.value)}
+          placeholder="Names and terms to spell right, separated by commas"
+          className={appInput}
+        />
+        {dirty ? (
+          <span>
+            <button type="submit" disabled={busy} className={appButton('primary', 'sm')}>Save</button>
+          </span>
+        ) : null}
+      </form>
     </AppSection>
   );
 }

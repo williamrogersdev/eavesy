@@ -519,10 +519,12 @@ export const folders = sqliteTable(
     dictationStyle: text('dictation_style'),
     /** Whether dictations here are formatted for AI agents; null uses the account's. */
     dictationForAgents: integer('dictation_for_agents', { mode: 'boolean' }),
+    /** Shared with this team: every member sees it and files into it. Null: only its creator (`user_id`). */
+    teamId: text('team_id'),
     createdAt: integer('created_at'),
     updatedAt: integer('updated_at'),
   },
-  (t) => [index('folders_user_idx').on(t.userId)],
+  (t) => [index('folders_user_idx').on(t.userId), index('folders_team_idx').on(t.teamId).where(sql`team_id IS NOT NULL`)],
 );
 
 export const speakers = sqliteTable(
@@ -1043,6 +1045,10 @@ export const teams = sqliteTable('teams', {
   name: text('name').notNull(),
   /** Who made it. Not a foreign key: the team outlives that account. */
   createdBy: text('created_by').notNull(),
+  /** What the company or team does, for every member's transcripts and notes. */
+  about: text('about'),
+  /** Names and terms every member's transcripts should spell like this. */
+  vocabularyJson: text('vocabulary_json').notNull().default('[]'),
   createdAt: integer('created_at').notNull(),
   updatedAt: integer('updated_at').notNull(),
 });
