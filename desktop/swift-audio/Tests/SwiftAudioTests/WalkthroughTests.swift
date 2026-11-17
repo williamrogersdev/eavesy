@@ -39,16 +39,28 @@ final class WalkthroughTests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
-        let recorder = ScreenRecorder(outPath: dir.appendingPathComponent("screen.mp4").path, includeMic: false)
+        let recorder = ScreenRecorder(outPath: dir.appendingPathComponent("screen.mp4").path, includeMic: true)
         recorder.setupWriter(width: 960, height: 540)
+        let format = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
         let engine: Recorder = recorder
         engine.setPaused(true)
         // Frames stamped after the pause began (it is on the host clock).
         let later = CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock())) + 1
         for index in 0..<10 { recorder.appendVideo(try frame(later + Double(index) / 30, label: "Paused")) }
+        // Resumed (also on the host clock, so before `later + 5`): these are kept.
+        engine.setPaused(false)
+        for index in 0..<15 {
+            recorder.appendVideo(try frame(later + 5 + Double(index) / 30, label: "Kept"))
+            let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1600)!
+            pcm.frameLength = 1600
+            for n in 0..<1600 { pcm.floatChannelData![0][n] = Float(sin(Double(index * 1600 + n) * 0.03)) * 0.15 }
+            recorder.appendMicrophone(try XCTUnwrap(AudioRecorder.toCMSampleBuffer(pcm, pts: CMTime(seconds: later + 5 + Double(index) / 30, preferredTimescale: 48_000))))
+            try await Task.sleep(nanoseconds: 33_333_333)
+        }
         let stopped = expectation(description: "stopped")
         recorder.stop { duration in
-            XCTAssertEqual(duration, 0, "nothing captured during the pause is written")
+            // Only the half second after the resume: with the pause ignored it would be over five.
+            XCTAssertEqual(duration, 14.0 / 30, accuracy: 0.1)
             stopped.fulfill()
         }
         await fulfillment(of: [stopped], timeout: 20)

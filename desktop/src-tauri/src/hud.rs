@@ -85,36 +85,30 @@ fn started_after_pause(started_at_ms: Option<i64>, paused_at_ms: i64, now_ms: i6
 /// the timer's start moves on by the length of the pause, so it carries on
 /// from where it stopped. False when that recording is not the one on screen.
 pub fn set_paused(app: &AppHandle, session_id: &str, paused: bool, now_ms: i64) -> bool {
-    let on_screen = |now: &HudState| now.phase == Phase::Recording && now.session_id.as_deref() == Some(session_id);
-    // The state is read, changed and put back; if anything else changed it
-    // in between, start again from what it is now.
-    for _ in 0..4 {
-        let seen = current();
-        if !on_screen(&seen) {
-            return false;
+    // Read, changed and put back in one step with the paused slot, so no
+    // other state can go out carrying half of a pause.
+    let mut unchanged = false;
+    let set = set_state_from(app, |now| {
+        if now.phase != Phase::Recording || now.session_id.as_deref() != Some(session_id) {
+            return None;
         }
-        let mut next = seen.clone();
-        let before = {
-            let mut slot = PAUSED.lock().unwrap_or_else(|error| error.into_inner());
-            let before = slot.clone();
-            let was = before.as_ref().filter(|(id, _)| id == session_id).map(|(_, at_ms)| *at_ms);
-            match (paused, was) {
-                (true, None) => *slot = Some((session_id.to_string(), now_ms)),
-                (false, Some(at_ms)) => {
-                    *slot = None;
-                    next.started_at_ms = started_after_pause(next.started_at_ms, at_ms, now_ms);
-                }
-                _ => return true,
+        let mut next = now.clone();
+        let mut slot = PAUSED.lock().unwrap_or_else(|error| error.into_inner());
+        let was = slot.as_ref().filter(|(id, _)| id == session_id).map(|(_, at_ms)| *at_ms);
+        match (paused, was) {
+            (true, None) => *slot = Some((session_id.to_string(), now_ms)),
+            (false, Some(at_ms)) => {
+                *slot = None;
+                next.started_at_ms = started_after_pause(next.started_at_ms, at_ms, now_ms);
             }
-            before
-        };
-        // The slot is set first because the state that goes out reads it.
-        if set_state_if(app, next, |now| *now == seen) {
-            return true;
+            _ => {
+                unchanged = true;
+                return None;
+            }
         }
-        *PAUSED.lock().unwrap_or_else(|error| error.into_inner()) = before;
-    }
-    false
+        Some(next)
+    });
+    set || unchanged
 }
 
 static TRANSITION: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -141,13 +135,20 @@ pub fn advance_from(app: &AppHandle, session_id: &str, from: &[Phase], state: Hu
 /// The check and the change happen in one step: no other state can come in
 /// between. `allowed` gets the current state; it must not call [`current`].
 pub fn set_state_if(app: &AppHandle, state: HudState, allowed: impl FnOnce(&HudState) -> bool) -> bool {
+    set_state_from(app, |now| allowed(now).then_some(state))
+}
+
+/// Moves on to the state `next` makes of the one on screen now, or stays put
+/// when it returns None. `next` runs inside the transition; it must not call
+/// [`current`].
+fn set_state_from(app: &AppHandle, next: impl FnOnce(&HudState) -> Option<HudState>) -> bool {
     // Stop, completion and dismissal can arrive on different threads. Keep
     // their renderer events in the same order as CURRENT, which sizes the
     // native window. Otherwise a result can render inside an idle-sized pill.
     let _transition = TRANSITION.lock().unwrap_or_else(|error| error.into_inner());
-    if !allowed(&current()) {
+    let Some(state) = next(&current()) else {
         return false;
-    }
+    };
     let previous = CURRENT.lock().unwrap_or_else(|error| error.into_inner()).replace(state.clone());
     {
         let mut tucked = TUCKED.lock().unwrap_or_else(|error| error.into_inner());
