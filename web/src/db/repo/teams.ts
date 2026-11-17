@@ -1,7 +1,8 @@
-import { and, asc, eq, gt, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, lte, sql, type SQL } from 'drizzle-orm';
 import type { AppDb } from '../client';
+import { cleanList, parseStringList, PROJECT_LIMITS, type TeamContext } from '@/lib/projects';
 import { pid } from '../ids';
-import { teamInvites, teamMembers, teams, users } from '../schema';
+import { captures, folders, meetingBots, meetings, teamInvites, teamMembers, teams, users } from '../schema';
 
 export type TeamRole = (typeof teamMembers.$inferSelect)['role'];
 export type InviteRole = (typeof teamInvites.$inferSelect)['role'];
@@ -223,7 +224,17 @@ export async function removeMember(db: AppDb, args: { teamId: string; actorRole:
       ),
     )
     .returning({ userId: teamMembers.userId });
-  if (removed[0]) return;
+  if (removed[0]) {
+    // The team keeps its projects, so they leave the removed member's recordings, captures and bots.
+    await db.batch(
+      unfile(
+        db,
+        (table) => sql`${table.userId} = ${args.userId} AND ${table.folderId} IN (SELECT f.id FROM folders f WHERE f.team_id = ${args.teamId})
+          AND NOT EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = ${args.teamId} AND m.user_id = ${args.userId})`,
+      ),
+    );
+    return;
+  }
   // Nothing went: they left, their role changed under us, or they are the last owner.
   const current = await roleIn(db, args.teamId, args.userId);
   if (!current) throw new TeamError('not_found');
@@ -238,7 +249,14 @@ export async function removeMember(db: AppDb, args: { teamId: string; actorRole:
  */
 export function departQueries(db: AppDb, userId: string) {
   const noMembersLeft = sql.raw(`NOT IN (SELECT team_id FROM team_members)`);
+  // The team's projects the leaver can no longer use: all of them while anyone else stays
+  // (the team keeps even the ones they made), and only other people's if they were the last.
+  const lostProjects = sql`(SELECT f.id FROM folders f WHERE f.team_id = (SELECT team_id FROM team_members WHERE user_id = ${userId})
+    AND (f.user_id <> ${userId} OR EXISTS (SELECT 1 FROM team_members o WHERE o.team_id = f.team_id AND o.user_id <> ${userId})))`;
+  // Projects of a team left with nobody, which go back to whoever made them.
+  const orphanedProjects = sql`(SELECT f.id FROM folders f WHERE f.team_id IS NOT NULL AND f.team_id ${noMembersLeft})`;
   return [
+    ...unfile(db, (table) => sql`${table.userId} = ${userId} AND ${table.folderId} IN ${lostProjects}`),
     db.update(teamMembers).set({ role: 'owner' }).where(sql`rowid = (
       SELECT next.rowid FROM team_members next
       WHERE next.team_id = (SELECT team_id FROM team_members WHERE user_id = ${userId} AND role = 'owner')
@@ -252,7 +270,21 @@ export function departQueries(db: AppDb, userId: string) {
     )`),
     db.delete(teamMembers).where(eq(teamMembers.userId, userId)),
     db.delete(teamInvites).where(sql`team_id ${noMembersLeft}`),
+    // A team left with nobody: its shared projects go back to whoever made them, out of anyone else's recordings.
+    ...unfile(db, (table) => sql`${table.folderId} IN ${orphanedProjects} AND ${table.userId} <> (SELECT f.user_id FROM folders f WHERE f.id = ${table.folderId})`),
+    db.update(folders).set({ teamId: null }).where(sql`team_id IS NOT NULL AND team_id ${noMembersLeft}`),
     db.delete(teams).where(sql`id ${noMembersLeft}`),
+  ] as const;
+}
+
+type Filed = typeof meetings | typeof captures | typeof meetingBots;
+
+/** Takes the rows `where` picks out of their project, in recordings, captures and scheduled bots alike. */
+function unfile(db: AppDb, where: (table: Filed) => SQL) {
+  return [
+    db.update(meetings).set({ folderId: null }).where(where(meetings)),
+    db.update(captures).set({ folderId: null }).where(where(captures)),
+    db.update(meetingBots).set({ folderId: null }).where(where(meetingBots)),
   ] as const;
 }
 
@@ -264,7 +296,11 @@ export async function depart(db: AppDb, userId: string) {
 /** Deletes the team for everyone. Only an owner does this. */
 export async function removeTeam(db: AppDb, args: { teamId: string; actorRole: TeamRole }) {
   if (args.actorRole !== 'owner') throw new TeamError('forbidden');
+  const teamProjects = sql`(SELECT f.id FROM folders f WHERE f.team_id = ${args.teamId})`;
   await db.batch([
+    // Shared projects go back to whoever made them, out of everyone else's recordings and scheduled bots.
+    ...unfile(db, (table) => sql`${table.folderId} IN ${teamProjects} AND ${table.userId} <> (SELECT f.user_id FROM folders f WHERE f.id = ${table.folderId})`),
+    db.update(folders).set({ teamId: null }).where(eq(folders.teamId, args.teamId)),
     db.delete(teamInvites).where(eq(teamInvites.teamId, args.teamId)),
     db.delete(teamMembers).where(eq(teamMembers.teamId, args.teamId)),
     db.delete(teams).where(eq(teams.id, args.teamId)),
@@ -274,4 +310,37 @@ export async function removeTeam(db: AppDb, args: { teamId: string; actorRole: T
 /** Drops every invitation nobody accepted in time. They are already hidden and hold no seat; the scheduled run clears the rows. */
 export async function purgeExpiredInvites(db: AppDb, now = Date.now()) {
   await db.delete(teamInvites).where(lte(teamInvites.expiresAt, now));
+}
+
+/** The team's own context (what it does, its terms) as every member's transcripts and notes use it; null without a team or with none set. */
+export async function contextFor(db: AppDb, userId: string): Promise<TeamContext | null> {
+  const rows = await db
+    .select({ name: teams.name, about: teams.about, vocabularyJson: teams.vocabularyJson })
+    .from(teamMembers)
+    .innerJoin(teams, eq(teams.id, teamMembers.teamId))
+    .where(eq(teamMembers.userId, userId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  const vocabulary = parseStringList(row.vocabularyJson);
+  if (!row.about?.trim() && vocabulary.length === 0) return null;
+  return { name: row.name, about: row.about, vocabulary };
+}
+
+/** The team's context as its editors see it, set or not. */
+export async function contextOfTeam(db: AppDb, teamId: string): Promise<{ about: string | null; vocabulary: string[] }> {
+  const row = (await db.select({ about: teams.about, vocabularyJson: teams.vocabularyJson }).from(teams).where(eq(teams.id, teamId)).limit(1))[0];
+  return { about: row?.about ?? null, vocabulary: parseStringList(row?.vocabularyJson) };
+}
+
+/** Sets the team's context. Owners and admins only; the caller checks the role. */
+export async function setContext(db: AppDb, args: { teamId: string; about?: string | null; vocabulary?: string[] }, now = Date.now()) {
+  await db
+    .update(teams)
+    .set({
+      ...(args.about !== undefined ? { about: args.about?.trim().slice(0, PROJECT_LIMITS.about) || null } : {}),
+      ...(args.vocabulary !== undefined ? { vocabularyJson: JSON.stringify(cleanList(args.vocabulary)) } : {}),
+      updatedAt: now,
+    })
+    .where(eq(teams.id, args.teamId));
 }

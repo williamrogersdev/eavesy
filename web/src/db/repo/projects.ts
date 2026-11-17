@@ -1,11 +1,45 @@
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, ne, sql, type SQL } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
-import { captures, folders, meetings, summaries } from '../schema';
-import { cleanList, parseStringList, PROJECT_LIMITS, type Project } from '@/lib/projects';
+import { captures, folders, meetingBots, meetings, summaries } from '../schema';
+import { contextFor, membershipOf } from './teams';
+import { cleanList, parseStringList, PROJECT_LIMITS, type Project, type TeamContext } from '@/lib/projects';
 import { isDictationStyle, type DictationStyle } from '@/lib/transcription/dictation-style';
 
 type FolderRow = typeof folders.$inferSelect;
+
+/**
+ * Who sees and uses a project, and who changes it.
+ *
+ * A project is its creator's (`user_id`) until they share it with their team
+ * (`team_id`). Then every member of that team sees it, files their own
+ * recordings into it, and their transcripts and notes use its context. Its
+ * creator and the team's owners and admins edit, unshare and delete it.
+ * A shared project is the team's: a creator who leaves the team loses it with
+ * the team's other projects, and the team keeps it.
+ * Sharing never shows anyone else's recordings: those stay with their authors.
+ */
+const teamOf = (userId: string) => sql`(SELECT tm.team_id FROM team_members tm WHERE tm.user_id = ${userId})`;
+const managedTeamOf = (userId: string) =>
+  sql`(SELECT tm.team_id FROM team_members tm WHERE tm.user_id = ${userId} AND tm.role IN ('owner', 'admin'))`;
+
+/** Projects `userId` sees and may file into: their own unshared ones, and their team's. */
+function usable(userId: string): SQL {
+  return sql`((${folders.userId} = ${userId} AND ${folders.teamId} IS NULL) OR ${folders.teamId} = ${teamOf(userId)})`;
+}
+
+/**
+ * Projects `userId` may edit, unshare or delete: their own unshared ones, the
+ * ones they shared with the team they're still in, and their team's if they own or manage it.
+ */
+const editableCondition = (userId: string) =>
+  sql`((${folders.userId} = ${userId} AND (${folders.teamId} IS NULL OR ${folders.teamId} = ${teamOf(userId)})) OR ${folders.teamId} = ${managedTeamOf(userId)})`;
+
+function editable(userId: string): SQL {
+  return editableCondition(userId);
+}
+
+const canEditColumn = (userId: string) => sql<number>`coalesce(${editableCondition(userId)}, 0)`;
 
 export interface ProjectWithCount extends Project {
   recordingCount: number;
@@ -21,30 +55,39 @@ export function toProject(row: FolderRow): Project {
     match: parseStringList(row.matchJson),
     dictationStyle: isDictationStyle(row.dictationStyle) ? row.dictationStyle : null,
     dictationForAgents: row.dictationForAgents ?? null,
+    shared: row.teamId !== null,
   };
+}
+
+function withAccess(row: FolderRow, canEdit: unknown): Project {
+  return { ...toProject(row), canEdit: Boolean(Number(canEdit)) };
 }
 
 export async function listForUser(db: AppDb, userId: string): Promise<ProjectWithCount[]> {
   const rows = await db
     .select({
       folder: folders,
-      recordingCount: sql<number>`(select count(*) from meetings m where m.folder_id = "folders"."id" and m.deleted_at is null)`,
+      canEdit: canEditColumn(userId),
+      // Your own recordings in it: a shared project's other recordings are their authors'.
+      recordingCount: sql<number>`(select count(*) from meetings m where m.folder_id = "folders"."id" and m.user_id = ${userId} and m.deleted_at is null)`,
     })
     .from(folders)
-    .where(eq(folders.userId, userId))
-    .orderBy(asc(folders.sortOrder), asc(folders.name));
-  return rows.map((row) => ({ ...toProject(row.folder), recordingCount: Number(row.recordingCount) || 0 }));
+    .where(usable(userId))
+    // Your own first, then the team's.
+    .orderBy(sql`${folders.userId} <> ${userId}`, asc(folders.sortOrder), asc(folders.name));
+  return rows.map((row) => ({ ...withAccess(row.folder, row.canEdit), recordingCount: Number(row.recordingCount) || 0 }));
 }
 
+/** A project `userId` can see and use: their own or their team's. */
 export async function getForUser(db: AppDb, args: { id: string; userId: string }): Promise<Project | null> {
   const row = (
     await db
-      .select()
+      .select({ folder: folders, canEdit: canEditColumn(args.userId) })
       .from(folders)
-      .where(and(eq(folders.id, args.id), eq(folders.userId, args.userId)))
+      .where(and(eq(folders.id, args.id), usable(args.userId)))
       .limit(1)
   )[0];
-  return row ? toProject(row) : null;
+  return row ? withAccess(row.folder, row.canEdit) : null;
 }
 
 export async function getForMeeting(
@@ -55,6 +98,15 @@ export async function getForMeeting(
   return await getForUser(db, { id: meeting.folderId, userId: meeting.userId });
 }
 
+/** Everything a recording's transcript and notes are told about where it belongs: its project, and its author's team. */
+export async function contextForMeeting(
+  db: AppDb,
+  meeting: { folderId: string | null; userId: string },
+): Promise<{ project: Project | null; team: TeamContext | null }> {
+  const [project, team] = await Promise.all([getForMeeting(db, meeting), contextFor(db, meeting.userId)]);
+  return { project, team };
+}
+
 export interface ProjectInput {
   name?: string;
   about?: string | null;
@@ -63,9 +115,11 @@ export interface ProjectInput {
   match?: string[];
   dictationStyle?: DictationStyle | null;
   dictationForAgents?: boolean | null;
+  /** Share with the editor's team, or keep to the creator. */
+  shared?: boolean;
 }
 
-function columns(input: ProjectInput) {
+function columns(input: Omit<ProjectInput, 'shared'>) {
   return {
     ...(input.name !== undefined ? { name: input.name.trim().slice(0, PROJECT_LIMITS.name) } : {}),
     ...(input.about !== undefined ? { about: input.about?.trim().slice(0, PROJECT_LIMITS.about) || null } : {}),
@@ -79,7 +133,8 @@ function columns(input: ProjectInput) {
   };
 }
 
-export async function create(db: AppDb, userId: string, input: ProjectInput & { name: string }): Promise<string> {
+/** Makes a private project; share it afterwards with `update`. */
+export async function create(db: AppDb, userId: string, input: Omit<ProjectInput, 'shared'> & { name: string }): Promise<string> {
   const id = pid('proj');
   const now = Date.now();
   const last = (
@@ -102,40 +157,88 @@ export async function create(db: AppDb, userId: string, input: ProjectInput & { 
   return id;
 }
 
-export async function update(db: AppDb, args: { id: string; userId: string } & ProjectInput): Promise<boolean> {
-  const { id, userId, ...input } = args;
-  const result = await db
-    .update(folders)
-    .set({ ...columns(input), updatedAt: Date.now() })
-    .where(and(eq(folders.id, id), eq(folders.userId, userId)))
-    .returning({ id: folders.id });
-  return result.length > 0;
+export type UpdateResult = 'ok' | 'not_found' | 'forbidden' | 'no_team';
+
+/**
+ * Edits a project `userId` may edit. Sharing puts it in their own team; a
+ * teammate who can only use it gets `forbidden`. Unsharing takes it out of
+ * the teammates' recordings and captures, which stay theirs, unfiled.
+ */
+export async function update(db: AppDb, args: { id: string; userId: string } & ProjectInput): Promise<UpdateResult> {
+  const { id, userId, shared, ...input } = args;
+  const current = (
+    await db
+      .select({ ownerId: folders.userId, teamId: folders.teamId, canEdit: canEditColumn(userId) })
+      .from(folders)
+      .where(and(eq(folders.id, id), usable(userId)))
+      .limit(1)
+  )[0];
+  if (!current) return 'not_found';
+  if (!Number(current.canEdit)) return 'forbidden';
+  let teamId: string | null | undefined;
+  // Unsharing hands it back to its creator, or to whoever unshares it once the creator has left the team.
+  let ownerId = current.ownerId;
+  if (shared === true && current.teamId === null) {
+    teamId = (await membershipOf(db, userId))?.teamId ?? null;
+    if (!teamId) return 'no_team';
+  } else if (shared === false && current.teamId !== null) {
+    teamId = null;
+    if ((await membershipOf(db, current.ownerId))?.teamId !== current.teamId) ownerId = userId;
+  }
+  const writes = [
+    db
+      .update(folders)
+      .set({ ...columns(input), ...(teamId !== undefined ? { teamId, userId: ownerId } : {}), updatedAt: Date.now() })
+      // Compare-and-swap on the team it was read in, so a concurrent share or unshare doesn't land twice.
+      .where(and(eq(folders.id, id), editable(userId), current.teamId === null ? isNull(folders.teamId) : eq(folders.teamId, current.teamId))),
+  ] as const;
+  if (teamId === null) {
+    // Only if the project did go to `ownerId`: the permission is checked again in the write.
+    const unshared = sql`EXISTS (SELECT 1 FROM folders f WHERE f.id = ${id} AND f.team_id IS NULL AND f.user_id = ${ownerId})`;
+    await db.batch([
+      ...writes,
+      db.update(meetings).set({ folderId: null }).where(and(eq(meetings.folderId, id), ne(meetings.userId, ownerId), unshared)),
+      db.update(captures).set({ folderId: null }).where(and(eq(captures.folderId, id), ne(captures.userId, ownerId), unshared)),
+      db.update(meetingBots).set({ folderId: null }).where(and(eq(meetingBots.folderId, id), ne(meetingBots.userId, ownerId), unshared)),
+    ]);
+  } else {
+    await db.batch(writes);
+  }
+  return 'ok';
 }
 
-/** Deletes the project; its recordings stay and simply lose the project. */
+/** Deletes a project `userId` may edit; everyone's recordings in it stay, and simply lose the project. */
 export async function remove(db: AppDb, args: { id: string; userId: string }): Promise<boolean> {
   const deleted = await db
     .delete(folders)
-    .where(and(eq(folders.id, args.id), eq(folders.userId, args.userId)))
+    .where(and(eq(folders.id, args.id), editable(args.userId)))
     .returning({ id: folders.id });
   if (deleted.length === 0) return false;
-  await db
-    .update(meetings)
-    .set({ folderId: null })
-    .where(and(eq(meetings.userId, args.userId), eq(meetings.folderId, args.id)));
-  await db
-    .update(captures)
-    .set({ folderId: null })
-    .where(and(eq(captures.userId, args.userId), eq(captures.folderId, args.id)));
+  await db.batch([
+    db.update(meetings).set({ folderId: null }).where(eq(meetings.folderId, args.id)),
+    db.update(captures).set({ folderId: null }).where(eq(captures.folderId, args.id)),
+  ]);
   return true;
 }
 
-export async function ownsProject(db: AppDb, userId: string, projectId: string): Promise<boolean> {
+/** Names of the projects `userId` made themselves. */
+export async function ownNames(db: AppDb, userId: string): Promise<string[]> {
+  return (await db.select({ name: folders.name }).from(folders).where(eq(folders.userId, userId))).map((row) => row.name);
+}
+
+/** How many projects `userId` made themselves, shared or not: what the project limit counts. */
+export async function countOwn(db: AppDb, userId: string): Promise<number> {
+  const row = (await db.select({ n: sql<number>`count(*)` }).from(folders).where(eq(folders.userId, userId)))[0];
+  return Number(row?.n) || 0;
+}
+
+/** Whether `userId` may file things into this project: their own, or their team's. */
+export async function canUseProject(db: AppDb, userId: string, projectId: string): Promise<boolean> {
   const row = (
     await db
       .select({ id: folders.id })
       .from(folders)
-      .where(and(eq(folders.id, projectId), eq(folders.userId, userId)))
+      .where(and(eq(folders.id, projectId), usable(userId)))
       .limit(1)
   )[0];
   return Boolean(row);

@@ -24,6 +24,9 @@ export function parseProject(value: unknown): ProjectSummary | null {
     dictationStyle: isDictationStyle(value.dictationStyle) ? value.dictationStyle : null,
     dictationForAgents: typeof value.dictationForAgents === 'boolean' ? value.dictationForAgents : null,
     recordingCount: typeof value.recordingCount === 'number' ? value.recordingCount : 0,
+    shared: value.shared === true,
+    // Older servers don't say: everything they list is the reader's own.
+    canEdit: value.canEdit !== false,
   };
 }
 
@@ -31,7 +34,8 @@ async function json(response: Response): Promise<unknown> {
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => null);
     const code = isRecord(body) && typeof body.error === 'string' ? body.error : `status ${response.status}`;
-    throw new Error(code === 'too_many_projects' ? 'You have reached the project limit.' : `Server returned ${code}`);
+    const message = isRecord(body) && typeof body.message === 'string' ? body.message : null;
+    throw new Error(code === 'too_many_projects' ? 'You have reached the project limit.' : message ?? `Server returned ${code}`);
   }
   return await response.json();
 }
@@ -55,14 +59,16 @@ export async function createProject(fields: ProjectFields & { name: string }): P
   return project;
 }
 
-export async function updateProject(id: string, fields: ProjectFields): Promise<void> {
-  await json(
+/** Saves the fields; returns the project as the reader now sees it, or null once they no longer can (an admin unsharing a teammate's project). */
+export async function updateProject(id: string, fields: ProjectFields): Promise<ProjectSummary | null> {
+  const body = await json(
     await fetch(`/api/projects/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(fields),
     }),
   );
+  return isRecord(body) ? parseProject(body.project) : null;
 }
 
 export async function deleteProject(id: string): Promise<void> {

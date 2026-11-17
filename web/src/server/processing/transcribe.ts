@@ -7,7 +7,7 @@ import { meetings, meetingSegments, transcriptSegments, users } from '@/db/schem
 import * as projectsRepo from '@/db/repo/projects';
 import { upsertSummary } from '@/db/repo/summaries';
 import { summarizeMeeting, summarizeMeetingModel } from '@/lib/ai/summarize';
-import { combinedContext, projectTerms } from '@/lib/projects';
+import { combinedContext, contextTerms } from '@/lib/projects';
 import { resolveModelPlan } from '@/lib/providers/router';
 import { retryLanguage, spokenLanguages, whisperLanguage } from '@/lib/transcription/language';
 import { transcribeAudioFile } from '@/lib/transcription/transcribe-file';
@@ -66,13 +66,13 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
   const object = await env.AUDIO_BUCKET.get(meeting.audioR2Key);
   if (!object) throw new Error('recording audio object is missing');
   const entries = await dictionary.listForTranscription(db, meeting.userId);
-  const project = await projectsRepo.getForMeeting(db, meeting);
+  const { project, team } = await projectsRepo.contextForMeeting(db, meeting);
   const calendar = await loadMeetingContext(db, meeting);
   const transcription = await transcribeAudioFile({
     audio: new Uint8Array(await object.arrayBuffer()),
     language: meeting.language,
     contextBlurb: meeting.contextBlurb,
-    vocabulary: [...meetingVocabulary(calendar), ...entries.map(e => e.to), ...projectTerms(project), ...parseVocabulary(userRow?.customVocabularyJson).reverse()],
+    vocabulary: [...meetingVocabulary(calendar), ...entries.map(e => e.to), ...contextTerms(project, team), ...parseVocabulary(userRow?.customVocabularyJson).reverse()],
     spoken: userRow ? spokenLanguages(userRow) : [],
     ai: env.AI,
   });
@@ -121,7 +121,7 @@ export async function handleProcessRecording(meetingId: string, db: Db, env: Pro
     const plan = resolveModelPlan(user);
     const summary = await summarizeMeeting({
       transcript: fullText,
-      contextBlurb: combinedContext(meeting.contextBlurb, project) ?? undefined,
+      contextBlurb: combinedContext(meeting.contextBlurb, project, [], team) ?? undefined,
       openRouter: plan.openRouter,
       byoApiKey: plan.summary.apiKey ?? env.ANTHROPIC_API_KEY,
       model: plan.summary.model,
@@ -251,7 +251,7 @@ export async function handleTranscribeSegment(
           // The invite's names first: the words this meeting is surest to hear.
           ...meetingVocabulary(calendar),
           ...entries.map(e => e.to),
-          ...projectTerms(await projectsRepo.getForMeeting(db, meeting)),
+          ...(await projectsRepo.contextForMeeting(db, meeting).then(({ project, team }) => contextTerms(project, team))),
           ...prefs.vocabulary,
         ],
       };

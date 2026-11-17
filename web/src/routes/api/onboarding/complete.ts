@@ -44,8 +44,8 @@ export const Route = createFileRoute('/api/onboarding/complete')({
         }
 
         if (body.projects?.length) {
-          const existing = await projectsRepo.listForUser(db, actor.userId);
-          for (const name of newProjectNames(body.projects, existing.map((project) => project.name))) {
+          // Your own: a team project of the same name doesn't stand in for yours.
+          for (const name of newProjectNames(body.projects, await projectsRepo.ownNames(db, actor.userId))) {
             await projectsRepo.create(db, actor.userId, { name });
           }
         }

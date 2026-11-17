@@ -12,11 +12,12 @@ import { embedTexts } from '../../../web/src/lib/ai/embed';
 import { createTextDrop, DropTooLargeError } from '../../../web/src/server/create-drop';
 import { publishSync } from '../../../web/src/server/drops-hub';
 import * as capturesRepo from '../../../web/src/db/repo/captures';
+import * as projectsRepo from '../../../web/src/db/repo/projects';
+import * as teamsRepo from '../../../web/src/db/repo/teams';
 import { pid } from '../../../web/src/db/ids';
 import { captureKey } from '../../../web/src/server/r2';
 import { refreshAgentTranscriptLater } from '../../../web/src/server/agent-transcript-refresh';
 import { MAX_TEXT_BYTES } from '../../../web/src/server/drops';
-import { parseStringList } from '../../../web/src/lib/projects';
 import { parseSpeakerNames, speakerName } from '../../../web/src/lib/transcription/two-track';
 import { reportError, withErrorReporting } from '../../../web/src/server/observability';
 import { type QuotaScope, consumeRateLimit, refundRateLimit, userQuotaPolicy } from '../../../web/src/server/rate-limit-store';
@@ -747,7 +748,8 @@ const TOOL_DEFS: ToolDef[] = [
   {
     name: 'list_projects',
     description:
-      "List the user's projects (the codebases or clients they record about) with a short description, key terms and how many recordings each has.",
+      "List the user's projects (the codebases or clients they record about) with a short description, key terms and how many of the user's recordings each has. " +
+      'Projects their team shares are marked shared_with_team. What the whole team does and its terms are in get_account_info.',
     inputSchema: { type: 'object', properties: {} },
     annotations: READ_ONLY,
     scope: 'read',
@@ -1353,20 +1355,15 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
       }));
     }
     case 'list_projects': {
-      const rows = await db
-        .select({
-          folder: schema.folders,
-          recordings: sql<number>`(select count(*) from meetings m where m.folder_id = "folders"."id" and m.deleted_at is null)`,
-        })
-        .from(schema.folders)
-        .where(eq(schema.folders.userId, userId))
-        .orderBy(schema.folders.sortOrder, schema.folders.name);
-      return rows.map(({ folder, recordings }) => ({
-        name: folder.name,
-        about: folder.about,
-        terms: parseStringList(folder.vocabularyJson),
-        people: folder.people,
-        recordings: Number(recordings) || 0,
+      // The user's own projects, then the ones their team shares.
+      const projects = await projectsRepo.listForUser(db, userId);
+      return projects.map((project) => ({
+        name: project.name,
+        about: project.about,
+        terms: project.vocabulary,
+        people: project.people,
+        recordings: project.recordingCount,
+        ...(project.shared ? { shared_with_team: true } : {}),
       }));
     }
     case 'search_dictations': {
@@ -1442,9 +1439,14 @@ async function callTool(env: Env, userId: string, name: string, args: Record<str
       )[0];
       // An OAuth connection lasts as long as its refresh token; its access token is renewed well before.
       const connectionExpiresAt = token.clientId ? token.refreshExpiresAt : mcpTokenExpiresAt(token);
+      const [membership, teamContext] = await Promise.all([teamsRepo.membershipOf(db, userId), teamsRepo.contextFor(db, userId)]);
       return {
         email: user?.email ?? null,
         name: user?.displayName ?? null,
+        // The company or team the user records for, with what it does and the terms to spell its way.
+        team: membership
+          ? { name: membership.name, role: membership.role, about: teamContext?.about ?? null, terms: teamContext?.vocabulary ?? [] }
+          : null,
         connection: {
           name: token.name,
           access: parseMcpScopes(token.scopesJson),
@@ -1548,10 +1550,8 @@ const CAPTURE_LISTING = {
 };
 
 async function projectArg(db: Db, userId: string, value: unknown): Promise<{ projects: Project[]; project?: Project }> {
-  const projects = await db
-    .select({ id: schema.folders.id, name: schema.folders.name })
-    .from(schema.folders)
-    .where(eq(schema.folders.userId, userId));
+  // Own projects first, so a name shared with a team project picks the user's own.
+  const projects = (await projectsRepo.listForUser(db, userId)).map(({ id, name }) => ({ id, name }));
   const name = stringArg(value);
   if (!name) return { projects };
   const project = projects.find((p) => p.name.toLowerCase() === name.toLowerCase());
@@ -1826,10 +1826,11 @@ async function folderName(db: Db, userId: string, folderId: string | null): Prom
     await db
       .select({ name: schema.folders.name })
       .from(schema.folders)
-      .where(and(eq(schema.folders.id, folderId), eq(schema.folders.userId, userId)))
+      .where(eq(schema.folders.id, folderId))
       .limit(1)
   )[0];
-  return row?.name ?? null;
+  // Their own project or their team's: whichever it is, only if they can still use it.
+  return row && (await projectsRepo.canUseProject(db, userId, folderId)) ? row.name : null;
 }
 
 async function getMeeting(_env: Env, db: Db, userId: string, id: string, args: Record<string, unknown>) {
