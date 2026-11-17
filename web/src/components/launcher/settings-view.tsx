@@ -800,8 +800,8 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
 
         <div id="settings-shortcuts" hidden={section !== 'shortcuts'}>
         <Card title="Shortcuts">
-          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
-          <ShortcutRow shortcuts={shortcuts} action="assistant" hint="Hold and ask Eavesy something, or tap to start and stop. It answers on the pill and out loud; esc stops it talking." />
+          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={`${talkHint(shortcuts.bindings?.dictation ?? '')} Types into the app you’re in.`} />
+          <ShortcutRow shortcuts={shortcuts} action="assistant" hint="Hold and ask Eavesy something, or tap to start and stop. Nothing is typed into your app: it answers on the pill and out loud; esc stops it talking." />
           <ShortcutRow shortcuts={shortcuts} action="screen" hint="Start a screen recording with your microphone. Press it again to stop." />
           <ShortcutRow shortcuts={shortcuts} action="clipboard" hint="Open what you copied. Press return to paste it where you were." />
           <ShortcutRow shortcuts={shortcuts} action="screenshots" hint="Open your screenshots. Press return to paste one where you were." />
