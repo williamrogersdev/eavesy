@@ -314,6 +314,12 @@ fn start(app: &AppHandle, pressed_at: Instant, for_eavesy: bool, can_hold: bool)
             }
             if let Some(claim) = answering {
                 crate::agents::answer_with(&session.session_id, claim);
+                // Say so on the pill: these words go to the card, not the app in front.
+                use tauri::Emitter;
+                let _ = app.emit(
+                    crate::hud::EVENT_ANSWERING,
+                    serde_json::json!({ "sessionId": session.session_id, "name": crate::agents::answering_name(claim) }),
+                );
             }
             // Which mode started, and how: Talk, Talk to Eavesy, or a Talk an agent's
             // card took as its answer. "key" can be held (push-to-talk); "tap" toggles.
