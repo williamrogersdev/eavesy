@@ -575,6 +575,7 @@ pub fn set_hotkey(app: &AppHandle, action: Action, accelerator: &str, swap: bool
         apply(app, &mut settings, &current, &next)?;
         *suspended = false;
     }
+    report_change(Some(action), accelerator, swap);
     // Choosing fn is when to ask for Input Monitoring (fn alone) or
     // Accessibility (fn with a key): only for that choice, only once it's
     // saved, and outside the registry lock.
@@ -594,6 +595,7 @@ pub fn reset_all(app: &AppHandle) -> Result<(), HotkeyError> {
     let current = Bindings::of(&settings);
     apply(app, &mut settings, &current, &Bindings::defaults())?;
     *suspended = false;
+    report_change(None, "", false);
     Ok(())
 }
 
@@ -698,6 +700,69 @@ pub fn notice_app_conflicts(app: &AppHandle) {
         let Some(body) = startup_notice(&[], &lines) else { return };
         use tauri_plugin_notification::NotificationExt;
         let _ = app.notification().builder().title("A shortcut may not reach Eavesy").body(body).show();
+    });
+}
+
+/// How a shortcut is set, for analytics: the keys themselves (never anything
+/// the person typed or said), whether it is still the default, and fn.
+fn binding_kind(action: Action, accelerator: &str) -> &'static str {
+    if accelerator.is_empty() { "unbound" }
+    else if accelerator == FN { "fn" }
+    else if is_fn_chord(accelerator) { "fn_chord" }
+    else if same_keys(accelerator, action.default_accelerator()) { "default" }
+    else { "custom" }
+}
+
+/// Properties describing one shortcut and what else may hold it.
+fn binding_properties(props: &mut serde_json::Map<String, serde_json::Value>, prefix: &str, action: Action, accelerator: &str) {
+    props.insert(format!("{prefix}shortcut"), (if accelerator.is_empty() { "unbound" } else { accelerator }).into());
+    props.insert(format!("{prefix}kind"), binding_kind(action, accelerator).into());
+    let conflict = (!accelerator.is_empty()).then(|| crate::shortcut_conflicts::lookup(accelerator, true)).flatten();
+    let (kind, with) = match conflict {
+        Some(crate::shortcut_conflicts::Conflict::System { name }) => ("system", Some(name)),
+        Some(crate::shortcut_conflicts::Conflict::App { name }) => ("app", Some(name)),
+        Some(crate::shortcut_conflicts::Conflict::Globe { name }) => ("globe", Some(name)),
+        Some(crate::shortcut_conflicts::Conflict::Common { name }) => ("common", Some(name)),
+        None => ("none", None),
+    };
+    props.insert(format!("{prefix}conflict"), kind.into());
+    props.insert(format!("{prefix}conflict_with"), with.into());
+}
+
+/// Every shortcut as it stands at launch and what it may clash with, so a
+/// shortcut that never reaches Eavesy shows up in analytics even though it
+/// registered fine. Off the main thread: finding other apps' shortcuts reads
+/// their preferences.
+pub fn report_bindings(app: &AppHandle, failures: &[(Action, String, HotkeyError)]) {
+    let bindings = Bindings::of(&settings::load(app));
+    let failed: Vec<&'static str> = failures.iter().map(|(action, _, _)| action.key()).collect();
+    std::thread::spawn(move || {
+        let mut props = serde_json::Map::new();
+        let mut clashes = 0;
+        for action in Action::ALL {
+            binding_properties(&mut props, &format!("{}_", action.key()), action, bindings.get(action));
+            if props.get(&format!("{}_conflict", action.key())).and_then(|v| v.as_str()) != Some("none") { clashes += 1; }
+        }
+        props.insert("conflicts".into(), clashes.into());
+        props.insert("failed".into(), failed.into());
+        crate::telemetry::track("shortcuts_at_launch", serde_json::Value::Object(props));
+    });
+}
+
+/// A shortcut someone changed in Settings (or put back to its default).
+fn report_change(action: Option<Action>, accelerator: &str, swap: bool) {
+    let accelerator = accelerator.to_string();
+    std::thread::spawn(move || {
+        let mut props = serde_json::Map::new();
+        match action {
+            Some(action) => {
+                props.insert("action".into(), action.key().into());
+                props.insert("swap".into(), swap.into());
+                binding_properties(&mut props, "", action, &accelerator);
+            }
+            None => { props.insert("action".into(), "reset_all".into()); }
+        }
+        crate::telemetry::track("shortcut_changed", serde_json::Value::Object(props));
     });
 }
 
