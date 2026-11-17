@@ -10,7 +10,9 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ### Added
 
-- Mac app: make it obvious when the pill is talking to Eavesy or Claude ([#412](https://github.com/williamrogersdev/eavesy/pull/412))
+- Mac app: make it obvious when the pill is talking to Eavesy or Claude: "Asking Eavesy" and "Replying to Claude" with their own ring ([#412](https://github.com/williamrogersdev/eavesy/pull/412))
+- Mac app: Settings and setup suggest fn for Talk, setup lists Talk to Eavesy, and both talk shortcuts say where your words go ([#413](https://github.com/williamrogersdev/eavesy/pull/413))
+- Mac app: anonymous analytics on which talk mode was used, agent reply outcomes and shortcut clashes, so confusing spots show up ([#411](https://github.com/williamrogersdev/eavesy/pull/411))
 
 ## [0.11.0] - 2026-11-17 - desktop
 
