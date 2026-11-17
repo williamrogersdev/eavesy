@@ -393,15 +393,23 @@ fn emit_state(app: &AppHandle) {
     let _ = app.emit("moments:state", payload);
 }
 
+/// The highlighter opens on the element tool: it outlines what the pointer is
+/// on, a click highlights that, and a drag highlights a box instead.
 fn toggle(app: &AppHandle) -> Result<(), String> {
     let tool = live().as_ref().ok_or(NOT_RECORDING)?.tool;
     match tool {
-        None => use_tool(app, Tool::Area),
+        None => use_tool(app, Tool::Element),
         Some(_) => stop(app),
     }
 }
 
-const NOT_RECORDING: &str = "Marking works while a screen recording is running";
+/// How many displays are connected: with more than one, the control says
+/// which one a screen recording takes.
+pub fn display_count() -> usize {
+    imp::display_count()
+}
+
+const NOT_RECORDING: &str = "Highlighting works while a screen recording is running";
 const NOT_STARTED: &str = "The recording is still starting. Try again in a moment";
 
 fn use_tool(app: &AppHandle, tool: Tool) -> Result<(), String> {
@@ -510,7 +518,7 @@ fn element_point(point: Point, display: Rect) -> Result<Point, String> {
     }
     let global = Point { x: point.x + display.x, y: point.y + display.y };
     display.contains(global.x, global.y).then_some(global)
-        .ok_or_else(|| "Point inside the recorded display to tag it".into())
+        .ok_or_else(|| "Point inside the recorded display to highlight it".into())
 }
 
 /// A visible region remains taggable when an app exposes no accessible control.
@@ -530,7 +538,7 @@ fn add_mark(app: &AppHandle, kind: Kind, point: Option<Point>, target: Target) -
         let live = guard.as_mut().ok_or(NOT_RECORDING)?;
         let number = live.marks().filter_map(|p| p.mark).max().unwrap_or(0) + 1;
         if live.marks().count() >= MAX_MARKS {
-            return Err("That's as many marks as one recording holds".into());
+            return Err("That's as many highlights as one recording holds".into());
         }
         let display = live.display();
         let rect = target.rect.map(|rect| rect.moved(-display.x, -display.y));
@@ -567,7 +575,7 @@ pub fn mark_element(app: AppHandle, point: Option<Point>) -> Result<u32, String>
         Some(point) => { let global = element_point(point, display)?; (global.x, global.y) }
         None => imp::cursor(),
     };
-    let target = pointer_target(x, y, display).ok_or("Point inside the recorded display to tag it")?;
+    let target = pointer_target(x, y, display).ok_or("Point inside the recorded display to highlight it")?;
     add_mark(&app, Kind::Element, Some(Point { x, y }), target)
 }
 
@@ -593,7 +601,7 @@ pub fn undo_mark(app: AppHandle) -> Result<(), String> {
     {
         let mut guard = live();
         let live = guard.as_mut().ok_or(NOT_RECORDING)?;
-        let last = live.pending.iter().rposition(|p| p.mark.is_some()).ok_or("No tags to undo")?;
+        let last = live.pending.iter().rposition(|p| p.mark.is_some()).ok_or("No highlights to undo")?;
         live.pending.remove(last);
     }
     emit_state(&app);
@@ -673,6 +681,7 @@ mod imp {
         fn CGMainDisplayID() -> u32;
         fn CGDisplayBounds(display: u32) -> CGRect;
         fn CGGetDisplaysWithPoint(point: CGPoint, max: u32, displays: *mut u32, count: *mut u32) -> i32;
+        fn CGGetActiveDisplayList(max: u32, displays: *mut u32, count: *mut u32) -> i32;
         static kCGWindowOwnerPID: CFTypeRef;
         static kCGWindowBounds: CFTypeRef;
         static kCGWindowAlpha: CFTypeRef;
@@ -818,6 +827,12 @@ mod imp {
     pub fn main_display() -> Rect {
         let bounds = unsafe { CGDisplayBounds(CGMainDisplayID()) };
         Rect { x: bounds.origin.x, y: bounds.origin.y, width: bounds.size.width, height: bounds.size.height }
+    }
+
+    pub fn display_count() -> usize {
+        let mut count = 0u32;
+        let ok = unsafe { CGGetActiveDisplayList(0, std::ptr::null_mut(), &mut count) } == 0;
+        if ok { (count as usize).max(1) } else { 1 }
     }
 
     pub struct Own;
@@ -1097,7 +1112,7 @@ mod imp {
             let window = match app.get_webview_window("marker") {
                 Some(window) => window,
                 None => match tauri::WebviewWindowBuilder::new(&app, "marker", tauri::WebviewUrl::App("marker.html".into()))
-                    .title("Eavesy Marking")
+                    .title("Eavesy Highlighter")
                     .transparent(true)
                     .decorations(false)
                     .always_on_top(true)
@@ -1183,6 +1198,7 @@ mod imp {
     pub fn target_at(_x: f64, _y: f64, _skip_own: bool) -> Result<Option<Target>, Own> {
         Ok(None)
     }
+    pub fn display_count() -> usize { 1 }
     pub fn show_marker(_app: &AppHandle, _display: Rect) {}
     pub fn hide_marker(_app: &AppHandle) {}
 }

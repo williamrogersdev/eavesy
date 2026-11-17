@@ -1,13 +1,24 @@
 # Video walkthroughs for AI agents
 
 The desktop Screen button records the display, microphone narration, and computer
-sound. Microphone access is required by default. The existing compact capture toolbar is preserved. Recording starts only after a
-microphone buffer has actually reached the video writer. The recording pill shows
-whether the microphone signal is active or quiet. A quiet signal can mean that you
-are simply not speaking; it is not proof that the microphone is broken.
+sound. Microphone access is required by default. The existing compact capture toolbar is preserved.
 
-After Stop, Eavesy processes the recording in the background. The recording preview
-shows context readiness. The copied context and manifest include the screenshot timeline and capture/processing warnings. The
+Starting counts down first, on the pill: three seconds to put the pointer where
+the recording should begin. **Start now** (or the Record screen shortcut again)
+skips the rest; **×** cancels and nothing is recorded. With more than one display,
+the pill says that the screen the pointer is on is the one recorded. The pill,
+the panel and the shortcut all start the same way. Recording starts only after a
+microphone buffer has actually reached the video writer.
+
+While it records the pill is one row: the timer, the microphone, **Highlight**,
+cancel and **Stop**. The microphone icon shows whether the signal is active or
+quiet, and says **No mic** when no audio is arriving at all. A quiet signal can
+mean that you are simply not speaking; it is not proof that the microphone is broken.
+
+After Stop, the video is saved at once and Eavesy processes the recording in the
+background. The pill says **Saved · preparing** with the recording's length, then
+**Ready** (or **Partly ready**, with why in its tooltip), and stays up until then.
+**Copy** pressed early waits and copies as soon as the context is ready. The copied context and manifest include the screenshot timeline and capture/processing warnings. The
 ordinary **Copy** button and **⌘C** copy the full walkthrough context. **Paste into
 active app** and **⌘↵** use the same payload. There is no separate AI copy mode.
 Audio recordings continue to copy their transcript.
@@ -27,8 +38,8 @@ Each recording lives in `~/Eavesy/Recordings/<recording>/`:
 | `visual.json` | Local screenshot, OCR, and extracted audio-chunk index |
 | `audio/*.m4a` | Audio extracted in chunks of at most two minutes |
 | `audio/*.transcript.json` | Successful per-chunk responses for resumable retries |
-| `moments.json` | Clicks and tagged elements or areas, with app, page and element details |
-| `moments/*.jpg` | Close-ups of each click and tag, outlined in manila |
+| `moments.json` | Clicks and highlighted elements or areas, with app, page and element details |
+| `moments/*.jpg` | Close-ups of each click and highlight, outlined in manila |
 | `moments/crops.json` | Close-up paths and the text Vision read inside each one |
 
 Speech timestamps and screenshot timestamps share the original video's zero point.
@@ -58,14 +69,16 @@ pages, and the groups it sits inside). Each click also records where it happened
 the app, its window title or document, and, in browsers, the page URL and title.
 Values of secure text fields are never read.
 
-**Mark** in the recording pill (or **⌥H**) opens the marker over the screen.
-**Element** tags whatever is under the pointer when you click; **Area** tags a box
-you drag. Tags are numbered, shown on screen while you keep recording, and left out
-of the video like the rest of Eavesy's windows. **Undo tag** removes the last one;
-**esc** or **Done** closes the marker. Clicks made while the marker is open are not
-counted as clicks.
+**Highlight** in the recording pill (or **⌥H**) opens the highlighter over the
+screen. It outlines whatever is under the pointer: click to highlight that
+element, or drag to highlight a box instead. After one highlight it closes by
+itself, so the next click goes to the app again; hold **⇧** while you click or
+drag to keep it open for several. Highlights are numbered and left out of the
+video like the rest of Eavesy's windows. **Undo last** removes the newest one;
+**esc**, **Done** or ⌥H again closes the highlighter. Clicks made while it is
+open are not counted as clicks.
 
-After Stop, each click and tag gets a close-up from the video, the text Vision reads
+After Stop, each click and highlight gets a close-up from the video, the text Vision reads
 inside it, and the narration from 1.5 seconds before to 6 seconds after. `context.md`
 lists them under **What the user pointed at**, and the recording card shows them as
 **Evidence**. Clicks need no extra permission; the element details need the
@@ -167,14 +180,10 @@ browser chat receives the text and does not claim it has accessed local images.
 
 ## Highlight and clip while recording
 
-Click **Highlight** (or press **⌥H**) to open the highlighter over the recorded
-screen. **Area** is selected: drag a box around what matters. Release to save a
-numbered highlight; draw more boxes as needed. Narration continues while marking.
-Each box becomes an exact clipped image in the saved walkthrough, with nearby narration
-and screen text. **Done · esc** or Escape returns to normal screen interaction;
-**Stop** stays available and saves the recording, including its highlighted clips.
-
-Choose **Element** to outline a control under the pointer and click to tag it.
-If the app exposes no accessible control, Eavesy outlines a small screen region
-instead; use Area to choose exact bounds. Highlights on the overlay are guidance
-for you; clips and numbered tags are saved beside the original unobstructed video.
+Click **Highlight** (or press **⌥H**), then click the control you mean or drag a
+box around what matters. Narration continues meanwhile. Each highlight becomes an
+exact clipped image in the saved walkthrough, with nearby narration and screen
+text, and the highlighter puts itself away. If the app exposes no accessible
+control under a click, Eavesy saves a small screen region instead; drag a box to
+choose exact bounds. The outlines on the overlay are guidance for you; clips and
+numbered highlights are saved beside the original unobstructed video.

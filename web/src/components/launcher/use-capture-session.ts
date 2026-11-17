@@ -6,6 +6,7 @@ import {
   errMsg,
   getCaptureStatus,
   hidePanel,
+  showLauncher,
   onCaptureState,
   startAudioCapture,
   startScreenCapture,
@@ -98,17 +99,23 @@ export function useCaptureSession({ flash, runTask, projectIdRef, permissions, s
         setNotice(denied);
         return;
       }
+      // Video counts down on the control first: the panel goes at once, so
+      // the screen is clear before the recording starts. No session means the
+      // countdown was cancelled.
+      if (mode === 'screen') await hidePanel();
       const session = mode === 'screen'
         ? await startScreenCapture(opts?.mic ?? false)
         : await startAudioCapture(source, opts?.contextBlurb, opts?.dictation, projectIdRef.current);
       if (session) {
         setRecording({ session: { ...session, started_at_ms: session.started_at_ms ?? Date.now() }, mode });
-        // Talk pastes into the app underneath, and Video records the screen:
-        // both need the panel gone. A meeting keeps its live bar in view.
-        if (source === 'mic' || mode === 'screen') await hidePanel();
+        // Talk pastes into the app underneath: the panel goes. A meeting
+        // keeps its live bar in view.
+        if (source === 'mic' && mode !== 'screen') await hidePanel();
       }
     } catch (error) {
       setNotice({ ...startFailureNotice(errMsg(error, '')), retry });
+      // The panel went away for the countdown: bring it back to say why.
+      if (mode === 'screen') await showLauncher().catch(() => {});
     } finally {
       busy.current = false;
       setStarting(false);

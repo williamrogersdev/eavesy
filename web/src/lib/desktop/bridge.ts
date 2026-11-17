@@ -978,7 +978,8 @@ export async function startScreenCapture(
     window.location.href = '/app/record?mode=screen';
     return null;
   }
-  return invoke<CaptureSession>('start_screen_capture', { mic });
+  // Null when the countdown before the recording was cancelled.
+  return invoke<CaptureSession | null>('start_screen_capture', { mic });
 }
 
 export async function stopCapture(sessionId: string): Promise<void> {

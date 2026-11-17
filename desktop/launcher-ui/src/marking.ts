@@ -62,3 +62,17 @@ export function useMarking(preview: MarkingState = NO_MARKING): MarkingState {
 }
 
 export const clicksLabel = (clicks: number) => `${clicks} ${clicks === 1 ? 'click' : 'clicks'}`;
+
+/** A press that moves less than this is a click on what is outlined; further, it is a box. */
+export const DRAG_FROM = 8;
+
+/**
+ * What a press on the highlighter was: a click highlights the element under
+ * it, a drag highlights the box it drew, and a drag too thin to be a box is
+ * nothing. `dragging` is whether the press had already become a drag: one
+ * that comes back to where it started is still a drag.
+ */
+export function gesture(from: { x: number; y: number }, to: { x: number; y: number }, dragging: boolean): 'click' | 'box' | null {
+  if (!dragging && Math.hypot(to.x - from.x, to.y - from.y) < DRAG_FROM) return 'click';
+  return Math.abs(to.x - from.x) >= DRAG_FROM && Math.abs(to.y - from.y) >= DRAG_FROM ? 'box' : null;
+}

@@ -453,12 +453,134 @@ fn control_mode<'a>(mode: &'a str, source: &str, for_eavesy: bool) -> &'a str {
     }
 }
 
+/// How long the control counts down before a screen recording starts: time to
+/// put the pointer where the recording should begin.
+const SCREEN_COUNTDOWN: Duration = Duration::from_secs(3);
+
+#[derive(Clone, Copy, PartialEq)]
+enum Countdown {
+    Running,
+    StartNow,
+    Cancelled,
+}
+
+/// The countdown before a screen recording, while one is on the control.
+static COUNTDOWN: Mutex<Option<Countdown>> = Mutex::new(None);
+
+fn countdown() -> std::sync::MutexGuard<'static, Option<Countdown>> {
+    COUNTDOWN.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Ends a running countdown early: `StartNow` records at once, `Cancelled`
+/// puts the control back. Returns whether one was running.
+fn end_countdown(with: Countdown) -> bool {
+    let mut now = countdown();
+    let running = *now == Some(Countdown::Running);
+    if running {
+        *now = Some(with);
+    }
+    running
+}
+
+/// Start now on the countdown: the recording begins without the rest of it.
+#[tauri::command]
+pub fn skip_screen_countdown() {
+    end_countdown(Countdown::StartNow);
+}
+
+/// Cancel on the countdown: nothing is recorded.
+#[tauri::command]
+pub fn cancel_screen_countdown() {
+    end_countdown(Countdown::Cancelled);
+}
+
+/// A screen recording that was asked for and is not live yet: counting down
+/// (`ends_at_ms`), or opening the engine after it.
+fn starting_video(ends_at_ms: Option<i64>) -> crate::hud::HudState {
+    crate::hud::HudState {
+        phase: crate::hud::Phase::Recording,
+        session_id: None,
+        mode: Some("video".to_string()),
+        started_at_ms: ends_at_ms,
+        message: None,
+        // More than one display: the control says which one is recorded.
+        notice: (ends_at_ms.is_some() && crate::moments::display_count() > 1)
+            .then(|| "Records the screen your pointer is on".to_string()),
+    }
+}
+
+fn is_starting_video(now: &crate::hud::HudState) -> bool {
+    now.phase == crate::hud::Phase::Recording && now.session_id.is_none() && now.mode.as_deref() == Some("video")
+}
+
+/// What a countdown does next, from what was asked of it and what the control shows.
+fn countdown_step(asked: Option<Countdown>, still_shown: bool, time_up: bool) -> Option<bool> {
+    match asked {
+        Some(Countdown::Cancelled) => Some(false),
+        // Another capture or a meeting prompt took the control: stand down.
+        _ if !still_shown => Some(false),
+        Some(Countdown::StartNow) => Some(true),
+        _ if time_up => Some(true),
+        _ => None,
+    }
+}
+
+/// Counts down on the control. Returns whether to record: not when it was
+/// cancelled or something else took the control meanwhile.
+fn count_down(app: &AppHandle, state: &State<'_, Captures>) -> Result<bool, String> {
+    if state.is_busy() {
+        return Err(ALREADY_CAPTURING.to_string());
+    }
+    // A control kept off screen has nowhere to count: record at once, as before.
+    if !crate::hud::shows_recordings(app) {
+        return Ok(true);
+    }
+    {
+        let mut now = countdown();
+        if now.is_some() {
+            return Err(ALREADY_CAPTURING.to_string());
+        }
+        *now = Some(Countdown::Running);
+    }
+    // Whatever ends this, the next recording can count down again.
+    struct Counting;
+    impl Drop for Counting {
+        fn drop(&mut self) {
+            *countdown() = None;
+        }
+    }
+    let _counting = Counting;
+    crate::hud::set_state(app, starting_video(Some(now_ms() + SCREEN_COUNTDOWN.as_millis() as i64)));
+    let deadline = Instant::now() + SCREEN_COUNTDOWN;
+    let record = loop {
+        let asked = *countdown();
+        if let Some(record) = countdown_step(asked, is_starting_video(&crate::hud::current()), Instant::now() >= deadline) {
+            break record;
+        }
+        std::thread::sleep(Duration::from_millis(40));
+    };
+    // A Cancel that landed after the last look still counts.
+    let record = record && countdown().take() != Some(Countdown::Cancelled);
+    if record {
+        // "Starting…" while the engine opens the screen and the mic.
+        Ok(crate::hud::set_state_if(app, starting_video(None), is_starting_video))
+    } else {
+        crate::hud::set_state_if(app, crate::hud::HudState::idle(), is_starting_video);
+        Ok(false)
+    }
+}
+
+/// Starts a screen recording after a short countdown on the control. `None`
+/// when the countdown was cancelled.
 #[tauri::command(async)]
 pub fn start_screen_capture(
     app: AppHandle,
     state: State<'_, Captures>,
     mic: Option<bool>,
-) -> Result<CaptureSession, String> {
+) -> Result<Option<CaptureSession>, String> {
+    if !count_down(&app, &state)? {
+        return Ok(None);
+    }
     let result = spawn_capture(
         &app,
         &state,
@@ -473,14 +595,33 @@ pub fn start_screen_capture(
         Ok(_) => {
             crate::telemetry::track("recording_started", serde_json::json!({ "kind": "screen" }))
         }
-        Err(error) => crate::telemetry::capture("capture.start_screen", error),
+        Err(error) => {
+            // Never leave the control on "Starting…" for a recording that isn't coming.
+            crate::hud::set_state_if(&app, crate::hud::HudState::idle(), is_starting_video);
+            crate::telemetry::capture("capture.start_screen", error);
+        }
     }
-    result
+    result.map(Some)
+}
+
+/// Screen Recording and Microphone, asked for before the countdown so it
+/// never counts down to a refusal. A check that could not run is left to the
+/// engine, which says what is wrong.
+fn screen_recording_allowed(app: &AppHandle) -> Result<(), String> {
+    match check_permissions_inner(app.clone(), true, true, false) {
+        Ok(permissions) if !permissions.mic => Err("Microphone access is off. Turn it on in System Settings → Privacy & Security → Microphone.".into()),
+        Ok(permissions) if !permissions.screen => Err("Screen Recording access is off. Turn it on in System Settings → Privacy & Security → Screen & System Audio Recording.".into()),
+        _ => Ok(()),
+    }
 }
 
 /// The Record screen shortcut: starts a screen recording with the mic, or
 /// stops the one running. Another capture in progress is left alone.
 pub fn toggle_screen_recording(app: &AppHandle) {
+    // A press during the countdown, whoever started it, records now.
+    if end_countdown(Countdown::StartNow) {
+        return;
+    }
     // One press at a time: a second press while the first is still starting
     // or stopping is dropped, not raced.
     static BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -492,7 +633,9 @@ pub fn toggle_screen_recording(app: &AppHandle) {
         let press = screen_press(&crate::hud::current());
         let result = match &press {
             ScreenPress::Stop(session_id) => stop_capture(app.clone(), app.state::<Captures>(), session_id.clone()).map(|_| ()),
-            ScreenPress::Start => start_screen_capture(app.clone(), app.state::<Captures>(), Some(true)).map(|_| ()),
+            ScreenPress::Start => screen_recording_allowed(&app)
+                .and_then(|()| start_screen_capture(app.clone(), app.state::<Captures>(), Some(true)))
+                .map(|_| ()),
             ScreenPress::Nothing => Ok(()),
         };
         BUSY.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -2005,6 +2148,32 @@ mod tests {
         assert_eq!(screen_press(&live("video", Some("s1"))), ScreenPress::Stop("s1".into()));
         assert_eq!(screen_press(&live("video", None)), ScreenPress::Nothing, "still starting");
         assert_eq!(screen_press(&live("audio", Some("s2"))), ScreenPress::Nothing, "a dictation or meeting");
+    }
+
+    #[test]
+    fn the_countdown_records_when_time_is_up_or_start_now_is_pressed() {
+        assert_eq!(countdown_step(Some(Countdown::Running), true, false), None, "still counting");
+        assert_eq!(countdown_step(Some(Countdown::Running), true, true), Some(true));
+        assert_eq!(countdown_step(Some(Countdown::StartNow), true, false), Some(true));
+    }
+
+    #[test]
+    fn the_countdown_records_nothing_when_cancelled_or_the_control_moved_on() {
+        assert_eq!(countdown_step(Some(Countdown::Cancelled), true, true), Some(false), "cancel wins over time up");
+        // A dictation or a meeting prompt took the control meanwhile.
+        assert_eq!(countdown_step(Some(Countdown::Running), false, true), Some(false));
+        assert_eq!(countdown_step(Some(Countdown::StartNow), false, false), Some(false));
+    }
+
+    #[test]
+    fn only_a_screen_recording_that_is_not_live_yet_counts_as_starting() {
+        use crate::hud::{HudState, Phase};
+        assert!(is_starting_video(&starting_video(None)));
+        assert!(is_starting_video(&HudState { started_at_ms: Some(1), ..starting_video(None) }));
+        assert!(!is_starting_video(&HudState { session_id: Some("s1".into()), ..starting_video(None) }), "live");
+        assert!(!is_starting_video(&HudState { mode: Some("audio".into()), ..starting_video(None) }), "a dictation opening");
+        assert!(!is_starting_video(&HudState { phase: Phase::Done, ..starting_video(None) }));
+        assert!(!is_starting_video(&HudState::idle()));
     }
 
     #[test]
