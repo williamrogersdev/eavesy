@@ -604,7 +604,9 @@ the pill can't jitter or flip while words arrive.
 
 | Size | Px | Used for |
 |---|---|---|
-| pill | 300 × 36 | idle, saved, video recording, a plain "Saved" |
+| pill | 300 × 36 | idle, saved, a video being written, a plain "Saved" |
+| video | 400 × 36 | a screen recording, one row. Before it starts: the count (3, 2, 1, never red), what will be recorded, **Start now** and ×. Live: the light, the time, the mic, **Highlight** (manila while the highlighter is out, when it reads **Done**), the number of highlights, Cancel and Stop. An error takes Highlight's place for a few seconds |
+| clip | 380 × 36 | a saved screen recording: **Saved · preparing**, then **Ready** with its length and highlights (or **Partly ready**), Open, Copy, collapse and ×. It stays until it is ready; Copy pressed early copies when it is |
 | bar | 340 × 40 | recording and writing with live words off (the default): the light, the time, the voice bars, the write chip, Cancel and Stop. The light and Stop are never cut off: the chip shortens its own name first |
 | options | bar or wide width × 256 | a dictation being recorded with its options open: the six ways it is written, then **Type as I talk** |
 | wide | 400 × 62 + 20 per line | recording and writing with 1, 2 or 4 lines of live words, failed, a save that wasn't typed (**Not typed** and why) |

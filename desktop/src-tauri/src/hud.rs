@@ -240,8 +240,10 @@ const RESULT: (f64, f64) = (400.0, 176.0);
 /// A finished dictation at rest: the pill with what happened to the words
 /// ("Pasted · 16 words", "Copied", "Not pasted" and Allow).
 const RECEIPT: (f64, f64) = (248.0, 36.0);
-/// A screen recording: room for the click count, Mark and the marking tools.
-const VIDEO_LIVE: (f64, f64) = (420.0, 76.0);
+/// A screen recording: one row, with the timer, Highlight, cancel and Stop.
+const VIDEO_LIVE: (f64, f64) = (400.0, 36.0);
+/// A saved screen recording: how long it is, whether it is ready, Open and Copy.
+const VIDEO_DONE: (f64, f64) = (380.0, 36.0);
 /// A screenshot just taken, with its thumbnail.
 const SHOT: (f64, f64) = (360.0, 172.0);
 
@@ -267,7 +269,7 @@ pub fn size_for(state: &HudState, lines: u8, peek: bool, options: bool) -> (f64,
         Phase::Done => match state.mode.as_deref() {
             Some("image") => SHOT,
             _ if eavesy => RESULT,
-            Some("video") => DEFAULT_SIZE,
+            Some("video") => VIDEO_DONE,
             _ if state.message.as_deref().is_some_and(|text| !text.trim().is_empty()) => if peek { RESULT } else { RECEIPT },
             _ if state.notice.is_some() => WIDE,
             _ => DEFAULT_SIZE,
@@ -550,6 +552,12 @@ pub fn set_peek(app: &AppHandle, session_id: String, open: bool) {
 
 /// The user closed the control with its X: it stays hidden while idle, until
 /// the panel folds back into it, which brings the pill back.
+/// Whether the control comes up for a recording: not when Settings keeps it
+/// off screen ("Never").
+pub fn shows_recordings(app: &AppHandle) -> bool {
+    !prefs(app).quiet
+}
+
 pub fn hidden_by_user(app: &AppHandle) -> bool {
     prefs(app).hidden
 }
@@ -1128,7 +1136,7 @@ mod imp {
 
 #[cfg(test)]
 mod tests {
-    use super::{Prefs, OPTIONS_HEIGHT, meeting_size, meeting_wanted, MEETING_MAX, MEETING_MIN, anchored, is_active, keeps_tuck, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, MEETING, MEETING_MODE, RECEIPT, RESULT, SHOT, VIDEO_LIVE, WIDE};
+    use super::{Prefs, OPTIONS_HEIGHT, meeting_size, meeting_wanted, MEETING_MAX, MEETING_MIN, anchored, is_active, keeps_tuck, live_size, opens_by_itself, receipt, refit, refit_cocoa, resting, settle_left, size_for, HudFrame, Placement, FOCUS_SETTLE, HudState, Phase, BAR, DEFAULT_SIZE, MEETING, MEETING_MODE, RECEIPT, RESULT, SHOT, VIDEO_DONE, VIDEO_LIVE, WIDE};
 
     #[test]
     fn a_hidden_recording_stays_hidden_until_it_fails_or_ends() {
@@ -1287,9 +1295,11 @@ mod tests {
     }
 
     #[test]
-    fn a_screen_recording_makes_room_for_clicks_and_marking() {
+    fn a_screen_recording_is_one_row_live_and_saved() {
         assert_eq!(size_for(&state(Phase::Recording, Some("video"), None), 4, false, false), VIDEO_LIVE);
-        assert_eq!(VIDEO_LIVE, (420.0, 76.0));
+        assert_eq!(VIDEO_LIVE, (400.0, 36.0));
+        assert_eq!(size_for(&state(Phase::Done, Some("video"), None), 4, false, false), VIDEO_DONE);
+        assert_eq!(VIDEO_DONE, (380.0, 36.0));
     }
 
     #[test]

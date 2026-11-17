@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, ArrowDown, ArrowUp, Camera, Check, ChevronDown, Clapperboard, ClipboardList, Copy, EyeOff, History, House, Languages, Maximize2, Mic, MicOff, Minus, MousePointer2, MousePointerClick, Search, ShieldCheck, Square, SquareDashed, Users, Volume2, X } from 'lucide-react';
+import { AudioLines, ArrowDown, ArrowUp, Camera, Check, ChevronDown, Clapperboard, ClipboardList, Copy, EyeOff, History, House, Languages, Maximize2, Mic, MicOff, Highlighter, Minus, Search, ShieldCheck, Square, Users, Volume2, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import type { LiveRow } from '@/lib/desktop/live-captions';
 import { clock } from '@/components/launcher/history-model';
@@ -67,7 +67,7 @@ document.body.style.background = 'transparent';
  * The control's shape in each phase, the same as `size_for` in hud.rs: the
  * window takes that size when the phase changes, and this lays it out.
  */
-type Size = 'pill' | 'receipt' | 'bar' | 'wide' | 'result' | 'shot' | 'video' | 'meeting';
+type Size = 'pill' | 'receipt' | 'bar' | 'wide' | 'result' | 'shot' | 'video' | 'clip' | 'meeting';
 
 /** How the control looks, from Settings → Pill: lines of live words, its colour, and how solid it is (percent). */
 type Look = { lines: 0 | 1 | 2 | 4 | 8; tint: string; opacity: number };
@@ -171,13 +171,13 @@ function sizeFor(state: HudState, lines: Look['lines'], peek: boolean): Size {
     case 'done':
       if (state.mode === 'image') return 'shot';
       if (state.mode === EAVESY_MODE) return 'result';
-      if (video) return 'pill';
+      if (video) return 'clip';
       if (state.message?.trim()) return peek ? 'result' : 'receipt';
       return state.notice ? 'wide' : 'pill';
   }
 }
 
-const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [300, 36], receipt: [248, 36], bar: [340, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [420, 76], meeting: [400, 380] };
+const PREVIEW_SIZES: Record<Size, [number, number]> = { pill: [300, 36], receipt: [248, 36], bar: [340, 40], wide: [400, 142], result: [400, 176], shot: [360, 172], video: [400, 36], clip: [380, 36], meeting: [400, 380] };
 
 function browserPreviewState(): HudState | null {
   if (tauri()) return null;
@@ -195,7 +195,8 @@ function browserPreviewState(): HudState | null {
     written: phase === 'done' && mode === 'audio' && !params.has('untold') ? { ...browserPreviewWriting() ?? PLAIN, projectId: params.get('project'), applied: !params.has('plain') } : null,
     opensItself: phase === 'done' && mode === 'audio' && !params.has('opening') && !params.has('receipt') && !params.get('notice')?.includes('Accessibility'),
     // A meeting prompt counts down to its deadline (`?ask` only asks).
-    startedAtMs: phase === 'prompt' ? (params.has('ask') ? null : Date.now() + 9_000) : Date.now() - 78_000,
+    // `?video&opening&countdown` is the count before a screen recording; without `countdown` it is "Starting…".
+    startedAtMs: phase === 'prompt' ? (params.has('ask') ? null : Date.now() + 9_000) : params.has('opening') ? (params.has('countdown') ? Date.now() + 3_000 : null) : Date.now() - 78_000,
     message: phase === 'done' && mode === 'audio'
       ? params.has('long')
         ? Array.from({ length: Number(params.get('long')) || 12 }, (_, i) => `Point ${i + 1}: lead with the mascot, keep one screenshot instead of three, and end on the shortcut so people try it straight away.`).join(' ')
@@ -587,6 +588,23 @@ function Hud() {
     return () => window.clearInterval(id);
   }, [state?.phase]);
   const mic = useMicSignal(state?.sessionId ?? null, live && state?.mode === 'video', now);
+  // The count before a screen recording: `startedAtMs` is when it ends.
+  const countingTo = state?.phase === 'recording' && state.mode === 'video' && !state.sessionId ? state.startedAtMs ?? null : null;
+  useEffect(() => {
+    if (countingTo === null) return;
+    setNow(Date.now());
+    const id = window.setInterval(() => setNow(Date.now()), 100);
+    return () => window.clearInterval(id);
+  }, [countingTo]);
+  // A screen recording has one row: an error there gives it back after a moment.
+  const videoError = !!actionError && state?.phase === 'recording' && state.mode === 'video';
+  useEffect(() => {
+    if (!videoError) return;
+    const timer = window.setTimeout(() => setActionError(null), IDLE_ERROR_MS);
+    return () => window.clearTimeout(timer);
+  }, [videoError, actionError]);
+  // How the screen recording went, kept for the pill it leaves when it stops.
+  const videoFacts = useRef<{ sessionId: string; seconds: number; highlights: number } | null>(null);
 
   // Errors show in the phase's own status slot, never in place of its controls.
   // The idle pill has no slot to spare, so there it stands in for the capture
@@ -772,6 +790,9 @@ function Hud() {
 
   useEffect(() => {
     if (!state || editing || finding || choosing || saving || saveError || rewriting || pendingEdit.current || !HELD_PHASES.includes(state.phase)) return;
+    // A saved screen recording stays until it is ready to copy (its notice
+    // says so), and while a Copy is waiting on that.
+    if (state.phase === 'done' && state.mode === 'video' && (!state.notice || copying)) return;
     const hold = holdMs(state.phase, pointer, overSince.current, Date.now(), receipt, state.phase === 'saved' && !!state.notice);
     if (hold === null) return;
     const sessionId = state.sessionId;
@@ -780,7 +801,7 @@ function Hud() {
       else setState({ ...state, phase: 'idle', message: null, notice: null });
     }, hold);
     return () => window.clearTimeout(timeout);
-  }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, finding, choosing, saving, saveError, draft, saveRevision, receipt, rewriting]);
+  }, [state?.phase, state?.sessionId, pointer, pointerMoved, editing, finding, choosing, saving, saveError, draft, saveRevision, receipt, rewriting, state?.mode, state?.notice, copying]);
 
   const cancelPeekDwell = () => {
     if (peekDwell.current !== null) window.clearTimeout(peekDwell.current);
@@ -1378,16 +1399,27 @@ function Hud() {
     };
     const elapsedSec = Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000));
     const cancelDisabled = opening || !state.sessionId || stopping === state.sessionId;
-    top = (
+    if (video && state.sessionId && marking.sessionId === state.sessionId) videoFacts.current = { sessionId: state.sessionId, seconds: elapsedSec, highlights: marking.marks.length };
+    const countdown = video && opening && state.startedAtMs ? Math.max(1, Math.ceil((state.startedAtMs - now) / 1000)) : null;
+    if (countdown !== null) top = (
       <>
-        {opening ? (!video && errorSay) || <span className="ctl-say ctl-quiet ctl-breathe">Starting…</span> : (
+        <span className="ctl-count-in" aria-hidden>{countdown}</span>
+        <span className="ctl-say" role="status" aria-label={`Recording starts in ${countdown}`}>{notice ? 'Recording the screen your pointer is on' : 'Recording your screen and mic'}</span>
+        <span className="ctl-fill" />
+        <button type="button" onClick={() => act('skip_screen_countdown')} title="Skip the countdown and record now" className="ctl-btn">Start now</button>
+        <button type="button" onClick={() => act('cancel_screen_countdown')} aria-label="Cancel" title="Cancel: nothing is recorded" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>
+      </>
+    );
+    else top = (
+      <>
+        {opening ? (!video && errorSay) || <span className="ctl-say ctl-quiet ctl-breathe" title={video ? 'macOS may ask for screen and microphone access first' : undefined}>Starting…</span> : (
           <>
             <span className="ctl-rec" aria-hidden />
             <span className="ctl-timer">{clock(elapsedSec)}</span>
-            {video && marking.tool ? null : video ? <MicState heard={mic.heard} silent={mic.silent} /> : errorSay ?? <VoiceBars level={voice} />}
+            {video ? errorSay ?? <MicState heard={mic.heard} silent={mic.silent} /> : errorSay ?? <VoiceBars level={voice} />}
           </>
         )}
-        {video && !opening && <Marking state={marking} act={act} />}
+        {video && !opening && !errorSay && <Marking state={marking} act={act} />}
         {eavesy && !opening && <Stamp tone="manila" fit>Eavesy’s listening</Stamp>}
         {meeting && !opening && <span className="ctl-say" role="status">Recording meeting</span>}
         <span className="ctl-fill" />
@@ -1404,13 +1436,6 @@ function Hud() {
     );
     const noLiveWords = !!state.sessionId && captionsOff === state.sessionId;
     const doneHint = eavesy ? (talkShortcut ? `tap ${talkShortcut} to send` : 'press Stop to send') : shortcut ? `tap ${shortcut} to paste` : 'press Stop to paste';
-    if (video) below = <div className="ctl-video-help">
-      {!opening && !marking.tool && !actionError && <span className="ctl-video-count" title="Clicks are saved automatically. Highlights are tags you added."><MousePointerClick className="h-3 w-3" />{clicksLabel(marking.clicks)}{marking.marks.length > 0 ? ` · ${marking.marks.length} tags` : ''}</span>}
-      <span role={actionError ? 'alert' : 'status'} className={actionError ? 'ctl-warn' : undefined} title={actionError ?? undefined}>
-        {actionError ?? (opening ? 'Allow screen and microphone access to begin.' : marking.tool === 'element' ? 'Point, then click to tag. Area lets you drag a box.' : marking.tool === 'area' ? 'Drag a box to tag a region. Narration stays on.' : 'Screen + mic are recording. Highlight → drag a box.')}
-      </span>
-      {actionError ? <button className="ctl-btn" onClick={() => setActionError(null)}>Dismiss</button> : marking.tool && <button className="ctl-btn" onClick={() => act('stop_marking')}>Done · esc</button>}
-    </div>;
     if (meeting) below = <MeetingPanel sessionId={state.sessionId ?? null} rows={lines.length ? lines : PREVIEW_MEETING} startedAtMs={state.startedAtMs ?? null} releaseKeys={() => void releaseEditor(state.sessionId)} empty={actionError ?? (opening ? 'Opening the mic…' : noLiveWords ? 'Live words are off on this Mac. The meeting is still recording, and its transcript is written when you press Stop.' : 'Recording both sides of the call. What is said shows up here.')} />;
     else if (dictating && choosing && !opening && !rowOnly) below = (
       <div className="ctl-options">
@@ -1442,10 +1467,22 @@ function Hud() {
       {talkShortcut && <p className="ctl-reply-hint">Press {talkShortcut} to reply.</p>}
     </>;
   } else if (state.phase === 'done' && video) {
-    top = <>{errorSay ?? <span className="ctl-say ctl-quiet" title={notice ?? undefined}>{copying ? 'Preparing…' : copied ? 'Copied' : 'Saved'}</span>}
+    // Saved at once; the narration and screen text Copy carries take a little longer.
+    const facts = videoFacts.current?.sessionId === state.sessionId ? videoFacts.current : null;
+    const length = facts ? clock(facts.seconds) : null;
+    const highlights = facts && facts.highlights > 0 ? `${facts.highlights} ${facts.highlights === 1 ? 'highlight' : 'highlights'}` : null;
+    const ready = !!notice;
+    const partly = !!notice?.startsWith('Partly');
+    const dots = <span className="ctl-dots" aria-hidden><i /><i /><i /></span>;
+    top = <>{errorSay
+      ?? (copied ? <><Stamp tone="manila">Copied</Stamp><span className="ctl-say ctl-quiet">⌘V to paste</span></>
+      : copying ? <span className="ctl-say ctl-quiet" role="status">{ready ? 'Copying' : 'Copies when it’s ready'}{dots}</span>
+      : partly ? <><Stamp tone="warn" title={notice ?? undefined}>Partly ready</Stamp>{length && <span className="ctl-say ctl-quiet">{length}</span>}</>
+      : ready ? <><Stamp tone="leaf" title={notice ?? undefined}>Ready</Stamp><span className="ctl-say ctl-quiet">{[length, highlights].filter(Boolean).join(' · ')}</span></>
+      : <span className="ctl-say ctl-quiet" role="status" title="The video is saved. Eavesy is reading the narration and the screen so Copy carries both.">Saved{length ? ` ${length}` : ''} · preparing{dots}</span>)}
       <span className="ctl-fill" />
-      <button type="button" className="ctl-btn" onClick={() => act('show_launcher')} aria-label="Open recording"><Maximize2 className="h-3.5 w-3.5" /></button>
-      <button type="button" className="ctl-btn" disabled={copying} onClick={() => copy('copy_capture_media', { id: state.sessionId })}><Copy className="h-3.5 w-3.5" />Copy</button>{minimize}{close}</>;
+      <button type="button" className="ctl-btn ctl-icon" onClick={() => act('show_launcher')} aria-label="Open recording" title="Open the recording"><Maximize2 className="h-3.5 w-3.5" /></button>
+      <button type="button" className="ctl-btn" disabled={copying} title={ready ? 'Copy the walkthrough: narration, screen text and highlights' : 'Copies as soon as the walkthrough is ready'} onClick={() => copy('copy_capture_media', { id: state.sessionId })}><Copy className="h-3.5 w-3.5" />Copy</button>{minimize}{close}</>;
   } else if (state.phase === 'done' && state.mode === 'image') {
     top = (
       <>
@@ -1810,32 +1847,25 @@ function isOpening(state: HudState): boolean {
 function MicState({ heard, silent }: { heard: boolean; silent: boolean }) {
   const label = silent ? 'No microphone audio is arriving' : heard ? 'Mic active' : 'Mic quiet';
   const Icon = silent ? MicOff : Mic;
-  return <span className="ctl-mic" data-heard={heard || undefined} role="img" aria-label={label} title={label}><Icon className="h-3.5 w-3.5" /></span>;
+  return <span className="ctl-mic" data-heard={heard || undefined} data-silent={silent || undefined} role="img" aria-label={label} title={silent ? 'No microphone audio is arriving. Check the input in System Settings → Sound.' : label}><Icon className="h-3.5 w-3.5" />{silent && <span>No mic</span>}</span>;
 }
 
 /**
- * A screen recording's evidence: clicks are noted on their own, and Mark brings
- * out the marker to tag an element or an area. Tags are manila, never coral.
+ * Highlight, on a screen recording: one button opens the highlighter over the
+ * screen and closes it again. Clicks are noted on their own. Highlights are
+ * manila, never coral.
  */
 function Marking({ state, act }: { state: MarkingState; act: (cmd: string, args?: Record<string, unknown>) => void }) {
-  const tags = state.marks.length;
-  const tagCount = tags > 0 && <span className="ctl-tag" title={`${tags} tagged`} aria-label={`${tags} tagged`}>{tags}</span>;
-  if (state.tool) return (
-    <>
-      <span className="ctl-sep" aria-hidden />
-      <span className="ctl-seg" role="group" aria-label="What to tag">
-        <button type="button" aria-pressed={state.tool === 'element'} onClick={() => act('set_marking_tool', { tool: 'element' })} className="ctl-seg-btn"><MousePointer2 className="h-3 w-3" />Element</button>
-        <button type="button" aria-pressed={state.tool === 'area'} onClick={() => act('set_marking_tool', { tool: 'area' })} className="ctl-seg-btn"><SquareDashed className="h-3 w-3" />Area</button>
-      </span>
-      {tagCount}
-    </>
-  );
+  const count = state.marks.length;
+  const open = !!state.tool;
   return (
     <>
       <span className="ctl-sep" aria-hidden />
-      <button type="button" onClick={() => act('toggle_marking')} title={`Draw a box to highlight and clip part of the screen${state.shortcut ? ` (${state.shortcut})` : ''}`} className="ctl-btn ctl-marker">
-        <Search className="h-3.5 w-3.5" />Highlight{state.shortcut && <kbd className="ctl-kbd">{state.shortcut}</kbd>}
+      <button type="button" aria-pressed={open} onClick={() => act('toggle_marking')} className="ctl-btn ctl-marker"
+        title={open ? 'Close the highlighter and go back to clicking (esc)' : `Highlight something on screen: click it, or drag a box around it${state.shortcut ? ` (${state.shortcut})` : ''}`}>
+        <Highlighter className="h-3.5 w-3.5" />{open ? 'Done' : 'Highlight'}{open ? <kbd className="ctl-kbd">esc</kbd> : state.shortcut && <kbd className="ctl-kbd">{state.shortcut}</kbd>}
       </button>
+      {count > 0 && <span className="ctl-tag" role="img" title={`${count} ${count === 1 ? 'highlight' : 'highlights'} · ${clicksLabel(state.clicks)} noted`} aria-label={`${count} ${count === 1 ? 'highlight' : 'highlights'}`}>{count}</span>}
     </>
   );
 }

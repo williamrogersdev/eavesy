@@ -115,8 +115,10 @@ pub fn spawn(app: AppHandle, id: String) {
                 &app,
                 crate::hud::HudState {
                     notice: Some(match &result {
-                        Ok(()) => "Walkthrough context ready. Copy includes narration and screen text.".into(),
-                        Err(error) => format!("Context partially available: {error}"),
+                        // The control reads these: any notice is "ready", and
+                        // one that starts "Partly" is missing something.
+                        Ok(()) => "Ready to copy: narration, screen text and highlights.".into(),
+                        Err(error) => format!("Partly ready: {error}"),
                     }),
                     ..current
                 },
