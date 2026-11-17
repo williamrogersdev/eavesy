@@ -26,7 +26,7 @@ extension AudioRecorder {
         let sysCount = Int(sysPCM.frameLength)
         let system = Array(UnsafeBufferPointer(start: sysCh[0], count: sysCount))
 
-        let chunk = splitChunk(system: system, mic: takeMicSamples(sysCount))
+        let chunk = splitChunk(system: system, mic: echo.process(reference: system, mic: takeMicSamples(sysCount)))
 
         let pts = CMSampleBufferGetPresentationTimeStamp(systemBuffer)
         guard let mixBuffer = Self.sampleBuffer(chunk.mix, pts: pts) else {
