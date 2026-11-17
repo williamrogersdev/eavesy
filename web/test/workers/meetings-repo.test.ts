@@ -72,3 +72,13 @@ describe('meetings repo', () => {
     expect(await meetingsRepo.listSummariesForUser(db, { userId: 'other' })).toEqual([]);
   });
 });
+
+describe('start', () => {
+  it('keeps the device’s earlier start as recorded_at, and ignores one from the future', async () => {
+    const earlier = Date.now() - 3_600_000;
+    const offline = await meetingsRepo.start(db, { userId: 'owner', source: 'desktop', language: 'en', isAnonymous: false, recordedAt: earlier });
+    const ahead = await meetingsRepo.start(db, { userId: 'owner', source: 'desktop', language: 'en', isAnonymous: false, recordedAt: Date.now() + 60_000 });
+    expect((await meetingsRepo.get(db, { meetingId: offline, userId: 'owner' }))?.recordedAt).toBe(earlier);
+    expect((await meetingsRepo.get(db, { meetingId: ahead, userId: 'owner' }))?.recordedAt).toBeNull();
+  });
+});

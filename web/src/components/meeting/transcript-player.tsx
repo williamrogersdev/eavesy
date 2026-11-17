@@ -78,7 +78,8 @@ export function TranscriptPlayer({
   const { data: me } = useMe();
   const [chosenLanguage, setChosenLanguage] = useState<Language | null | undefined>(undefined);
   const [translationRevision, setTranslationRevision] = useState(0);
-  const target = chosenLanguage === undefined ? (isLanguage(me?.notesLanguage) ? me.notesLanguage : null) : chosenLanguage;
+  // Translating stores lines on the recording, which only its author may do.
+  const target = readOnly ? null : chosenLanguage === undefined ? (isLanguage(me?.notesLanguage) ? me.notesLanguage : null) : chosenLanguage;
   const translation = useTranslation(meetingId, shown, target, translationRevision);
   const translated = (line: TranscriptLine) => (translation.showing ? translation.textFor(line) : undefined);
 

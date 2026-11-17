@@ -187,6 +187,7 @@ export const Route = createFileRoute('/api/sessions/')({
           clientSessionId: parsed.data.clientSessionId,
           isAnonymous: false,
           audioFormat: parsed.data.archiveFormat,
+          recordedAt: parsed.data.startedAt,
         });
         await logStart(db, actor, meetingId, parsed.data.kind);
         // Every recording in the event's slot is linked to it (a restart, or a

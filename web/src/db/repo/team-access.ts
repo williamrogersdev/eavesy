@@ -8,7 +8,9 @@ import { meetingAttachments, meetings, teamMembers, users } from '../schema';
  *
  * Owners and admins can read every recording a teammate made while in the
  * team: from the moment they joined (`team_members.created_at`) on. Earlier
- * recordings stay private. Reading never grants writing: every route that
+ * recordings stay private, judged by when the device says recording began
+ * (`recorded_at`), so one made offline before joining and uploaded after stays
+ * private too. Imports are left out: an imported file can be of any age. Reading never grants writing: every route that
  * changes a recording still filters by its own user, so a team reader can't
  * rename, move, regenerate, share or delete someone else's recording.
  * Leaving the team ends the access, since the membership row is what grants it.
@@ -27,7 +29,8 @@ function teamReadable(viewerId: string) {
     inArray(viewer.role, ['owner', 'admin']),
     ne(meetings.userId, viewerId),
     isNull(meetings.deletedAt),
-    sql`${meetings.startedAt} >= ${author.createdAt}`,
+    ne(meetings.source, 'import'),
+    sql`coalesce(${meetings.recordedAt}, ${meetings.startedAt}) >= ${author.createdAt}`,
   );
 }
 

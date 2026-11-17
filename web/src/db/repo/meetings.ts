@@ -30,6 +30,8 @@ export async function start(
     calendarEventId?: string;
     isAnonymous: boolean;
     audioFormat?: 'm4a' | 'webm' | 'opus';
+    /** When the device says recording began; kept only if it is earlier than now. */
+    recordedAt?: number;
   },
 ): Promise<string> {
   const id = pid('meet');
@@ -40,6 +42,7 @@ export async function start(
     title: args.title ?? 'Recording in progress…',
     description: '',
     startedAt: now,
+    recordedAt: args.recordedAt !== undefined && args.recordedAt < now ? args.recordedAt : null,
     source: args.source,
     language: args.language ?? (await transcriptionLanguage(db, args.userId)),
     status: 'recording',

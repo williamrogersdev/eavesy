@@ -141,6 +141,8 @@ export const meetings = sqliteTable(
     description: text('description').notNull().default(''),
     contextBlurb: text('context_blurb'),
     startedAt: integer('started_at').notNull(),
+    /** When the device says recording began, if earlier than `startedAt` (a session created after a spell offline). Null: `startedAt`. */
+    recordedAt: integer('recorded_at'),
     endedAt: integer('ended_at'),
     // When the first transcript line was stored; drives the latency metric.
     firstTranscriptAt: integer('first_transcript_at'),

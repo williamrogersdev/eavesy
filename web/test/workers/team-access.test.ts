@@ -49,12 +49,18 @@ const listRecordings = async (who: string) => {
   return { status: response.status, body: (await response.json()) as { items?: { id: string; ownerName: string | null }[] } };
 };
 
-async function addMeeting(id: string, userId: string, startedAt: number, deletedAt: number | null = null) {
+async function addMeeting(
+  id: string,
+  userId: string,
+  startedAt: number,
+  deletedAt: number | null = null,
+  extra: { recordedAt?: number; source?: string } = {},
+) {
   await testEnv.DB.prepare(
-    `INSERT INTO meetings (id, user_id, title, description, started_at, source, language, audio_r2_key, status, created_at, updated_at, deleted_at)
-     VALUES (?, ?, 'Standup', '', ?, 'desktop', 'en', ?, 'complete', ?, ?, ?)`,
+    `INSERT INTO meetings (id, user_id, title, description, context_blurb, share_slug, started_at, recorded_at, source, language, audio_r2_key, status, created_at, updated_at, deleted_at)
+     VALUES (?, ?, 'Standup', '', 'Bo’s own prep', ?, ?, ?, ?, 'en', ?, 'complete', ?, ?, ?)`,
   )
-    .bind(id, userId, startedAt, audioKey(id, userId), startedAt, startedAt, deletedAt)
+    .bind(id, userId, `slug_${id}`, startedAt, extra.recordedAt ?? null, extra.source ?? 'desktop', audioKey(id, userId), startedAt, startedAt, deletedAt)
     .run();
   await testEnv.AUDIO_BUCKET.put(audioKey(id, userId), new Uint8Array([1, 2, 3]));
 }
@@ -97,7 +103,21 @@ describe('team owners and admins reading teammates’ recordings', () => {
       expect(body.meeting.id).toBe(AFTER);
       expect(body.notes).toBeNull();
       expect(body.access).toEqual({ kind: 'team', ownerName: 'Bo Brown' });
+      expect(body.meeting).not.toHaveProperty('contextBlurb');
+      expect(body.meeting).not.toHaveProperty('shareSlug');
     }
+  });
+
+  it('keeps a recording made offline before joining private, though uploaded after', async () => {
+    await addMeeting('meet_bo_offline', BO, JOINED + 3_600_000, null, { recordedAt: JOINED - 60_000 });
+    expect((await getMeeting(ADA, 'meet_bo_offline')).status).toBe(404);
+    expect((await getAudio(ADA, audioKey('meet_bo_offline'))).status).toBe(403);
+  });
+
+  it('leaves imports out, since an imported file can be of any age', async () => {
+    await addMeeting('meet_bo_import', BO, JOINED + 3_600_000, null, { source: 'import' });
+    expect((await getMeeting(ADA, 'meet_bo_import')).status).toBe(404);
+    expect((await listRecordings(ADA)).body.items?.map((item) => item.id)).toEqual([AFTER]);
   });
 
   it('keeps recordings from before someone joined private', async () => {

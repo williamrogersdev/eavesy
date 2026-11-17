@@ -39,8 +39,11 @@ export const Route = createFileRoute('/api/meetings/$id')({
         const team = await teamAccess.teamReadableMeeting(db, { viewerId: actor.userId, meetingId: id });
         const shared = team ? await meetingsRepo.getFull(db, { meetingId: id, userId: team.ownerId }) : null;
         if (!team || !shared) return Response.json({ error: 'not found' }, { status: 404 });
+        // Leave out what the author wrote or set up for themselves: their notes, the context they typed before recording, their share link and local folder.
+        const { contextBlurb: _context, shareSlug: _slug, shareExpiresAt: _expires, localFolderSlug: _folder, clientSessionId: _session, ...meeting } = shared.meeting;
         return Response.json({
           ...shared,
+          meeting,
           notes: null,
           access: { kind: 'team', ownerName: team.ownerName || team.ownerEmail || 'A teammate' },
         });
