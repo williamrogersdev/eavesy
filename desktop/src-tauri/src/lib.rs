@@ -386,6 +386,7 @@ pub fn run() {
                 let _ = handle.notification().builder().title(title).body(body).show();
             }
             hotkeys::notice_app_conflicts(&handle);
+            hotkeys::report_bindings(&handle, &failures);
 
             let location = install_location::label();
             telemetry::track(
