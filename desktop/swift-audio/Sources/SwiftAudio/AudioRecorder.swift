@@ -46,6 +46,10 @@ final class AudioRecorder: NSObject, Recorder {
 
     private var lastLevelEmit = Date.distantPast
 
+    /// Takes what the speakers play out of the microphone; only touched on
+    /// the system audio queue.
+    let echo = EchoCanceller()
+
     let mixLock = NSLock()
     var micResidual: [Float] = []
     static let maxMicResidual = 96_000
