@@ -13,10 +13,14 @@ ignore = [
   # zip 4.6 is tauri-plugin-updater's Windows-only dependency (it unpacks .zip
   # updates there). The Mac updater uses .tar.gz and never links zip. 0429
   # (symlink entry aborts extract) is the same crate, rechecked 2026-11-03.
+  # 0545 (AES entries not authenticated) and 0548 (stream reader trusts
+  # local-header names) are the same crate again, rechecked 2026-11-17.
   "RUSTSEC-2026-0367",
   "RUSTSEC-2026-0368",
   "RUSTSEC-2026-0369",
   "RUSTSEC-2026-0429",
+  "RUSTSEC-2026-0545",
+  "RUSTSEC-2026-0548",
 ]
 # Unmaintained, unsound and yanked notices are reported but don't fail the build.
 informational_warnings = ["unmaintained", "unsound", "yanked"]
