@@ -162,6 +162,8 @@ export const BURST_LIMITS = {
   'meeting-bot': { limit: 10, windowSec: 60, failMode: 'closed' },
   // "Send to everyone": each send emails people outside the account.
   'share-notes': { limit: 5, windowSec: 60, failMode: 'closed' },
+  // Team invitations: each one emails an address outside the account.
+  'team-invite': { limit: 10, windowSec: 60, failMode: 'closed' },
   // One-click "turn off recaps" links, guessed per IP.
   'recaps-off': { limit: 10, windowSec: 60, failMode: 'closed' },
   // Live transcript polls and stream (re)connects: a web tab streaming plus a

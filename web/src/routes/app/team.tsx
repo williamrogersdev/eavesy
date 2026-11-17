@@ -55,13 +55,13 @@ type TeamRecording = z.infer<typeof recordingsSchema>['items'][number];
 const failureSchema = z.object({ message: z.string().optional() });
 
 /** Calls the team API; throws the server's own sentence when it sends one. */
-async function call(method: string, path: string, body?: unknown): Promise<void> {
+async function call(method: string, path: string, body?: unknown): Promise<unknown> {
   const response = await fetch(path, {
     method,
     headers: body === undefined ? undefined : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
-  if (response.ok) return;
+  if (response.ok) return await response.json().catch(() => null);
   const failure = failureSchema.safeParse(await response.json().catch(() => null));
   throw new Error((failure.success && failure.data.message) || 'That didn’t work. Try again.');
 }
@@ -82,7 +82,7 @@ function TeamPage() {
   }, [load]);
 
   /** Runs one change, then reloads; a failure shows the reason and leaves the page as it was. */
-  const change = useCallback(async (run: () => Promise<void>) => {
+  const change = useCallback(async (run: () => Promise<unknown>) => {
     setBusy(true);
     setError(null);
     try {
@@ -112,7 +112,7 @@ function TeamPage() {
   );
 }
 
-type Change = (run: () => Promise<void>) => Promise<boolean>;
+type Change = (run: () => Promise<unknown>) => Promise<boolean>;
 
 function NoTeam({ invitations, busy, change }: { invitations: Extract<TeamState, { team: null }>['invitations']; busy: boolean; change: Change }) {
   const [name, setName] = useState('');
@@ -175,13 +175,22 @@ function Team({ state, busy, change }: { state: InTeam; busy: boolean; change: C
   const manages = team.role !== 'member';
   const [name, setName] = useState(team.name);
   const [email, setEmail] = useState('');
+  const [sent, setSent] = useState<string | null>(null);
   const [role, setRole] = useState<'member' | 'admin'>('member');
   const [confirming, setConfirming] = useState<'leave' | 'delete' | null>(null);
   useEffect(() => setName(team.name), [team.name]);
 
   const invite = (event: FormEvent) => {
     event.preventDefault();
-    void change(() => call('POST', '/api/team/invites', { email, role })).then((done) => {
+    const invited = email.trim();
+    setSent(null);
+    void change(async () => {
+      const result = await call('POST', '/api/team/invites', { email: invited, role });
+      const emailed = typeof result === 'object' && result !== null && 'emailed' in result && result.emailed === true;
+      setSent(emailed
+        ? `Invitation emailed to ${invited}.`
+        : `Invitation saved, but no email went out. Let ${invited} know to sign in to Eavesy with that address.`);
+    }).then((done) => {
       if (done) setEmail('');
     });
   };
@@ -253,7 +262,7 @@ function Team({ state, busy, change }: { state: InTeam; busy: boolean; change: C
       {manages ? <TeamRecordings /> : <p className="text-[13px] text-ev-ink-2">{RECORDINGS_NOTICE}</p>}
 
       {manages ? (
-        <AppSection title="Invite someone" description="They join by signing in to Eavesy with this email address. No email is sent yet, so let them know. Once in, owners and admins can see the recordings they make.">
+        <AppSection title="Invite someone" description="We email them an invitation. They join by signing in to Eavesy with this address. Once in, owners and admins can see the recordings they make.">
           <form onSubmit={invite} className="flex flex-col gap-2 sm:flex-row">
             <input
               type="email"
@@ -273,6 +282,7 @@ function Team({ state, busy, change }: { state: InTeam; busy: boolean; change: C
             ) : null}
             <button type="submit" disabled={busy || !email.trim()} className={appButton('primary')}>Invite</button>
           </form>
+          {sent ? <p role="status" className="text-[13px] text-ev-ink-2">{sent}</p> : null}
           {invites.length > 0 ? (
             <ul className="divide-y divide-ev-line rounded-[var(--ev-r-ctl)] border border-ev-line">
               {invites.map((pending) => (
