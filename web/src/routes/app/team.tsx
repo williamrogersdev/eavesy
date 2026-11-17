@@ -53,7 +53,7 @@ const recordingsSchema = z.object({
 });
 type TeamRecording = z.infer<typeof recordingsSchema>['items'][number];
 const failureSchema = z.object({ error: z.string().optional(), message: z.string().optional() });
-const inviteResultSchema = z.object({ email: z.enum(['sent', 'failed', 'unknown', 'off']).catch('failed') });
+const inviteResultSchema = z.object({ email: z.enum(['sent', 'failed', 'unknown', 'off']) });
 
 /** Calls the team API; throws the server's own sentence when it sends one. */
 async function call(method: string, path: string, body?: unknown): Promise<unknown> {
@@ -190,7 +190,8 @@ function Team({ state, busy, change }: { state: InTeam; busy: boolean; change: C
     void change(async () => {
       const result = await call('POST', '/api/team/invites', { email: invited, role });
       const parsed = inviteResultSchema.safeParse(result);
-      const outcome = parsed.success ? parsed.data.email : 'failed';
+      // The invitation is saved either way; an unreadable answer is an unconfirmed email.
+      const outcome = parsed.success ? parsed.data.email : 'unknown';
       setSent(
         outcome === 'sent'
           ? `Invitation emailed to ${invited}.`

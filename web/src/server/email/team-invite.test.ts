@@ -14,7 +14,8 @@ describe('renderTeamInvite', () => {
   it('says who invited them, to which team, and until when', () => {
     const { subject, text } = renderTeamInvite(content);
     expect(subject).toBe('You’re invited to join a team on Eavesy');
-    expect(text).toContain('Ada <script> (ada@example.com) invited you to join the team “Acme & Co”');
+    expect(text).toContain('Invited by: Ada <script> (ada@example.com)');
+    expect(text).toContain('Team: Acme & Co');
     expect(text).toContain('as a member');
     expect(text).toContain('December 1, 2026');
     expect(text).toContain('owners and admins can see the recordings');
@@ -24,5 +25,12 @@ describe('renderTeamInvite', () => {
     const { html } = renderTeamInvite(content);
     expect(html).not.toContain('<script>');
     expect(html).toContain('Acme &amp; Co');
+  });
+
+  it('keeps a typed name to one short line', () => {
+    const { text } = renderTeamInvite({ ...content, teamName: `Acme\n\nVerify your account now ${'x'.repeat(200)}` });
+    const line = text.split('\n').find((l) => l.startsWith('Team: '))!;
+    expect(line.startsWith('Team: Acme Verify your account now')).toBe(true);
+    expect(Array.from(line).length).toBeLessThanOrEqual('Team: '.length + 80);
   });
 });

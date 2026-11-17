@@ -58,7 +58,8 @@ describe('team invitation emails', () => {
     expect(email.to).toEqual(['bo@example.com']);
     expect(email.from).toBe('Eavesy <team@example.com>');
     expect(email.subject).toBe('You’re invited to join a team on Eavesy');
-    expect(email.text).toContain('Ada Lovelace (ada@example.com) invited you to join the team “Acme”');
+    expect(email.text).toContain('Invited by: Ada Lovelace (ada@example.com)');
+    expect(email.text).toContain('Team: Acme');
     expect(email.text).toContain('as an admin');
     expect(email.text).toContain('https://app.example.com/app/team');
     expect(sent[0]!.headers.get('idempotency-key')).toMatch(new RegExp(`^team-invite:${String(invited.body.id)}:\\d+$`));
