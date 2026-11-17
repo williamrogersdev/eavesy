@@ -155,6 +155,10 @@ installSignalHandler(SIGTERM)
 let stdinThread = Thread {
     while let line = stdinLines.next() {
         if line == "stop" { break }
+        if line == "pause" || line == "resume" {
+            recorder.setPaused(line == "pause")
+            continue
+        }
         if let language = CaptionLanguage.hint(line) { languages.cloudHeard(language) }
     }
     gracefulStop()

@@ -193,6 +193,7 @@ pub fn run() {
             commands::ack_dictation_text,
             audio::start_screen_capture,
             audio::skip_screen_countdown,
+            audio::set_screen_recording_paused,
             audio::cancel_screen_countdown,
             audio::stop_capture,
             audio::cancel_capture,

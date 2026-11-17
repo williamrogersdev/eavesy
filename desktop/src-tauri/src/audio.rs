@@ -73,6 +73,8 @@ pub struct Session {
     /// Dictation pastes its on-device text as soon as it stops; the recording
     /// still uploads like any other and the cloud transcript is its record.
     dictation: bool,
+    /// A screen recording the user paused: nothing is kept until it resumes.
+    paused: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -882,6 +884,7 @@ fn spawn_capture(
             source: source.to_string(),
             captions,
             dictation,
+            paused: false,
         },
     );
 
@@ -1280,6 +1283,50 @@ pub fn hint_caption_language(app: &AppHandle, session_id: &str, language: &str) 
     write_without_waiting(session.stdin.as_raw_fd(), line.as_bytes())
 }
 
+/// Pauses a screen recording, or carries it on. While paused the engine keeps
+/// nothing (no picture, no sound), and the saved video runs straight from the
+/// moment before the pause to the moment after it. Asking for the state it is
+/// already in does nothing.
+#[tauri::command(async)]
+pub fn set_screen_recording_paused(app: AppHandle, session_id: String, paused: bool) -> Result<(), String> {
+    // One at a time, so a pause and its resume reach the engine, the click
+    // log and the control in the same order.
+    static IN_ORDER: Mutex<()> = Mutex::new(());
+    let _in_order = IN_ORDER.lock().unwrap_or_else(|e| e.into_inner());
+    {
+        let captures = app.state::<Captures>();
+        let mut sessions = captures.0.lock().unwrap_or_else(|e| e.into_inner());
+        let session = sessions.get_mut(&session_id).ok_or(NO_ACTIVE_CAPTURE)?;
+        if session.mode != "screen" {
+            return Err("Only screen recordings can be paused".into());
+        }
+        if session.paused == paused {
+            return Ok(());
+        }
+        if !tell_engine(session, if paused { "pause\n" } else { "resume\n" }) {
+            return Err(if paused { "Couldn't pause the recording. Try again?" } else { "Couldn't resume the recording. Try again?" }.into());
+        }
+        session.paused = paused;
+    }
+    let at_ms = now_ms();
+    crate::moments::set_paused(&app, &session_id, paused, at_ms);
+    crate::hud::set_paused(&app, &session_id, paused, at_ms);
+    Ok(())
+}
+
+/// One line to a capture's engine, without waiting on a full pipe. Runs under
+/// the captures lock, like [`hint_caption_language`].
+#[cfg(unix)]
+fn tell_engine(session: &Session, line: &str) -> bool {
+    use std::os::fd::AsRawFd;
+    write_without_waiting(session.stdin.as_raw_fd(), line.as_bytes())
+}
+
+#[cfg(not(unix))]
+fn tell_engine(_session: &Session, _line: &str) -> bool {
+    false
+}
+
 /// One write to a pipe that may be full: all of `bytes` or nothing. Lines this
 /// short are under PIPE_BUF, so the write is atomic. The flags belong to the
 /// engine's stdin, so they are put back before returning; callers keep every
@@ -1607,6 +1654,7 @@ fn stop_capture_inner(
         source,
         captions,
         dictation,
+        paused: _,
     } = session;
 
     let reserved_audio_folder = (mode == "audio")

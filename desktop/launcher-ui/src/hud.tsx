@@ -1,5 +1,5 @@
 import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
-import { AudioLines, ArrowDown, ArrowUp, Camera, Check, ChevronDown, Clapperboard, ClipboardList, Copy, EyeOff, History, House, Languages, Maximize2, Mic, MicOff, Highlighter, Minus, Search, ShieldCheck, Square, Users, Volume2, X } from 'lucide-react';
+import { AudioLines, ArrowDown, ArrowUp, Camera, Check, ChevronDown, Clapperboard, ClipboardList, Copy, EyeOff, History, House, Languages, Maximize2, Mic, MicOff, Highlighter, Minus, Pause, Play, Search, ShieldCheck, Square, Users, Volume2, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import type { LiveRow } from '@/lib/desktop/live-captions';
 import { clock } from '@/components/launcher/history-model';
@@ -27,6 +27,9 @@ interface HudState {
   sessionId: string | null;
   mode: string | null;
   startedAtMs: number | null;
+  /** Since when a screen recording has been paused (`hud::set_paused`). On
+   * resume Rust moves `startedAtMs` on by the pause, so the timer carries on. */
+  pausedAtMs?: number | null;
   message: string | null;
   /** Where the words went when they were not pasted ("Copied — …"). */
   notice?: string | null;
@@ -194,6 +197,8 @@ function browserPreviewState(): HudState | null {
     // The server's word on the tone (`?style=concise&forai`; `?plain` when the model didn't apply it, `?untold` when it didn't say).
     written: phase === 'done' && mode === 'audio' && !params.has('untold') ? { ...browserPreviewWriting() ?? PLAIN, projectId: params.get('project'), applied: !params.has('plain') } : null,
     opensItself: phase === 'done' && mode === 'audio' && !params.has('opening') && !params.has('receipt') && !params.get('notice')?.includes('Accessibility'),
+    // `?hud=recording&video&paused`: a screen recording paused 12s ago.
+    pausedAtMs: phase === 'recording' && mode === 'video' && params.has('paused') ? Date.now() - 12_000 : null,
     // A meeting prompt counts down to its deadline (`?ask` only asks).
     // `?video&opening&countdown` is the count before a screen recording; without `countdown` it is "Starting…".
     startedAtMs: phase === 'prompt' ? (params.has('ask') ? null : Date.now() + 9_000) : params.has('opening') ? (params.has('countdown') ? Date.now() + 3_000 : null) : Date.now() - 78_000,
@@ -323,6 +328,9 @@ function useMicSignal(sessionId: string | null, active: boolean, now: number): {
     const value = payload as { sessionId: string; rms: number };
     if (value.sessionId === sessionId) signal.current = { sessionId, rms: value.rms, at: Date.now() };
   });
+  // Nothing arrives while it is off (a pause): forget the last level, so the
+  // quiet since is not read as a dead microphone when it comes back.
+  if (!active && signal.current.at) signal.current = { sessionId: null, rms: 0, at: 0 };
   const own = active && signal.current.sessionId === sessionId ? signal.current : { rms: 0, at: 0 };
   return { heard: now - own.at < 2000 && own.rms >= 0.002, silent: own.at > 0 && now - own.at > 5000 };
 }
@@ -607,7 +615,7 @@ function Hud() {
     const id = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(id);
   }, [state?.phase]);
-  const mic = useMicSignal(state?.sessionId ?? null, live && state?.mode === 'video', now);
+  const mic = useMicSignal(state?.sessionId ?? null, live && state?.mode === 'video' && !state.pausedAtMs, now);
   // The count before a screen recording: `startedAtMs` is when it ends.
   const countingTo = state?.phase === 'recording' && state.mode === 'video' && !state.sessionId ? state.startedAtMs ?? null : null;
   useEffect(() => {
@@ -1425,7 +1433,10 @@ function Hud() {
       if (opened) setChoosing(true);
       else setActionError('Couldn’t open the options. Try again?');
     };
-    const elapsedSec = Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000));
+    // A paused screen recording: its timer stands still at the moment it was paused.
+    const pausedAtMs = video && !opening ? state.pausedAtMs ?? null : null;
+    const paused = pausedAtMs !== null;
+    const elapsedSec = Math.max(0, Math.floor(((pausedAtMs ?? now) - (state.startedAtMs ?? now)) / 1000));
     const cancelDisabled = opening || !state.sessionId || stopping === state.sessionId;
     // The length needs only the recording; the highlight count joins it when
     // the highlighter's session is this one (it is begun with the capture's id).
@@ -1447,12 +1458,12 @@ function Hud() {
       <>
         {opening ? (!video && errorSay) || <span className="ctl-say ctl-quiet ctl-breathe" title={video ? 'macOS may ask for screen and microphone access first' : undefined}>Starting…</span> : (
           <>
-            <span className="ctl-rec" aria-hidden />
+            <span className="ctl-rec" data-paused={paused || undefined} aria-hidden />
             <span className="ctl-timer">{clock(elapsedSec)}</span>
-            {video ? errorSay ?? <MicState heard={mic.heard} silent={mic.silent} /> : errorSay ?? <VoiceBars level={voice} />}
+            {video ? errorSay ?? (paused ? <span className="ctl-say ctl-quiet" role="status" title="Nothing is being recorded: no screen, no microphone. The video picks up from here when you resume.">Paused</span> : <MicState heard={mic.heard} silent={mic.silent} />) : errorSay ?? <VoiceBars level={voice} />}
           </>
         )}
-        {video && !opening && !errorSay && <Marking state={marking} act={act} />}
+        {video && !opening && !errorSay && !paused && <Marking state={marking} act={act} />}
         {eavesy && <Stamp tone="manila" fit title="Talk to Eavesy: what you say is a question for Eavesy. Nothing is typed into your app.">Asking Eavesy</Stamp>}
         {replying && !opening && <Stamp tone="agent" fit title={`Eavesy just read out a question from ${replying.name || 'a Claude Code session'}, so this Talk is your answer to it. Nothing is typed into your app.`}>Replying to Claude</Stamp>}
         {meeting && !opening && <span className="ctl-say" role="status">Recording meeting</span>}
@@ -1462,6 +1473,9 @@ function Hud() {
           <button type="button" disabled={!state.sessionId} onClick={() => { if (tauri()) void invoke('tuck_hud').catch((error: unknown) => setActionError(hudError(error, 'Couldn’t hide Eavesy. Try again?'))); }}
             aria-label="Hide Eavesy while it records" title={`Hide this while you share your screen. The recording carries on${hideShortcut ? `; ${hideShortcut} brings it back` : '; Eavesy in the menu bar brings it back'}.`} className="ctl-btn ctl-icon"><EyeOff className="h-3.5 w-3.5" /></button>
         )}
+        {video && !opening && (paused
+          ? <button type="button" disabled={cancelDisabled} onClick={() => void act('set_screen_recording_paused', { sessionId: state.sessionId, paused: false })} title="Carry on recording from here" className="ctl-btn ctl-resume"><Play className="h-3 w-3" fill="currentColor" />Resume</button>
+          : <button type="button" disabled={cancelDisabled} onClick={() => void act('set_screen_recording_paused', { sessionId: state.sessionId, paused: true })} aria-label="Pause recording" title="Pause: nothing is recorded until you resume" className="ctl-btn ctl-icon"><Pause className="h-3.5 w-3.5" fill="currentColor" /></button>)}
         {discarding === state.sessionId
           ? <button type="button" disabled={cancelDisabled} onClick={() => cancelRecording(state.sessionId, elapsedSec)} aria-label="Discard this recording" title="Click again to throw this recording away" className="ctl-btn ctl-discard">Discard</button>
           : <button type="button" disabled={cancelDisabled} onClick={() => cancelRecording(state.sessionId, elapsedSec)} aria-label="Cancel recording" title="Cancel: throw this recording away without saving" className="ctl-btn ctl-icon"><X className="h-3.5 w-3.5" /></button>}

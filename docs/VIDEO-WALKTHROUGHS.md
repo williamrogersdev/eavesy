@@ -78,6 +78,12 @@ video like the rest of Eavesy's windows. **Undo last** removes the newest one;
 **esc**, **Done** or ⌥H again closes the highlighter. Clicks made while it is
 open are not counted as clicks.
 
+**Pause** on the control stops keeping anything, picture or sound, until you
+press **Resume**; the timer stands still meanwhile. The saved video has no gap:
+it runs straight from the moment before the pause to the moment after, and
+clicks and highlights made after a pause still land on the right frame. Clicks
+during a pause are not noted, and the highlighter is put away until you resume.
+
 After Stop, each click and highlight gets a close-up from the video, the text Vision reads
 inside it, and the narration from 1.5 seconds before to 6 seconds after. `context.md`
 lists them under **What the user pointed at**, and the recording card shows them as

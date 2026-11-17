@@ -216,9 +216,16 @@ struct Live {
     tool: Option<Tool>,
     hover: Option<Target>,
     shortcut: bool,
+    /// When the recording was paused and resumed, in wall time. The video
+    /// has none of that time in it. A pause still on has no end.
+    pauses: Vec<(i64, Option<i64>)>,
 }
 
 impl Live {
+    fn paused(&self) -> bool {
+        self.pauses.last().is_some_and(|(_, end)| end.is_none())
+    }
+
     fn display(&self) -> Rect {
         self.video.map(|(_, display)| display).unwrap_or_else(imp::main_display)
     }
@@ -267,6 +274,7 @@ pub fn begin(app: &AppHandle, session_id: &str, started_at_ms: i64) {
         tool: None,
         hover: None,
         shortcut,
+        pauses: vec![],
     });
     let (sender, receiver) = mpsc::channel::<(f64, f64, i64)>();
     imp::watch_clicks(sender);
@@ -278,7 +286,7 @@ pub fn begin(app: &AppHandle, session_id: &str, started_at_ms: i64) {
             let Ok(target) = imp::target_at(x, y, false) else { continue };
             let mut guard = live();
             let Some(live) = guard.as_mut().filter(|live| live.session_id == session) else { break };
-            if live.tool.is_some() || live.clicks() >= MAX_CLICKS || !live.display().contains(x, y) {
+            if live.tool.is_some() || live.paused() || live.clicks() >= MAX_CLICKS || !live.display().contains(x, y) {
                 continue;
             }
             live.pending.push(Pending { kind: Kind::Click, mark: None, at_ms, point: Some(Point { x, y }), target: target.unwrap_or_default() });
@@ -294,6 +302,37 @@ pub fn video_started(session_id: &str, epoch_ms: i64, display: Rect) {
     if let Some(live) = live().as_mut().filter(|live| live.session_id == session_id) {
         live.video = Some((epoch_ms, display));
     }
+}
+
+/// The recording was paused or carried on. Nothing is noted during a pause,
+/// and the highlighter is put away: it would be marking frames nobody keeps.
+pub fn set_paused(app: &AppHandle, session_id: &str, paused: bool, at_ms: i64) {
+    {
+        let mut guard = live();
+        let Some(live) = guard.as_mut().filter(|live| live.session_id == session_id) else { return };
+        match (paused, live.paused()) {
+            (true, false) => live.pauses.push((at_ms, None)),
+            (false, true) => {
+                if let Some((start, end)) = live.pauses.last_mut() {
+                    *end = Some(at_ms.max(*start));
+                }
+            }
+            _ => return,
+        }
+    }
+    if paused {
+        let _ = stop(app);
+    }
+}
+
+/// How far into the video `at_ms` is: the time since its first frame, less
+/// whatever of it was paused.
+fn video_ms(start: i64, pauses: &[(i64, Option<i64>)], at_ms: i64) -> u64 {
+    let paused: i64 = pauses
+        .iter()
+        .map(|&(from, to)| (to.unwrap_or(i64::MAX).min(at_ms) - from.max(start)).max(0))
+        .sum();
+    (at_ms - start - paused).max(0) as u64
 }
 
 /// The recording is stopping: stop watching now, so nothing after the last
@@ -359,7 +398,7 @@ fn settle(live: &Live) -> Moments {
                 number: index as u32 + 1,
                 kind: p.kind,
                 mark: p.mark,
-                timestamp_ms: (p.at_ms - start).max(0) as u64,
+                timestamp_ms: video_ms(start, &live.pauses, p.at_ms),
                 point: p.point.map(|point| Point { x: point.x - display.x, y: point.y - display.y }),
                 rect: p.target.rect.map(local),
                 element,
@@ -411,6 +450,7 @@ pub fn display_count() -> usize {
 
 const NOT_RECORDING: &str = "Highlighting works while a screen recording is running";
 const NOT_STARTED: &str = "The recording is still starting. Try again in a moment";
+const PAUSED: &str = "The recording is paused. Resume it to highlight";
 
 fn use_tool(app: &AppHandle, tool: Tool) -> Result<(), String> {
     let (was, display) = {
@@ -418,6 +458,9 @@ fn use_tool(app: &AppHandle, tool: Tool) -> Result<(), String> {
         let live = guard.as_mut().ok_or(NOT_RECORDING)?;
         if live.video.is_none() {
             return Err(NOT_STARTED.into());
+        }
+        if live.paused() {
+            return Err(PAUSED.into());
         }
         let was = live.tool.replace(tool);
         live.hover = None;
@@ -536,6 +579,9 @@ fn add_mark(app: &AppHandle, kind: Kind, point: Option<Point>, target: Target) -
     let (number, rect) = {
         let mut guard = live();
         let live = guard.as_mut().ok_or(NOT_RECORDING)?;
+        if live.paused() {
+            return Err(PAUSED.into());
+        }
         let number = live.marks().filter_map(|p| p.mark).max().unwrap_or(0) + 1;
         if live.marks().count() >= MAX_MARKS {
             return Err("That's as many highlights as one recording holds".into());
@@ -1208,7 +1254,36 @@ mod tests {
     use super::*;
 
     fn live_with(pending: Vec<Pending>, video: Option<(i64, Rect)>) -> Live {
-        Live { session_id: "s".into(), started_at_ms: 1_000, video, pending, tool: None, hover: None, shortcut: false }
+        Live { session_id: "s".into(), started_at_ms: 1_000, video, pending, tool: None, hover: None, shortcut: false, pauses: vec![] }
+    }
+
+    #[test]
+    fn paused_time_is_not_in_the_video() {
+        // No pauses: the time since the first frame.
+        assert_eq!(video_ms(5_000, &[], 9_000), 4_000);
+        // After a 10s pause, a click 2s on is 2s further into the video.
+        let pauses = [(8_000, Some(18_000))];
+        assert_eq!(video_ms(5_000, &pauses, 7_000), 2_000);
+        assert_eq!(video_ms(5_000, &pauses, 20_000), 5_000);
+        // During a pause, and one still on: the frame the video stopped at.
+        assert_eq!(video_ms(5_000, &pauses, 12_000), 3_000);
+        assert_eq!(video_ms(5_000, &[(8_000, None)], 30_000), 3_000);
+        // Several add up; a pause from before the first frame only counts from it.
+        assert_eq!(video_ms(5_000, &[(8_000, Some(18_000)), (20_000, Some(21_000))], 25_000), 9_000);
+        assert_eq!(video_ms(5_000, &[(3_000, Some(6_000))], 8_000), 2_000);
+        assert_eq!(video_ms(5_000, &[], 4_000), 0);
+    }
+
+    #[test]
+    fn moments_after_a_pause_land_on_the_frame_they_were_made_on() {
+        let display = Rect { x: 0.0, y: 0.0, width: 100.0, height: 100.0 };
+        let mut live = live_with(vec![click(7_000, 1.0, 1.0), click(20_000, 2.0, 2.0)], Some((5_000, display)));
+        live.pauses = vec![(8_000, Some(18_000))];
+        assert!(!live.paused());
+        let times: Vec<_> = settle(&live).moments.iter().map(|m| m.timestamp_ms).collect();
+        assert_eq!(times, vec![2_000, 5_000]);
+        live.pauses.push((21_000, None));
+        assert!(live.paused());
     }
 
     fn click(at_ms: i64, x: f64, y: f64) -> Pending {
