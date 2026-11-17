@@ -6,6 +6,17 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-11-17 - desktop
+
+### Added
+
+- Mac app: a countdown, a one-row pill and one-gesture highlights for screen recordings ([#408](https://github.com/williamrogersdev/eavesy/pull/408))
+- Mac app: cancel the call's echo from the mic in meetings ([#406](https://github.com/williamrogersdev/eavesy/pull/406))
+
+### Fixed
+
+- Mac app: hold the system track back as long as the cleaned mic ([#407](https://github.com/williamrogersdev/eavesy/pull/407))
+
 ## [0.10.2] - 2026-11-16 - desktop
 
 ### Added
