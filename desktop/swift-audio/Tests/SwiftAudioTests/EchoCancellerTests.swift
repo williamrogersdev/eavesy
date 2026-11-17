@@ -134,4 +134,23 @@ final class EchoCancellerTests: XCTestCase {
         }
         XCTAssertEqual(canceller.process(reference: [], mic: [0.5]).count, 0)
     }
+
+    func testTheSystemTrackWaitsAsLongAsTheMicrophone() {
+        var delay = Delay(samples: EchoCanceller.latency)
+        let canceller = EchoCanceller()
+        let own = voice(seconds: 1, seed: 2)
+        var system: [Float] = []
+        var mic: [Float] = []
+        for start in stride(from: 0, to: own.count, by: 960) {
+            let chunk = Array(own[start..<(start + 960)])
+            system += delay.push(chunk)
+            mic += canceller.process(reference: [Float](repeating: 0, count: 960), mic: chunk)
+        }
+
+        XCTAssertEqual(system.count, own.count)
+        for index in stride(from: 0, to: own.count - EchoCanceller.latency, by: 53) {
+            XCTAssertEqual(system[index + EchoCanceller.latency], own[index])
+            XCTAssertEqual(mic[index + EchoCanceller.latency], own[index], accuracy: 1e-4)
+        }
+    }
 }

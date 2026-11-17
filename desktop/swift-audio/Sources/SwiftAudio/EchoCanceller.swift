@@ -142,6 +142,22 @@ final class EchoCanceller {
     }
 }
 
+/// Holds a signal back by a fixed number of samples.
+struct Delay {
+    private var held: [Float]
+
+    init(samples: Int) {
+        held = [Float](repeating: 0, count: samples)
+    }
+
+    mutating func push(_ samples: [Float]) -> [Float] {
+        held.append(contentsOf: samples)
+        let out = Array(held.prefix(samples.count))
+        held.removeFirst(samples.count)
+        return out
+    }
+}
+
 /// Reads a signal between its samples.
 enum Resampler {
     static let taps = 32
