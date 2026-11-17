@@ -52,6 +52,7 @@ const NOTHING_HELD: HeldModifiers = { meta: false, ctrl: false, alt: false, shif
  * the webview sees fn+Space as plain Space.
  */
 const FN_CHORD_GRACE_MS = 150;
+const FN_TIP_KEY = 'eavesy.shortcuts.fn-tip';
 
 /** Shared state for every ShortcutRow on a screen: the bindings, the defaults, fn readiness, and which row is recording. */
 export type Shortcuts = {
@@ -172,6 +173,14 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
   const recording = shortcuts.recording === action;
   const [notice, setNotice] = useState<Notice | null>(null);
   const [busy, setBusy] = useState(false);
+  // The fn tip on Talk, until it's taken or turned down on this Mac.
+  const [fnTipShown, setFnTipShown] = useState(() => {
+    try { return localStorage.getItem(FN_TIP_KEY) !== 'dismissed'; } catch { return true; }
+  });
+  const dismissFnTip = useCallback(() => {
+    setFnTipShown(false);
+    try { localStorage.setItem(FN_TIP_KEY, 'dismissed'); } catch { /* shown again next time */ }
+  }, []);
   const [held, setHeld] = useState<HeldModifiers>(NOTHING_HELD);
   // A notice is about the shortcut it was raised for; drop it once that changes
   // (a swap, reset or restore from elsewhere).
@@ -402,6 +411,17 @@ export function ShortcutRow({ shortcuts, action, label = SHORTCUT_LABELS[action]
       ) : null}
 
       {value === FN && !recording && shortcuts.fn && !fnReady(shortcuts.fn) ? <FnSetupCard fn={shortcuts.fn} onRecheck={recheckFn} /> : null}
+
+      {/* fn is one key no other app takes: the easiest Talk there is, so offer it. */}
+      {action === 'dictation' && desktop && !recording && !notice && fnTipShown && value !== FN && !Object.values(shortcuts.bindings ?? {}).includes(FN) ? (
+        <div className="ev-shortcut-card">
+          <p>Tip: use fn for Talk. It’s one key, and other apps don’t use it, so it won’t clash.{value ? ` ${keysText(value)} stops being Talk.` : ''}</p>
+          <div className="ev-shortcut-actions">
+            <Button variant="primary" size="sm" loading={busy} onClick={() => { void commit(FN); }}>Use fn</Button>
+            <Button variant="quiet" size="sm" disabled={busy} onClick={dismissFnTip}>Keep {value ? keysText(value) : 'it unset'}</Button>
+          </div>
+        </div>
+      ) : null}
 
       {isFnChord(value) && !recording && shortcuts.fn?.accessibility === false ? (
         <div className="ev-shortcut-card" data-tone="steps">
