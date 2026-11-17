@@ -3,6 +3,8 @@ import { appUrl, EmailError, sendEmail, type EmailEnv } from './resend';
 
 export interface TeamInviteContent {
   inviterName: string;
+  /** Shown next to the name, so the recipient can tell who really sent it. */
+  inviterEmail: string | null;
   teamName: string;
   role: 'admin' | 'member';
   /** Where the invitee signs in and accepts. */
@@ -12,17 +14,19 @@ export interface TeamInviteContent {
 
 /** The email someone gets when they're invited to a team: who asked, which team, and how to join. */
 export function renderTeamInvite(content: TeamInviteContent) {
-  const subject = `${content.inviterName} invited you to ${content.teamName} on Eavesy`.slice(0, 200);
+  // A fixed subject: names are typed by users, and the subject is what a phishing mail would lean on.
+  const subject = 'You’re invited to join a team on Eavesy';
   const role = content.role === 'admin' ? 'an admin' : 'a member';
   const until = new Date(content.expiresAt).toLocaleDateString('en-US', { dateStyle: 'long', timeZone: 'UTC' });
-  const intro = `${content.inviterName} invited you to join ${content.teamName} on Eavesy as ${role}.`;
+  const inviter = content.inviterEmail ? `${content.inviterName} (${content.inviterEmail})` : content.inviterName;
+  const intro = `${inviter} invited you to join the team “${content.teamName}” on Eavesy as ${role}.`;
   const how = 'Sign in to Eavesy with this email address, then accept the invitation on the Team page.';
   const notice = 'Team owners and admins can see the recordings you make after you join.';
   const expiry = `The invitation is open until ${until}. If you weren’t expecting it, you can ignore this email.`;
 
   const text = [intro, '', how, content.link, '', notice, '', expiry].join('\n');
   const html = `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#16213f;line-height:1.5;max-width:600px;margin:0 auto;padding:24px">
-<h1 style="font-size:20px;margin:0 0 16px">Join ${escapeHtml(content.teamName)} on Eavesy</h1>
+<h1 style="font-size:20px;margin:0 0 16px">You’re invited to a team on Eavesy</h1>
 <p style="margin:0 0 16px">${escapeHtml(intro)}</p>
 <p style="margin:0 0 24px">${escapeHtml(how)}</p>
 <p style="margin:0 0 24px"><a href="${escapeHtml(content.link)}" style="display:inline-block;background:#f2b233;color:#16213f;text-decoration:none;font-weight:600;padding:10px 18px;border-radius:999px">Open the invitation</a></p>
@@ -32,15 +36,18 @@ export function renderTeamInvite(content: TeamInviteContent) {
   return { subject, html, text };
 }
 
+/** Whether the email went out: `unknown` when Resend may have taken it without saying so. */
+export type InviteEmailResult = 'sent' | 'failed' | 'unknown' | 'off';
+
 /**
- * Emails a new invitation. Returns whether it went out; a failure leaves the
- * invitation in place, and the inviter is told to let the person know themselves.
+ * Emails a new invitation. Never throws: the invitation is already saved, and
+ * the inviter is told to let the person know when it isn't certain it went out.
  */
 export async function sendTeamInvite(
   env: EmailEnv,
   invite: TeamInviteContent & { id: string; email: string; sentAt: number },
-): Promise<boolean> {
-  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return false;
+): Promise<InviteEmailResult> {
+  if (!env.RESEND_API_KEY || !env.EMAIL_FROM) return 'off';
   try {
     await sendEmail(
       { RESEND_API_KEY: env.RESEND_API_KEY, EMAIL_FROM: env.EMAIL_FROM },
@@ -52,14 +59,11 @@ export async function sendTeamInvite(
         idempotencyKey: `team-invite:${invite.id}:${invite.sentAt}`,
       },
     );
-    return true;
+    return 'sent';
   } catch (error) {
-    if (error instanceof EmailError) {
-      console.warn('team invite email failed', { invite: invite.id, status: error.status, uncertain: error.uncertain });
-      // It may have reached Resend: don't tell the inviter it didn't go out.
-      return error.uncertain;
-    }
-    throw error;
+    const uncertain = error instanceof EmailError ? error.uncertain : true;
+    console.warn('team invite email failed', { invite: invite.id, status: error instanceof EmailError ? error.status : null, uncertain });
+    return uncertain ? 'unknown' : 'failed';
   }
 }
 

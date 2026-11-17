@@ -4,6 +4,7 @@ import { renderTeamInvite } from './team-invite';
 describe('renderTeamInvite', () => {
   const content = {
     inviterName: 'Ada <script>',
+    inviterEmail: 'ada@example.com',
     teamName: 'Acme & Co',
     role: 'member' as const,
     link: 'https://eavesy.com/app/team',
@@ -12,7 +13,8 @@ describe('renderTeamInvite', () => {
 
   it('says who invited them, to which team, and until when', () => {
     const { subject, text } = renderTeamInvite(content);
-    expect(subject).toBe('Ada <script> invited you to Acme & Co on Eavesy');
+    expect(subject).toBe('You’re invited to join a team on Eavesy');
+    expect(text).toContain('Ada <script> (ada@example.com) invited you to join the team “Acme & Co”');
     expect(text).toContain('as a member');
     expect(text).toContain('December 1, 2026');
     expect(text).toContain('owners and admins can see the recordings');
