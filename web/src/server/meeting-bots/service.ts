@@ -366,6 +366,8 @@ async function ensureMeeting(db: AppDb, bot: MeetingBot, startedAt: number): Pro
   const language = owner?.language || AUTO_LANGUAGE;
   const now = Date.now();
   const clientSessionId = `bot:${bot.id}`;
+  // The project may have been unshared, or its owner left the team, since the bot was scheduled.
+  const folderId = bot.folderId && (await projectsRepo.canUseProject(db, bot.userId, bot.folderId)) ? bot.folderId : null;
   await db.insert(meetings).values({
     id: pid('meet', now),
     userId: bot.userId,
@@ -373,7 +375,7 @@ async function ensureMeeting(db: AppDb, bot: MeetingBot, startedAt: number): Pro
     source: 'bot',
     platform: bot.platform,
     language,
-    folderId: bot.folderId,
+    folderId,
     status: 'recording',
     startedAt,
     clientSessionId,

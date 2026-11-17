@@ -113,14 +113,39 @@ describe('projects shared with the team', () => {
     expect((await listProjects(BO)).find((p) => p.id === id)).toBeUndefined();
   });
 
-  it('refuses to share without a team, and unshares when the team is deleted', async () => {
+  it('refuses to share without a team, and hands shared projects back, out of teammates’ recordings, when the team is deleted', async () => {
     const solo = await createProject(DI, 'Side project');
     expect((await patchProject(DI, solo, { shared: true })).status).toBe(409);
 
     const id = await createProject(ADA, 'Roadmap');
     await patchProject(ADA, id, { shared: true });
+    await fileMeeting(BO, 'meet_bo', id);
+    await fileMeeting(ADA, 'meet_ada', id);
     expect((await call(ADA, TeamRoute, 'DELETE', '/api/team?everyone=1')).status).toBe(200);
     expect(await row('SELECT team_id FROM folders WHERE id = ?', id)).toEqual({ team_id: null });
+    expect(await row('SELECT folder_id FROM meetings WHERE id = ?', 'meet_bo')).toEqual({ folder_id: null });
+    expect(await row('SELECT folder_id FROM meetings WHERE id = ?', 'meet_ada')).toEqual({ folder_id: id });
+  });
+
+  it('stays with the team when its creator leaves, who loses it', async () => {
+    const id = await createProject(BO, 'Billing', { about: 'The billing service.' });
+    await patchProject(BO, id, { shared: true });
+    expect((await call(BO, TeamRoute, 'DELETE', '/api/team')).status).toBe(200);
+
+    expect((await listProjects(BO)).find((p) => p.id === id)).toBeUndefined();
+    expect((await patchProject(BO, id, { about: 'Rewritten from outside' })).status).toBe(404);
+    expect((await call(BO, ProjectRoute, 'DELETE', `/api/projects/${id}`, { id })).status).toBe(404);
+    expect(await row('SELECT about FROM folders WHERE id = ?', id)).toEqual({ about: 'The billing service.' });
+    // The team keeps it, and its admins still manage it.
+    expect((await listProjects(CY)).find((p) => p.id === id)).toMatchObject({ shared: true, canEdit: true });
+    expect((await patchProject(CY, id, { about: 'Owned by the team now.' })).status).toBe(200);
+  });
+
+  it('counts only your own projects toward the limit', async () => {
+    const before = (await row<{ n: number }>('SELECT count(*) AS n FROM folders WHERE user_id = ?', BO))?.n;
+    const id = await createProject(ADA, 'Roadmap');
+    await patchProject(ADA, id, { shared: true });
+    expect(await projectsRepo.countOwn(db, BO)).toBe(before);
   });
 });
 

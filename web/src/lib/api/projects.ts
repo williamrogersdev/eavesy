@@ -59,14 +59,16 @@ export async function createProject(fields: ProjectFields & { name: string }): P
   return project;
 }
 
-export async function updateProject(id: string, fields: ProjectFields): Promise<void> {
-  await json(
+/** Saves the fields; returns the project as the reader now sees it, or null once they no longer can (an admin unsharing a teammate's project). */
+export async function updateProject(id: string, fields: ProjectFields): Promise<ProjectSummary | null> {
+  const body = await json(
     await fetch(`/api/projects/${encodeURIComponent(id)}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(fields),
     }),
   );
+  return isRecord(body) ? parseProject(body.project) : null;
 }
 
 export async function deleteProject(id: string): Promise<void> {

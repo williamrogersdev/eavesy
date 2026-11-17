@@ -31,8 +31,8 @@ export const Route = createFileRoute('/api/projects/')({
           return Response.json({ error: 'invalid_request', issues: parsed.error.issues }, { status: 400 });
         }
         const db = getDb();
-        const existing = await projectsRepo.listForUser(db, actor.userId);
-        if (existing.length >= MAX_PROJECTS) {
+        // Only the ones you made count: a team's shared projects don't use up yours.
+        if ((await projectsRepo.countOwn(db, actor.userId)) >= MAX_PROJECTS) {
           return Response.json({ error: 'too_many_projects' }, { status: 409 });
         }
         const id = await projectsRepo.create(db, actor.userId, parsed.data);

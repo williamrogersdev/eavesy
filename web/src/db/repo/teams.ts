@@ -2,7 +2,7 @@ import { and, asc, eq, gt, lte, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { cleanList, parseStringList, PROJECT_LIMITS, type TeamContext } from '@/lib/projects';
 import { pid } from '../ids';
-import { folders, teamInvites, teamMembers, teams, users } from '../schema';
+import { captures, folders, meetings, teamInvites, teamMembers, teams, users } from '../schema';
 
 export type TeamRole = (typeof teamMembers.$inferSelect)['role'];
 export type InviteRole = (typeof teamInvites.$inferSelect)['role'];
@@ -253,6 +253,8 @@ export function departQueries(db: AppDb, userId: string) {
     )`),
     db.delete(teamMembers).where(eq(teamMembers.userId, userId)),
     db.delete(teamInvites).where(sql`team_id ${noMembersLeft}`),
+    // A team left with nobody: its shared projects go back to whoever made them.
+    db.update(folders).set({ teamId: null }).where(sql`team_id IS NOT NULL AND team_id ${noMembersLeft}`),
     db.delete(teams).where(sql`id ${noMembersLeft}`),
   ] as const;
 }
@@ -265,8 +267,17 @@ export async function depart(db: AppDb, userId: string) {
 /** Deletes the team for everyone. Only an owner does this. */
 export async function removeTeam(db: AppDb, args: { teamId: string; actorRole: TeamRole }) {
   if (args.actorRole !== 'owner') throw new TeamError('forbidden');
+  const teamProjects = sql`(SELECT f.id FROM folders f WHERE f.team_id = ${args.teamId})`;
   await db.batch([
-    // Shared projects go back to whoever made them.
+    // Shared projects go back to whoever made them, out of everyone else's recordings.
+    db
+      .update(meetings)
+      .set({ folderId: null })
+      .where(sql`${meetings.folderId} IN ${teamProjects} AND ${meetings.userId} <> (SELECT f.user_id FROM folders f WHERE f.id = ${meetings.folderId})`),
+    db
+      .update(captures)
+      .set({ folderId: null })
+      .where(sql`${captures.folderId} IN ${teamProjects} AND ${captures.userId} <> (SELECT f.user_id FROM folders f WHERE f.id = ${captures.folderId})`),
     db.update(folders).set({ teamId: null }).where(eq(folders.teamId, args.teamId)),
     db.delete(teamInvites).where(eq(teamInvites.teamId, args.teamId)),
     db.delete(teamMembers).where(eq(teamMembers.teamId, args.teamId)),

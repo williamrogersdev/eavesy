@@ -131,7 +131,12 @@ export function ProjectManager() {
     setItems((current) => current.map((item) => (item.id === project.id ? { ...item, shared } : item)));
     setError(null);
     toast.show(shared ? 'Shared with your team' : 'No longer shared');
-    void updateProject(project.id, { shared }).catch((cause: unknown) => {
+    void updateProject(project.id, { shared })
+      .then((after) => {
+        // Unsharing a teammate's project hands it back to them: it leaves this list.
+        if (!after) setItems((current) => current.filter((item) => item.id !== project.id));
+      })
+      .catch((cause: unknown) => {
       setItems((current) => current.map((item) => (item.id === project.id ? { ...item, shared: project.shared } : item)));
       setError(cause instanceof Error ? `Could not change sharing for ${project.name}: ${cause.message}` : `Could not change sharing for ${project.name}.`);
     });
