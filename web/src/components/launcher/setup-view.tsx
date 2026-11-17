@@ -231,9 +231,10 @@ export function SetupView({
             <>Accessibility is off, so I’ll copy instead of paste. Press <Kbd keys="⌘V" /> here.</>
           )}
         </p>
-        {/* Both shortcuts, so a clash with another app is caught and fixed during setup. */}
+        {/* Every shortcut you'll use from day one, so a clash with another app is caught and fixed during setup. */}
         <div className="ev-card">
-          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={talkHint(shortcuts.bindings?.dictation ?? '')} />
+          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={`${talkHint(shortcuts.bindings?.dictation ?? '')} Types into the app you’re in.`} />
+          <ShortcutRow shortcuts={shortcuts} action="assistant" hint="Asks Eavesy a question instead. Nothing is typed into your app; Eavesy answers on the pill and out loud." />
           <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Shows this panel with everything you've captured." />
         </div>
       </>
