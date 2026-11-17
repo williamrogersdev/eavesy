@@ -19,15 +19,17 @@ export function renderTeamInvite(content: TeamInviteContent) {
   const role = content.role === 'admin' ? 'an admin' : 'a member';
   const until = new Date(content.expiresAt).toLocaleDateString('en-US', { dateStyle: 'long', timeZone: 'UTC' });
   // Names are typed by users: they stay out of our own sentences, labelled, on one short line each.
-  const inviter = plain(content.inviterEmail ? `${content.inviterName} (${content.inviterEmail})` : content.inviterName);
+  // The name is capped on its own, so the address after it always shows in full.
+  const inviter = content.inviterEmail ? `${plain(content.inviterName)} (${plain(content.inviterEmail, 320)})` : plain(content.inviterName);
   const team = plain(content.teamName);
   const intro = `Someone on Eavesy invited you to join their team as ${role}.`;
   const fields = [['Invited by', inviter], ['Team', team]] as const;
   const how = 'Sign in to Eavesy with this email address, then accept the invitation on the Team page.';
   const notice = 'Team owners and admins can see the recordings you make after you join.';
   const expiry = `The invitation is open until ${until}. If you weren’t expecting it, you can ignore this email.`;
+  const safety = 'Eavesy never asks for your password or payment details by email.';
 
-  const text = [intro, '', ...fields.map(([label, value]) => `${label}: ${value}`), '', how, content.link, '', notice, '', expiry].join('\n');
+  const text = [intro, '', ...fields.map(([label, value]) => `${label}: ${value}`), '', how, content.link, '', notice, '', expiry, safety].join('\n');
   const html = `<!doctype html><html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#16213f;line-height:1.5;max-width:600px;margin:0 auto;padding:24px">
 <h1 style="font-size:20px;margin:0 0 16px">You’re invited to a team on Eavesy</h1>
 <p style="margin:0 0 16px">${escapeHtml(intro)}</p>
@@ -35,7 +37,7 @@ export function renderTeamInvite(content: TeamInviteContent) {
 <p style="margin:0 0 24px">${escapeHtml(how)}</p>
 <p style="margin:0 0 24px"><a href="${escapeHtml(content.link)}" style="display:inline-block;background:#f2b233;color:#16213f;text-decoration:none;font-weight:600;padding:10px 18px;border-radius:999px">Open the invitation</a></p>
 <p style="color:#505a75;font-size:13px;margin:0 0 8px">${escapeHtml(notice)}</p>
-<p style="color:#666d85;font-size:12px;margin-top:32px">${escapeHtml(expiry)}</p>
+<p style="color:#666d85;font-size:12px;margin-top:32px">${escapeHtml(expiry)}<br>${escapeHtml(safety)}</p>
 </body></html>`;
   return { subject, html, text };
 }
@@ -43,11 +45,11 @@ export function renderTeamInvite(content: TeamInviteContent) {
 const NAME_MAX = 80;
 
 /** One line of user-typed text: control characters and line breaks gone, and capped. */
-function plain(value: string) {
+function plain(value: string, max = NAME_MAX) {
   // eslint-disable-next-line no-control-regex
   const flat = value.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim();
   const chars = Array.from(flat);
-  return chars.length > NAME_MAX ? `${chars.slice(0, NAME_MAX - 1).join('')}…` : flat;
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : flat;
 }
 
 /** Whether the email went out: `unknown` when Resend may have taken it without saying so. */

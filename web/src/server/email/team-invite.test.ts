@@ -27,6 +27,12 @@ describe('renderTeamInvite', () => {
     expect(html).toContain('Acme &amp; Co');
   });
 
+  it('always shows the inviter’s address in full, and says what Eavesy never asks for', () => {
+    const { text } = renderTeamInvite({ ...content, inviterName: 'A'.repeat(300) });
+    expect(text).toContain('… (ada@example.com)');
+    expect(text).toContain('never asks for your password');
+  });
+
   it('keeps a typed name to one short line', () => {
     const { text } = renderTeamInvite({ ...content, teamName: `Acme\n\nVerify your account now ${'x'.repeat(200)}` });
     const line = text.split('\n').find((l) => l.startsWith('Team: '))!;
