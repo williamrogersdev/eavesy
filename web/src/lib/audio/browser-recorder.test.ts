@@ -59,8 +59,12 @@ test('rolls over into back-to-back segments that tile the recording', async () =
   const capture = await recorder((s) => segments.push(s));
   // Wait for two rollovers rather than a fixed time: a busy machine runs its
   // timers late, and the last segment only arrives with stop.
-  const deadline = Date.now() + 5_000;
-  while (segments.length < 2 && Date.now() < deadline) await sleep(10);
+  // The deadline stays well inside bun's 5s test timeout.
+  const deadline = performance.now() + 2_000;
+  while (segments.length < 2 && performance.now() < deadline) await sleep(10);
+  expect(segments.length, 'no two rollovers within 2s').toBeGreaterThanOrEqual(2);
+  // Stop drops a last segment with no length, so let one begin first.
+  await sleep(10);
   await capture.stop();
   capture.dispose();
 
