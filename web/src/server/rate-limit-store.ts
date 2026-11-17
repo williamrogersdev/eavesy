@@ -100,6 +100,8 @@ export const USER_DAILY_QUOTAS = {
   'meeting-export': { limit: 200, failMode: 'closed' },
   // "Send to everyone" sends (each up to 50 recipients).
   'share-notes': { limit: 30, failMode: 'closed' },
+  // Team invitation emails, each to an address outside the account.
+  'team-invite': { limit: 30, failMode: 'closed' },
   // Spoken summaries and suggested replies when a Claude Code session stops.
   'agent-reply': { limit: 1_000, failMode: 'closed' },
   // Saved prompts suggested from recent dictations when Settings → Prompts opens.
