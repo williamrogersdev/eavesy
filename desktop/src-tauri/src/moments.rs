@@ -832,7 +832,7 @@ mod imp {
     pub fn display_count() -> usize {
         let mut count = 0u32;
         let ok = unsafe { CGGetActiveDisplayList(0, std::ptr::null_mut(), &mut count) } == 0;
-        if ok { count as usize } else { 1 }
+        if ok { (count as usize).max(1) } else { 1 }
     }
 
     pub struct Own;

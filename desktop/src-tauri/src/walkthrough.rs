@@ -117,7 +117,7 @@ pub fn spawn(app: AppHandle, id: String) {
                     notice: Some(match &result {
                         // The control reads these: any notice is "ready", and
                         // one that starts "Partly" is missing something.
-                        Ok(()) => "Ready to copy: narration, screen text and highlights.".into(),
+                        Ok(()) => "Ready to copy.".into(),
                         Err(error) => format!("Partly ready: {error}"),
                     }),
                     ..current

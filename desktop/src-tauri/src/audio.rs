@@ -542,6 +542,14 @@ fn count_down(app: &AppHandle, state: &State<'_, Captures>) -> Result<bool, Stri
         }
         *now = Some(Countdown::Running);
     }
+    // Whatever ends this, the next recording can count down again.
+    struct Counting;
+    impl Drop for Counting {
+        fn drop(&mut self) {
+            *countdown() = None;
+        }
+    }
+    let _counting = Counting;
     crate::hud::set_state(app, starting_video(Some(now_ms() + SCREEN_COUNTDOWN.as_millis() as i64)));
     let deadline = Instant::now() + SCREEN_COUNTDOWN;
     let record = loop {
@@ -551,7 +559,8 @@ fn count_down(app: &AppHandle, state: &State<'_, Captures>) -> Result<bool, Stri
         }
         std::thread::sleep(Duration::from_millis(40));
     };
-    *countdown() = None;
+    // A Cancel that landed after the last look still counts.
+    let record = record && countdown().take() != Some(Countdown::Cancelled);
     if record {
         // "Starting…" while the engine opens the screen and the mic.
         Ok(crate::hud::set_state_if(app, starting_video(None), is_starting_video))

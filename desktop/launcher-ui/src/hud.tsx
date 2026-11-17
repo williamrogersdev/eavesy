@@ -303,6 +303,9 @@ const ROOM_FOR_WORDS = 60;
 /** The recording bar's row (`.ctl-top` at data-size="bar"); a shorter window gets the pill's 36px row. */
 const BAR_ROW = 40;
 
+/** How long a saved screen recording's pill waits to hear it is ready (`READY_WAIT` in walkthrough.rs). */
+const VIDEO_PREPARING_HOLD_MS = 300_000;
+
 /** How long an error on the idle pill stays before Talk comes back. */
 const IDLE_ERROR_MS = 6000;
 
@@ -791,9 +794,11 @@ function Hud() {
   useEffect(() => {
     if (!state || editing || finding || choosing || saving || saveError || rewriting || pendingEdit.current || !HELD_PHASES.includes(state.phase)) return;
     // A saved screen recording stays until it is ready to copy (its notice
-    // says so), and while a Copy is waiting on that.
-    if (state.phase === 'done' && state.mode === 'video' && (!state.notice || copying)) return;
-    const hold = holdMs(state.phase, pointer, overSince.current, Date.now(), receipt, state.phase === 'saved' && !!state.notice);
+    // says so), and while a Copy is waiting on that. Should "ready" never
+    // come, it still goes after as long as Copy would wait for it.
+    if (state.phase === 'done' && state.mode === 'video' && copying) return;
+    const preparing = state.phase === 'done' && state.mode === 'video' && !state.notice;
+    const hold = preparing ? VIDEO_PREPARING_HOLD_MS : holdMs(state.phase, pointer, overSince.current, Date.now(), receipt, state.phase === 'saved' && !!state.notice);
     if (hold === null) return;
     const sessionId = state.sessionId;
     const timeout = window.setTimeout(() => {

@@ -550,14 +550,14 @@ pub fn set_peek(app: &AppHandle, session_id: String, open: bool) {
     let _ = rx.recv_timeout(std::time::Duration::from_millis(500));
 }
 
-/// The user closed the control with its X: it stays hidden while idle, until
-/// the panel folds back into it, which brings the pill back.
 /// Whether the control comes up for a recording: not when Settings keeps it
 /// off screen ("Never").
 pub fn shows_recordings(app: &AppHandle) -> bool {
     !prefs(app).quiet
 }
 
+/// The user closed the control with its X: it stays hidden while idle, until
+/// the panel folds back into it, which brings the pill back.
 pub fn hidden_by_user(app: &AppHandle) -> bool {
     prefs(app).hidden
 }

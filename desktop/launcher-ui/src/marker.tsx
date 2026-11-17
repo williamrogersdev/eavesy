@@ -47,6 +47,13 @@ function Marker() {
   const stampTimers = useRef(new Set<number>());
   useEffect(() => () => stampTimers.current.forEach((timer) => window.clearTimeout(timer)), []);
 
+  const closing = useRef<number | null>(null);
+  const keepOpen = () => {
+    if (closing.current !== null) window.clearTimeout(closing.current);
+    closing.current = null;
+  };
+  useEffect(() => keepOpen, []);
+
   useEvent('marker:hover', (payload) => setHover(payload as Hover | null));
   useEvent('moments:tagged', (payload) => {
     const tagged = payload as Omit<Tagged, 'key'>;
@@ -63,6 +70,9 @@ function Marker() {
     dragStart.current = null;
     setDrag(null);
     setError(null);
+    // A close still pending belongs to the highlighter as it was: reopened
+    // meanwhile, it must not be put away again.
+    keepOpen();
     if (!marking.tool) setHover(null);
   }, [marking.tool]);
 
@@ -70,12 +80,6 @@ function Marker() {
     setError(null);
     void invoke(cmd, args).catch((reason: unknown) => setError(errMsg(reason, 'Couldn’t do that')));
   };
-  const closing = useRef<number | null>(null);
-  const keepOpen = () => {
-    if (closing.current !== null) window.clearTimeout(closing.current);
-    closing.current = null;
-  };
-  useEffect(() => keepOpen, []);
   /** Saves a highlight, then closes unless more were asked for (⇧) or it failed. */
   const highlight = (cmd: 'mark_element' | 'mark_area', args: Record<string, unknown>, more: boolean) => {
     setError(null);
