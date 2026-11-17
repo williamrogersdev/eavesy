@@ -33,6 +33,27 @@ final class WalkthroughTests: XCTestCase {
         return try XCTUnwrap(sample)
     }
 
+    /// The engine pauses whichever recorder it has through the protocol; that
+    /// call has to reach the screen recorder, not the do-nothing default.
+    func testPausingThroughTheRecorderProtocolReachesTheScreenRecorder() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let recorder = ScreenRecorder(outPath: dir.appendingPathComponent("screen.mp4").path, includeMic: false)
+        recorder.setupWriter(width: 960, height: 540)
+        let engine: Recorder = recorder
+        engine.setPaused(true)
+        // Frames stamped after the pause began (it is on the host clock).
+        let later = CMTimeGetSeconds(CMClockGetTime(CMClockGetHostTimeClock())) + 1
+        for index in 0..<10 { recorder.appendVideo(try frame(later + Double(index) / 30, label: "Paused")) }
+        let stopped = expectation(description: "stopped")
+        recorder.stop { duration in
+            XCTAssertEqual(duration, 0, "nothing captured during the pause is written")
+            stopped.fulfill()
+        }
+        await fulfillment(of: [stopped], timeout: 20)
+    }
+
     func testAPausedStretchIsLeftOutOfTheFile() async throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

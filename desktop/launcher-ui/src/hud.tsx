@@ -328,9 +328,11 @@ function useMicSignal(sessionId: string | null, active: boolean, now: number): {
     const value = payload as { sessionId: string; rms: number };
     if (value.sessionId === sessionId) signal.current = { sessionId, rms: value.rms, at: Date.now() };
   });
-  // Nothing arrives while it is off (a pause): forget the last level, so the
-  // quiet since is not read as a dead microphone when it comes back.
-  if (!active && signal.current.at) signal.current = { sessionId: null, rms: 0, at: 0 };
+  // Nothing arrives while it is off (a pause): forget the last level then, so
+  // the quiet since is not read as a dead microphone when it comes back.
+  useEffect(() => {
+    if (!active) signal.current = { sessionId: null, rms: 0, at: 0 };
+  }, [active]);
   const own = active && signal.current.sessionId === sessionId ? signal.current : { rms: 0, at: 0 };
   return { heard: now - own.at < 2000 && own.rms >= 0.002, silent: own.at > 0 && now - own.at > 5000 };
 }

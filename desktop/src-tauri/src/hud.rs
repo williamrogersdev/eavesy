@@ -24,7 +24,7 @@ pub enum Phase {
 /// A dictation that started as an answer to a Claude Code card: `{ sessionId, name }`.
 pub const EVENT_ANSWERING: &str = "hud:answering";
 
-#[derive(Serialize, Clone, Debug)]
+#[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct HudState {
     pub phase: Phase,
@@ -86,23 +86,35 @@ fn started_after_pause(started_at_ms: Option<i64>, paused_at_ms: i64, now_ms: i6
 /// from where it stopped. False when that recording is not the one on screen.
 pub fn set_paused(app: &AppHandle, session_id: &str, paused: bool, now_ms: i64) -> bool {
     let on_screen = |now: &HudState| now.phase == Phase::Recording && now.session_id.as_deref() == Some(session_id);
-    let mut next = current();
-    if !on_screen(&next) {
-        return false;
-    }
-    {
-        let mut slot = PAUSED.lock().unwrap_or_else(|error| error.into_inner());
-        let was = slot.as_ref().filter(|(id, _)| id == session_id).map(|(_, at_ms)| *at_ms);
-        match (paused, was) {
-            (true, None) => *slot = Some((session_id.to_string(), now_ms)),
-            (false, Some(at_ms)) => {
-                *slot = None;
-                next.started_at_ms = started_after_pause(next.started_at_ms, at_ms, now_ms);
-            }
-            _ => return true,
+    // The state is read, changed and put back; if anything else changed it
+    // in between, start again from what it is now.
+    for _ in 0..4 {
+        let seen = current();
+        if !on_screen(&seen) {
+            return false;
         }
+        let mut next = seen.clone();
+        let before = {
+            let mut slot = PAUSED.lock().unwrap_or_else(|error| error.into_inner());
+            let before = slot.clone();
+            let was = before.as_ref().filter(|(id, _)| id == session_id).map(|(_, at_ms)| *at_ms);
+            match (paused, was) {
+                (true, None) => *slot = Some((session_id.to_string(), now_ms)),
+                (false, Some(at_ms)) => {
+                    *slot = None;
+                    next.started_at_ms = started_after_pause(next.started_at_ms, at_ms, now_ms);
+                }
+                _ => return true,
+            }
+            before
+        };
+        // The slot is set first because the state that goes out reads it.
+        if set_state_if(app, next, |now| *now == seen) {
+            return true;
+        }
+        *PAUSED.lock().unwrap_or_else(|error| error.into_inner()) = before;
     }
-    set_state_if(app, next, on_screen)
+    false
 }
 
 static TRANSITION: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -141,6 +153,13 @@ pub fn set_state_if(app: &AppHandle, state: HudState, allowed: impl FnOnce(&HudS
         let mut tucked = TUCKED.lock().unwrap_or_else(|error| error.into_inner());
         if !keeps_tuck(tucked.as_deref(), &state) {
             *tucked = None;
+        }
+    }
+    {
+        // A pause ends with its recording: stopped, failed or replaced.
+        let mut paused = PAUSED.lock().unwrap_or_else(|error| error.into_inner());
+        if paused_at(paused.as_ref(), &state).is_none() {
+            *paused = None;
         }
     }
     {

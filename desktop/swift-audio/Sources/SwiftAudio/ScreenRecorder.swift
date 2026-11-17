@@ -34,10 +34,9 @@ final class ScreenRecorder: NSObject, Recorder {
     private var micSamplesWritten = 0
     private var micPeakRms = 0.0
 
-    // Pauses, on the writer queue. `micPaused` mirrors it under `mixLock` for
-    // the capture callbacks, which skip their work while nothing is kept.
+    // Pauses, on the writer queue: the one place that decides what is kept.
     private var pauses = PauseTimeline()
-    private var micPaused = false
+    private var warnedAboutRetiming = false
 
     private var displayWidth = 1920
     private var displayHeight = 1080
@@ -171,24 +170,22 @@ final class ScreenRecorder: NSObject, Recorder {
 
     /// Stops keeping what is captured, or starts again. The file has no gap:
     /// what comes after a pause follows straight on from what came before.
-    /// `time` is on the capture clock; nil means now.
-    func setPaused(_ paused: Bool, at time: CMTime? = nil) {
+    func setPaused(_ paused: Bool) {
+        setPaused(paused, at: nil)
+    }
+
+    /// `time` is on the host time clock, which ScreenCaptureKit and the
+    /// microphone session both stamp their samples with; nil means now.
+    func setPaused(_ paused: Bool, at time: CMTime?) {
         writerQueue.async { [weak self] in
             guard let self, !self.finished else { return }
             let at = time ?? CMClockGetTime(CMClockGetHostTimeClock())
             guard paused ? self.pauses.pause(at: at) : self.pauses.resume(at: at) else { return }
+            // Computer sound from before or during the pause must not be mixed in after it.
             self.mixLock.lock()
-            self.micPaused = paused
-            // Computer sound from before the pause must not be mixed in after it.
             self.systemResidual.removeAll(keepingCapacity: true)
             self.mixLock.unlock()
         }
-    }
-
-    private var capturesArePaused: Bool {
-        mixLock.lock()
-        defer { mixLock.unlock() }
-        return micPaused
     }
 
     /// The sample moved to where it belongs in the file, or nil when it was
@@ -198,15 +195,25 @@ final class ScreenRecorder: NSObject, Recorder {
         guard let pts = pauses.placed(captured, duration: CMSampleBufferGetDuration(sampleBuffer)) else { return nil }
         if CMTimeCompare(pts, captured) == 0 { return (sampleBuffer, pts, captured) }
         let cut = CMTimeSubtract(captured, pts)
-        guard let timings = try? sampleBuffer.sampleTimingInfos() else { return nil }
+        guard let timings = try? sampleBuffer.sampleTimingInfos() else { return unmovable() }
         let moved = timings.map { timing -> CMSampleTimingInfo in
             var timing = timing
             timing.presentationTimeStamp = CMTimeSubtract(timing.presentationTimeStamp, cut)
             if timing.decodeTimeStamp.isValid { timing.decodeTimeStamp = CMTimeSubtract(timing.decodeTimeStamp, cut) }
             return timing
         }
-        guard let buffer = try? CMSampleBuffer(copying: sampleBuffer, withNewTiming: moved) else { return nil }
+        guard let buffer = try? CMSampleBuffer(copying: sampleBuffer, withNewTiming: moved) else { return unmovable() }
         return (buffer, pts, captured)
+    }
+
+    /// A sample after a pause that could not be given its new time is left
+    /// out; say so once, so a recording that stops growing is explained.
+    private func unmovable() -> (buffer: CMSampleBuffer, pts: CMTime, captured: CMTime)? {
+        if !warnedAboutRetiming {
+            warnedAboutRetiming = true
+            EventEmitter.warning("Could not place a sample after the pause; it was left out of the recording")
+        }
+        return nil
     }
 
     // MARK: - Appending
@@ -319,7 +326,7 @@ final class ScreenRecorder: NSObject, Recorder {
 
     // Shared by the capture delegate and the synthetic no-system-audio test.
     func appendMicrophone(_ sampleBuffer: CMSampleBuffer) {
-        guard CMSampleBufferGetNumSamples(sampleBuffer) > 0, !capturesArePaused else { return }
+        guard CMSampleBufferGetNumSamples(sampleBuffer) > 0 else { return }
         emitLevelIfDue(sampleBuffer)
         if let mixed = mixedMicrophoneBuffer(sampleBuffer) { appendAudio(mixed, isMic: true) }
     }
@@ -429,7 +436,7 @@ extension ScreenRecorder: SCStreamOutput, SCStreamDelegate {
             guard sampleBuffer.isValidScreenFrame else { return }
             appendVideo(sampleBuffer)
         case .audio:
-            guard CMSampleBufferGetNumSamples(sampleBuffer) > 0, !capturesArePaused else { return }
+            guard CMSampleBufferGetNumSamples(sampleBuffer) > 0 else { return }
             if includeMic {
                 guard let pcm = AudioRecorder.toFloatBuffer(sampleBuffer), let ch = pcm.floatChannelData else { return }
                 mixLock.lock()
