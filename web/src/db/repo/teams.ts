@@ -224,7 +224,17 @@ export async function removeMember(db: AppDb, args: { teamId: string; actorRole:
       ),
     )
     .returning({ userId: teamMembers.userId });
-  if (removed[0]) return;
+  if (removed[0]) {
+    // The team keeps its projects, so they leave the removed member's recordings, captures and bots.
+    await db.batch(
+      unfile(
+        db,
+        (table) => sql`${table.userId} = ${args.userId} AND ${table.folderId} IN (SELECT f.id FROM folders f WHERE f.team_id = ${args.teamId})
+          AND NOT EXISTS (SELECT 1 FROM team_members m WHERE m.team_id = ${args.teamId} AND m.user_id = ${args.userId})`,
+      ),
+    );
+    return;
+  }
   // Nothing went: they left, their role changed under us, or they are the last owner.
   const current = await roleIn(db, args.teamId, args.userId);
   if (!current) throw new TeamError('not_found');

@@ -30,12 +30,16 @@ export const Route = createFileRoute('/api/projects/')({
         if (!parsed.success) {
           return Response.json({ error: 'invalid_request', issues: parsed.error.issues }, { status: 400 });
         }
+        const { shared, ...fields } = parsed.data;
+        if (shared) {
+          return Response.json({ error: 'invalid_request', message: 'Create the project first, then share it.' }, { status: 400 });
+        }
         const db = getDb();
         // Only the ones you made count: a team's shared projects don't use up yours.
         if ((await projectsRepo.countOwn(db, actor.userId)) >= MAX_PROJECTS) {
           return Response.json({ error: 'too_many_projects' }, { status: 409 });
         }
-        const id = await projectsRepo.create(db, actor.userId, parsed.data);
+        const id = await projectsRepo.create(db, actor.userId, fields);
         const project = await projectsRepo.getForUser(db, { id, userId: actor.userId });
         return Response.json({ project: { ...project, recordingCount: 0 } }, { status: 201 });
       },

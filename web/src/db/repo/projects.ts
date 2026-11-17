@@ -133,7 +133,8 @@ function columns(input: Omit<ProjectInput, 'shared'>) {
   };
 }
 
-export async function create(db: AppDb, userId: string, input: ProjectInput & { name: string }): Promise<string> {
+/** Makes a private project; share it afterwards with `update`. */
+export async function create(db: AppDb, userId: string, input: Omit<ProjectInput, 'shared'> & { name: string }): Promise<string> {
   const id = pid('proj');
   const now = Date.now();
   const last = (

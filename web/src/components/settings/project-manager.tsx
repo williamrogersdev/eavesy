@@ -137,9 +137,9 @@ export function ProjectManager() {
         if (!after) setItems((current) => current.filter((item) => item.id !== project.id));
       })
       .catch((cause: unknown) => {
-      setItems((current) => current.map((item) => (item.id === project.id ? { ...item, shared: project.shared } : item)));
-      setError(cause instanceof Error ? `Could not change sharing for ${project.name}: ${cause.message}` : `Could not change sharing for ${project.name}.`);
-    });
+        setItems((current) => current.map((item) => (item.id === project.id ? { ...item, shared: project.shared } : item)));
+        setError(cause instanceof Error ? `Could not change sharing for ${project.name}: ${cause.message}` : `Could not change sharing for ${project.name}.`);
+      });
   };
 
   const remove = (project: ProjectSummary) => {

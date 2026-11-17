@@ -2,6 +2,7 @@ import { applyD1Migrations } from 'cloudflare:test';
 import { drizzle } from 'drizzle-orm/d1';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as projectsRepo from '../../src/db/repo/projects';
+import * as teamsRepo from '../../src/db/repo/teams';
 import * as dbSchema from '../../src/db/schema';
 import { combinedContext, contextTerms } from '../../src/lib/projects';
 import { Route as MeetingRoute } from '../../src/routes/api/meetings/$id';
@@ -58,7 +59,7 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await resetTables('captures', 'meetings', 'folders', 'team_invites', 'team_members', 'teams', 'users');
+  await resetTables('meeting_bots', 'captures', 'meetings', 'folders', 'team_invites', 'team_members', 'teams', 'users');
   for (const id of [ADA, BO, CY, DI]) await insertUser(id);
   const now = Date.now();
   await testEnv.DB.batch([
@@ -167,6 +168,21 @@ describe('projects shared with the team', () => {
     await call(ADA, TeamRoute, 'DELETE', '/api/team');
     expect(await row('SELECT team_id FROM folders WHERE id = ?', id)).toEqual({ team_id: null });
     expect(await row('SELECT folder_id FROM meetings WHERE id = ?', 'meet_ada')).toEqual({ folder_id: id });
+  });
+
+  it('takes the team’s projects out of a removed member’s recordings and bots, and refuses to create one already shared', async () => {
+    const id = await createProject(ADA, 'Roadmap');
+    await patchProject(ADA, id, { shared: true });
+    await fileMeeting(BO, 'meet_bo', id);
+    const now = Date.now();
+    await testEnv.DB.prepare(
+      "INSERT INTO meeting_bots (id, user_id, provider, meeting_url, platform, status, folder_id, created_at, updated_at) VALUES ('bot_bo', ?, 'recall', 'https://zoom.us/j/1', 'zoom', 'scheduled', ?, ?, ?)",
+    ).bind(BO, id, now, now).run();
+    await teamsRepo.removeMember(db, { teamId: TEAM, actorRole: 'owner', userId: BO });
+    expect(await row('SELECT folder_id FROM meetings WHERE id = ?', 'meet_bo')).toEqual({ folder_id: null });
+    expect(await row('SELECT folder_id FROM meeting_bots WHERE id = ?', 'bot_bo')).toEqual({ folder_id: null });
+
+    expect((await call(ADA, ProjectsRoute, 'POST', '/api/projects', {}, { name: 'Born shared', shared: true })).status).toBe(400);
   });
 
   it('counts only your own projects toward the limit', async () => {
