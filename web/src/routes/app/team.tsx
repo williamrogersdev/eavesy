@@ -433,7 +433,7 @@ function TeamContextSection({ team, manages, busy, change }: { team: InTeam['tea
         className="flex flex-col gap-2"
         onSubmit={(event) => {
           event.preventDefault();
-          const vocabulary = terms.split(',').map((term) => term.trim()).filter(Boolean);
+          const vocabulary = terms.split(/[,;\n]/).map((term) => term.trim()).filter(Boolean);
           void change(() => call('PATCH', '/api/team', { about: about.trim() || null, vocabulary }));
         }}
       >

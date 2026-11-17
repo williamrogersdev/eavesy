@@ -141,6 +141,34 @@ describe('projects shared with the team', () => {
     expect((await patchProject(CY, id, { about: 'Owned by the team now.' })).status).toBe(200);
   });
 
+  it('goes to the admin who unshares it once its creator has left, not back to the creator', async () => {
+    const id = await createProject(BO, 'Billing');
+    await patchProject(BO, id, { shared: true });
+    await fileMeeting(ADA, 'meet_ada', id);
+    expect((await call(BO, TeamRoute, 'DELETE', '/api/team')).status).toBe(200);
+    expect((await patchProject(CY, id, { shared: false })).status).toBe(200);
+    expect(await row('SELECT user_id, team_id FROM folders WHERE id = ?', id)).toEqual({ user_id: CY, team_id: null });
+    expect((await listProjects(BO)).find((p) => p.id === id)).toBeUndefined();
+    expect((await listProjects(CY)).find((p) => p.id === id)).toMatchObject({ shared: false, canEdit: true });
+    expect(await row('SELECT folder_id FROM meetings WHERE id = ?', 'meet_ada')).toEqual({ folder_id: null });
+  });
+
+  it('takes the team’s projects out of a leaver’s recordings, and the last member’s teammates’ out of theirs', async () => {
+    const id = await createProject(ADA, 'Roadmap');
+    await patchProject(ADA, id, { shared: true });
+    await fileMeeting(BO, 'meet_bo', id);
+    await fileMeeting(ADA, 'meet_ada', id);
+    expect((await call(BO, TeamRoute, 'DELETE', '/api/team')).status).toBe(200);
+    expect(await row('SELECT folder_id FROM meetings WHERE id = ?', 'meet_bo')).toEqual({ folder_id: null });
+    expect(await row('SELECT folder_id FROM meetings WHERE id = ?', 'meet_ada')).toEqual({ folder_id: id });
+
+    // Cy leaves, then Ada, the last: the project goes back to her with her recording still in it.
+    await call(CY, TeamRoute, 'DELETE', '/api/team');
+    await call(ADA, TeamRoute, 'DELETE', '/api/team');
+    expect(await row('SELECT team_id FROM folders WHERE id = ?', id)).toEqual({ team_id: null });
+    expect(await row('SELECT folder_id FROM meetings WHERE id = ?', 'meet_ada')).toEqual({ folder_id: id });
+  });
+
   it('counts only your own projects toward the limit', async () => {
     const before = (await row<{ n: number }>('SELECT count(*) AS n FROM folders WHERE user_id = ?', BO))?.n;
     const id = await createProject(ADA, 'Roadmap');

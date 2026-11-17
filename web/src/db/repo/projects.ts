@@ -1,7 +1,7 @@
 import { and, asc, desc, eq, isNull, ne, sql, type SQL } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { pid } from '../ids';
-import { captures, folders, meetings, summaries } from '../schema';
+import { captures, folders, meetingBots, meetings, summaries } from '../schema';
 import { contextFor, membershipOf } from './teams';
 import { cleanList, parseStringList, PROJECT_LIMITS, type Project, type TeamContext } from '@/lib/projects';
 import { isDictationStyle, type DictationStyle } from '@/lib/transcription/dictation-style';
@@ -175,25 +175,30 @@ export async function update(db: AppDb, args: { id: string; userId: string } & P
   if (!current) return 'not_found';
   if (!Number(current.canEdit)) return 'forbidden';
   let teamId: string | null | undefined;
+  // Unsharing hands it back to its creator, or to whoever unshares it once the creator has left the team.
+  let ownerId = current.ownerId;
   if (shared === true && current.teamId === null) {
     teamId = (await membershipOf(db, userId))?.teamId ?? null;
     if (!teamId) return 'no_team';
   } else if (shared === false && current.teamId !== null) {
     teamId = null;
+    if ((await membershipOf(db, current.ownerId))?.teamId !== current.teamId) ownerId = userId;
   }
   const writes = [
     db
       .update(folders)
-      .set({ ...columns(input), ...(teamId !== undefined ? { teamId } : {}), updatedAt: Date.now() })
-      .where(and(eq(folders.id, id), editable(userId))),
+      .set({ ...columns(input), ...(teamId !== undefined ? { teamId, userId: ownerId } : {}), updatedAt: Date.now() })
+      // Compare-and-swap on the team it was read in, so a concurrent share or unshare doesn't land twice.
+      .where(and(eq(folders.id, id), editable(userId), current.teamId === null ? isNull(folders.teamId) : eq(folders.teamId, current.teamId))),
   ] as const;
   if (teamId === null) {
-    // Only if the project did go back to its creator: the permission is checked again in the write.
-    const unshared = sql`EXISTS (SELECT 1 FROM folders f WHERE f.id = ${id} AND f.team_id IS NULL)`;
+    // Only if the project did go to `ownerId`: the permission is checked again in the write.
+    const unshared = sql`EXISTS (SELECT 1 FROM folders f WHERE f.id = ${id} AND f.team_id IS NULL AND f.user_id = ${ownerId})`;
     await db.batch([
       ...writes,
-      db.update(meetings).set({ folderId: null }).where(and(eq(meetings.folderId, id), ne(meetings.userId, current.ownerId), unshared)),
-      db.update(captures).set({ folderId: null }).where(and(eq(captures.folderId, id), ne(captures.userId, current.ownerId), unshared)),
+      db.update(meetings).set({ folderId: null }).where(and(eq(meetings.folderId, id), ne(meetings.userId, ownerId), unshared)),
+      db.update(captures).set({ folderId: null }).where(and(eq(captures.folderId, id), ne(captures.userId, ownerId), unshared)),
+      db.update(meetingBots).set({ folderId: null }).where(and(eq(meetingBots.folderId, id), ne(meetingBots.userId, ownerId), unshared)),
     ]);
   } else {
     await db.batch(writes);

@@ -1,8 +1,8 @@
-import { and, asc, eq, gt, lte, sql } from 'drizzle-orm';
+import { and, asc, eq, gt, lte, sql, type SQL } from 'drizzle-orm';
 import type { AppDb } from '../client';
 import { cleanList, parseStringList, PROJECT_LIMITS, type TeamContext } from '@/lib/projects';
 import { pid } from '../ids';
-import { captures, folders, meetings, teamInvites, teamMembers, teams, users } from '../schema';
+import { captures, folders, meetingBots, meetings, teamInvites, teamMembers, teams, users } from '../schema';
 
 export type TeamRole = (typeof teamMembers.$inferSelect)['role'];
 export type InviteRole = (typeof teamInvites.$inferSelect)['role'];
@@ -239,7 +239,14 @@ export async function removeMember(db: AppDb, args: { teamId: string; actorRole:
  */
 export function departQueries(db: AppDb, userId: string) {
   const noMembersLeft = sql.raw(`NOT IN (SELECT team_id FROM team_members)`);
+  // The team's projects the leaver can no longer use: all of them while anyone else stays
+  // (the team keeps even the ones they made), and only other people's if they were the last.
+  const lostProjects = sql`(SELECT f.id FROM folders f WHERE f.team_id = (SELECT team_id FROM team_members WHERE user_id = ${userId})
+    AND (f.user_id <> ${userId} OR EXISTS (SELECT 1 FROM team_members o WHERE o.team_id = f.team_id AND o.user_id <> ${userId})))`;
+  // Projects of a team left with nobody, which go back to whoever made them.
+  const orphanedProjects = sql`(SELECT f.id FROM folders f WHERE f.team_id IS NOT NULL AND f.team_id ${noMembersLeft})`;
   return [
+    ...unfile(db, (table) => sql`${table.userId} = ${userId} AND ${table.folderId} IN ${lostProjects}`),
     db.update(teamMembers).set({ role: 'owner' }).where(sql`rowid = (
       SELECT next.rowid FROM team_members next
       WHERE next.team_id = (SELECT team_id FROM team_members WHERE user_id = ${userId} AND role = 'owner')
@@ -253,9 +260,21 @@ export function departQueries(db: AppDb, userId: string) {
     )`),
     db.delete(teamMembers).where(eq(teamMembers.userId, userId)),
     db.delete(teamInvites).where(sql`team_id ${noMembersLeft}`),
-    // A team left with nobody: its shared projects go back to whoever made them.
+    // A team left with nobody: its shared projects go back to whoever made them, out of anyone else's recordings.
+    ...unfile(db, (table) => sql`${table.folderId} IN ${orphanedProjects} AND ${table.userId} <> (SELECT f.user_id FROM folders f WHERE f.id = ${table.folderId})`),
     db.update(folders).set({ teamId: null }).where(sql`team_id IS NOT NULL AND team_id ${noMembersLeft}`),
     db.delete(teams).where(sql`id ${noMembersLeft}`),
+  ] as const;
+}
+
+type Filed = typeof meetings | typeof captures | typeof meetingBots;
+
+/** Takes the rows `where` picks out of their project, in recordings, captures and scheduled bots alike. */
+function unfile(db: AppDb, where: (table: Filed) => SQL) {
+  return [
+    db.update(meetings).set({ folderId: null }).where(where(meetings)),
+    db.update(captures).set({ folderId: null }).where(where(captures)),
+    db.update(meetingBots).set({ folderId: null }).where(where(meetingBots)),
   ] as const;
 }
 
@@ -269,15 +288,8 @@ export async function removeTeam(db: AppDb, args: { teamId: string; actorRole: T
   if (args.actorRole !== 'owner') throw new TeamError('forbidden');
   const teamProjects = sql`(SELECT f.id FROM folders f WHERE f.team_id = ${args.teamId})`;
   await db.batch([
-    // Shared projects go back to whoever made them, out of everyone else's recordings.
-    db
-      .update(meetings)
-      .set({ folderId: null })
-      .where(sql`${meetings.folderId} IN ${teamProjects} AND ${meetings.userId} <> (SELECT f.user_id FROM folders f WHERE f.id = ${meetings.folderId})`),
-    db
-      .update(captures)
-      .set({ folderId: null })
-      .where(sql`${captures.folderId} IN ${teamProjects} AND ${captures.userId} <> (SELECT f.user_id FROM folders f WHERE f.id = ${captures.folderId})`),
+    // Shared projects go back to whoever made them, out of everyone else's recordings and scheduled bots.
+    ...unfile(db, (table) => sql`${table.folderId} IN ${teamProjects} AND ${table.userId} <> (SELECT f.user_id FROM folders f WHERE f.id = ${table.folderId})`),
     db.update(folders).set({ teamId: null }).where(eq(folders.teamId, args.teamId)),
     db.delete(teamInvites).where(eq(teamInvites.teamId, args.teamId)),
     db.delete(teamMembers).where(eq(teamMembers.teamId, args.teamId)),
