@@ -6,6 +6,12 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-11-17 - desktop
+
+### Added
+
+- Mac app: make it obvious when the pill is talking to Eavesy or Claude ([#412](https://github.com/williamrogersdev/eavesy/pull/412))
+
 ## [0.11.0] - 2026-11-17 - desktop
 
 ### Added
