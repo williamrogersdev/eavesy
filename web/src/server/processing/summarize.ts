@@ -266,14 +266,14 @@ async function writeSummary(
 
   const userRow = (await db.select().from(users).where(eq(users.id, meeting.userId)).limit(1))[0];
   const plan = resolveModelPlan(userRow ? await openUserKeys(userRow) : undefined);
-  const project = await projectsRepo.getForMeeting(db, meeting);
+  const { project, team } = await projectsRepo.contextForMeeting(db, meeting);
   // The calendar's view of the meeting; the last one with the same people only for the final notes.
   const calendar = await loadMeetingContext(db, meeting, { previous: mode.final });
   const useCredits = env.AI_SUMMARY_PROVIDER === 'workers-ai' && meeting.source === 'import';
   let answered: string | undefined;
   const args = {
     transcript,
-    contextBlurb: combinedContext(meeting.contextBlurb, project),
+    contextBlurb: combinedContext(meeting.contextBlurb, project, [], team),
     priorSummary,
     rolling: !mode.final,
     model: plan.summary.model,

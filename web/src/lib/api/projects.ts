@@ -24,6 +24,9 @@ export function parseProject(value: unknown): ProjectSummary | null {
     dictationStyle: isDictationStyle(value.dictationStyle) ? value.dictationStyle : null,
     dictationForAgents: typeof value.dictationForAgents === 'boolean' ? value.dictationForAgents : null,
     recordingCount: typeof value.recordingCount === 'number' ? value.recordingCount : 0,
+    shared: value.shared === true,
+    // Older servers don't say: everything they list is the reader's own.
+    canEdit: value.canEdit !== false,
   };
 }
 
@@ -31,7 +34,8 @@ async function json(response: Response): Promise<unknown> {
   if (!response.ok) {
     const body: unknown = await response.json().catch(() => null);
     const code = isRecord(body) && typeof body.error === 'string' ? body.error : `status ${response.status}`;
-    throw new Error(code === 'too_many_projects' ? 'You have reached the project limit.' : `Server returned ${code}`);
+    const message = isRecord(body) && typeof body.message === 'string' ? body.message : null;
+    throw new Error(code === 'too_many_projects' ? 'You have reached the project limit.' : message ?? `Server returned ${code}`);
   }
   return await response.json();
 }

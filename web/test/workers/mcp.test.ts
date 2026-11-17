@@ -293,6 +293,7 @@ describe('MCP account tools', () => {
     expect(info).toEqual({
       email: 'ada@example.com',
       name: 'Ada',
+      team: null,
       connection: {
         name: 'Claude',
         access: ['read', 'write'],
@@ -358,6 +359,37 @@ Will: Bump it.
     expect(agent.transcript).toContain('Will: Bump it.');
     const raw = await call(token, 'get_meeting', { id: 'm1', transcript_format: 'raw' });
     expect(raw.transcript).toBe('[00:00] Will: um bump it');
+  });
+
+  it('list the projects a team shares, and give the team’s context', async () => {
+    const now = Date.now();
+    await testEnv.DB.batch([
+      testEnv.DB.prepare(
+        `INSERT INTO users (id, default_transcription_engine, default_language, is_anonymous, created_at, updated_at) VALUES ('user_lead', 'whisper', 'en', 0, ?, ?)`,
+      ).bind(now, now),
+      testEnv.DB.prepare(
+        `INSERT INTO teams (id, name, created_by, about, vocabulary_json, created_at, updated_at) VALUES ('team_mcp', 'Acme', 'user_lead', 'Billing software.', '["Ledgerly"]', ?, ?)`,
+      ).bind(now, now),
+      testEnv.DB.prepare(`INSERT INTO team_members (team_id, user_id, role, created_at) VALUES ('team_mcp', 'user_lead', 'owner', ?), ('team_mcp', 'user_mcp', 'member', ?)`).bind(now, now),
+      testEnv.DB.prepare(
+        `INSERT INTO folders (id, user_id, name, about, vocabulary_json, match_json, team_id) VALUES ('f_team', 'user_lead', 'Roadmap', 'Next quarter.', '[]', '[]', 'team_mcp')`,
+      ),
+    ]);
+    try {
+      const { token } = await mint();
+      const projects = await call(token, 'list_projects', {});
+      expect(projects).toContainEqual({ name: 'Roadmap', about: 'Next quarter.', terms: [], people: null, recordings: 0, shared_with_team: true });
+      expect(projects[0].name).toBe('eavesy');
+      const info = await call(token, 'get_account_info', {});
+      expect(info.team).toEqual({ name: 'Acme', role: 'member', about: 'Billing software.', terms: ['Ledgerly'] });
+    } finally {
+      await testEnv.DB.batch([
+        testEnv.DB.prepare(`DELETE FROM team_members WHERE team_id = 'team_mcp'`),
+        testEnv.DB.prepare(`DELETE FROM teams WHERE id = 'team_mcp'`),
+        testEnv.DB.prepare(`DELETE FROM folders WHERE id = 'f_team'`),
+        testEnv.DB.prepare(`DELETE FROM users WHERE id = 'user_lead'`),
+      ]);
+    }
   });
 
   it('list projects and filter recent meetings by one', async () => {

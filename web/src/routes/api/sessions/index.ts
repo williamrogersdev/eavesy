@@ -162,7 +162,7 @@ export const Route = createFileRoute('/api/sessions/')({
           });
         }
 
-        const projectId = parsed.data.projectId && (await projectsRepo.ownsProject(db, actor.userId, parsed.data.projectId))
+        const projectId = parsed.data.projectId && (await projectsRepo.canUseProject(db, actor.userId, parsed.data.projectId))
           ? parsed.data.projectId
           : undefined;
         // Linking is a nicety: a calendar lookup that fails never fails the recording.

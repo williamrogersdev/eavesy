@@ -185,7 +185,7 @@ export async function scheduleBot(db: AppDb, env: MeetingBotsEnv, userId: string
     return json({ error: 'Choose a start time in the next 60 days.' }, 400);
   }
   const folderId = parsed.data.folderId || null;
-  if (folderId && !(await projectsRepo.ownsProject(db, userId, folderId))) return json({ error: 'Project not found' }, 404);
+  if (folderId && !(await projectsRepo.canUseProject(db, userId, folderId))) return json({ error: 'Project not found' }, 404);
   const placed = await placeBot(db, env, userId, {
     url: target.url,
     platform: target.platform,

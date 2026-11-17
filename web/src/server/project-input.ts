@@ -11,6 +11,8 @@ export const projectFieldsSchema = z.object({
   match: z.array(z.string().max(PROJECT_LIMITS.term * 2)).max(PROJECT_LIMITS.match * 2).optional(),
   dictationStyle: z.string().refine(isDictationStyle, 'unsupported style').nullable().optional(),
   dictationForAgents: z.boolean().nullable().optional(),
+  /** Share with your team, or keep to yourself. */
+  shared: z.boolean().optional(),
 });
 
 /** Signed-in web user or paired desktop. */

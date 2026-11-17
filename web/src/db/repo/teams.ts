@@ -1,7 +1,8 @@
 import { and, asc, eq, gt, lte, sql } from 'drizzle-orm';
 import type { AppDb } from '../client';
+import { cleanList, parseStringList, PROJECT_LIMITS, type TeamContext } from '@/lib/projects';
 import { pid } from '../ids';
-import { teamInvites, teamMembers, teams, users } from '../schema';
+import { folders, teamInvites, teamMembers, teams, users } from '../schema';
 
 export type TeamRole = (typeof teamMembers.$inferSelect)['role'];
 export type InviteRole = (typeof teamInvites.$inferSelect)['role'];
@@ -265,6 +266,8 @@ export async function depart(db: AppDb, userId: string) {
 export async function removeTeam(db: AppDb, args: { teamId: string; actorRole: TeamRole }) {
   if (args.actorRole !== 'owner') throw new TeamError('forbidden');
   await db.batch([
+    // Shared projects go back to whoever made them.
+    db.update(folders).set({ teamId: null }).where(eq(folders.teamId, args.teamId)),
     db.delete(teamInvites).where(eq(teamInvites.teamId, args.teamId)),
     db.delete(teamMembers).where(eq(teamMembers.teamId, args.teamId)),
     db.delete(teams).where(eq(teams.id, args.teamId)),
@@ -274,4 +277,37 @@ export async function removeTeam(db: AppDb, args: { teamId: string; actorRole: T
 /** Drops every invitation nobody accepted in time. They are already hidden and hold no seat; the scheduled run clears the rows. */
 export async function purgeExpiredInvites(db: AppDb, now = Date.now()) {
   await db.delete(teamInvites).where(lte(teamInvites.expiresAt, now));
+}
+
+/** The team's own context (what it does, its terms) as every member's transcripts and notes use it; null without a team or with none set. */
+export async function contextFor(db: AppDb, userId: string): Promise<TeamContext | null> {
+  const rows = await db
+    .select({ name: teams.name, about: teams.about, vocabularyJson: teams.vocabularyJson })
+    .from(teamMembers)
+    .innerJoin(teams, eq(teams.id, teamMembers.teamId))
+    .where(eq(teamMembers.userId, userId))
+    .limit(1);
+  const row = rows[0];
+  if (!row) return null;
+  const vocabulary = parseStringList(row.vocabularyJson);
+  if (!row.about?.trim() && vocabulary.length === 0) return null;
+  return { name: row.name, about: row.about, vocabulary };
+}
+
+/** The team's context as its editors see it, set or not. */
+export async function contextOfTeam(db: AppDb, teamId: string): Promise<{ about: string | null; vocabulary: string[] }> {
+  const row = (await db.select({ about: teams.about, vocabularyJson: teams.vocabularyJson }).from(teams).where(eq(teams.id, teamId)).limit(1))[0];
+  return { about: row?.about ?? null, vocabulary: parseStringList(row?.vocabularyJson) };
+}
+
+/** Sets the team's context. Owners and admins only; the caller checks the role. */
+export async function setContext(db: AppDb, args: { teamId: string; about?: string | null; vocabulary?: string[] }, now = Date.now()) {
+  await db
+    .update(teams)
+    .set({
+      ...(args.about !== undefined ? { about: args.about?.trim().slice(0, PROJECT_LIMITS.about) || null } : {}),
+      ...(args.vocabulary !== undefined ? { vocabularyJson: JSON.stringify(cleanList(args.vocabulary)) } : {}),
+      updatedAt: now,
+    })
+    .where(eq(teams.id, args.teamId));
 }
