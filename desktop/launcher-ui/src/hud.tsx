@@ -305,6 +305,8 @@ const BAR_ROW = 40;
 
 /** How long a saved screen recording's pill waits to hear it is ready (`READY_WAIT` in walkthrough.rs). */
 const VIDEO_PREPARING_HOLD_MS = 300_000;
+/** Past that, how much longer a pending Copy keeps the pill, so Copy's own answer lands first. */
+const VIDEO_COPY_GRACE_MS = 10_000;
 
 /** How long an error on the idle pill stays before Talk comes back. */
 const IDLE_ERROR_MS = 6000;
@@ -794,11 +796,15 @@ function Hud() {
   useEffect(() => {
     if (!state || editing || finding || choosing || saving || saveError || rewriting || pendingEdit.current || !HELD_PHASES.includes(state.phase)) return;
     // A saved screen recording stays until it is ready to copy (its notice
-    // says so), and while a Copy is waiting on that. Should "ready" never
-    // come, it still goes after as long as Copy would wait for it.
-    if (state.phase === 'done' && state.mode === 'video' && copying) return;
-    const preparing = state.phase === 'done' && state.mode === 'video' && !state.notice;
-    const hold = preparing ? VIDEO_PREPARING_HOLD_MS : holdMs(state.phase, pointer, overSince.current, Date.now(), receipt, state.phase === 'saved' && !!state.notice);
+    // says so), and while a Copy is waiting on that. Every saved screen
+    // recording gets a notice (`finish_stopped_capture` always starts the
+    // walkthrough, which sets one on success and on failure); should it
+    // never come, the pill still goes after as long as Copy would wait,
+    // with a little longer for a pending Copy so its own answer shows first.
+    const savedVideo = state.phase === 'done' && state.mode === 'video';
+    const hold = savedVideo && copying ? VIDEO_PREPARING_HOLD_MS + VIDEO_COPY_GRACE_MS
+      : savedVideo && !state.notice ? VIDEO_PREPARING_HOLD_MS
+      : holdMs(state.phase, pointer, overSince.current, Date.now(), receipt, state.phase === 'saved' && !!state.notice);
     if (hold === null) return;
     const sessionId = state.sessionId;
     const timeout = window.setTimeout(() => {
@@ -1404,7 +1410,12 @@ function Hud() {
     };
     const elapsedSec = Math.max(0, Math.floor((now - (state.startedAtMs ?? now)) / 1000));
     const cancelDisabled = opening || !state.sessionId || stopping === state.sessionId;
-    if (video && state.sessionId && marking.sessionId === state.sessionId) videoFacts.current = { sessionId: state.sessionId, seconds: elapsedSec, highlights: marking.marks.length };
+    // The length needs only the recording; the highlight count joins it when
+    // the highlighter's session is this one (it is begun with the capture's id).
+    if (video && state.sessionId) {
+      const before = videoFacts.current?.sessionId === state.sessionId ? videoFacts.current.highlights : 0;
+      videoFacts.current = { sessionId: state.sessionId, seconds: elapsedSec, highlights: marking.sessionId === state.sessionId ? marking.marks.length : before };
+    }
     const countdown = video && opening && state.startedAtMs ? Math.max(1, Math.ceil((state.startedAtMs - now) / 1000)) : null;
     if (countdown !== null) top = (
       <>

@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { StrictMode, useCallback, useEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Undo2 } from 'lucide-react';
 import { Mascot } from '@/components/launcher/ui/mascot';
@@ -48,11 +48,11 @@ function Marker() {
   useEffect(() => () => stampTimers.current.forEach((timer) => window.clearTimeout(timer)), []);
 
   const closing = useRef<number | null>(null);
-  const keepOpen = () => {
+  const keepOpen = useCallback(() => {
     if (closing.current !== null) window.clearTimeout(closing.current);
     closing.current = null;
-  };
-  useEffect(() => keepOpen, []);
+  }, []);
+  useEffect(() => keepOpen, [keepOpen]);
 
   useEvent('marker:hover', (payload) => setHover(payload as Hover | null));
   useEvent('moments:tagged', (payload) => {
@@ -74,7 +74,7 @@ function Marker() {
     // meanwhile, it must not be put away again.
     keepOpen();
     if (!marking.tool) setHover(null);
-  }, [marking.tool]);
+  }, [marking.tool, keepOpen]);
 
   const act = (cmd: string, args?: Record<string, unknown>) => {
     setError(null);
