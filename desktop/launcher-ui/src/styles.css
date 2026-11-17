@@ -183,6 +183,14 @@ body {
 .eavesy-control[data-phase="recording"] {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ev-rec) 42%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.06);
 }
+/* Talk to Eavesy and a reply to an agent's card are not dictation: their own
+   ring, so the pill never looks like it is about to type into your app. */
+.eavesy-control[data-mode="eavesy"]:is([data-phase="recording"], [data-phase="starting"]) {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #f0c879 70%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+.eavesy-control[data-mode="reply"][data-phase="recording"] {
+  box-shadow: inset 0 0 0 1.5px color-mix(in srgb, #9db8ff 70%, transparent), inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
 /* See-through (Settings → General → Recording control), on by default: a plain
    smoked glass that sits back over whatever is underneath, so it reads as
    part of the screen rather than an app on it, in a share or a recording too.
@@ -658,6 +666,7 @@ body {
 .ctl-stamp[data-fit] { flex: 0 1 auto; min-width: 0; }
 .ctl-stamp-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctl-stamp[data-tone="warn"] { --stamp: var(--ctl-warn); }
+.ctl-stamp[data-tone="agent"] { --stamp: #9db8ff; }
 @keyframes ctl-stamp {
   from { opacity: 0; transform: scale(0.85); }
   to { opacity: 1; transform: scale(1); }
