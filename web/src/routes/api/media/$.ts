@@ -1,4 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { getDb } from '@/db/client';
+import { teamReadableAttachment } from '@/db/repo/team-access';
 import { resolveActor } from '@/server/auth';
 import { serveR2Object } from '@/server/r2-ranged';
 import { safeMediaType } from '@/lib/http/media-type';
@@ -19,7 +21,10 @@ export const Route = createFileRoute('/api/media/$')({
 
         const [scope, ownerId] = path.split('/');
         if (scope !== 'users' || !ownerId) return json({ error: 'invalid media path' }, 400);
-        if (ownerId !== actor.userId) return json({ error: 'forbidden' }, 403);
+        // Your own media, or a screenshot in a teammate's recording you can read as the team's owner or admin.
+        if (ownerId !== actor.userId && !(await teamReadableAttachment(getDb(), { viewerId: actor.userId, key: path }))) {
+          return json({ error: 'forbidden' }, 403);
+        }
 
         const response = await serveR2Object(
           request,

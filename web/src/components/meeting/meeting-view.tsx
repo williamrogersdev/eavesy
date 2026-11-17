@@ -95,7 +95,9 @@ function Loaded({
   const started = new Date(meeting.startedAt);
   const hasBrief = Boolean(summary || meeting.summaryOverrideMd);
   const me = useMe();
-  const offerShare = meeting.status === 'complete' && hasBrief && me.data?.shareNotesOffer === true;
+  // A teammate's recording, opened by the team's owner or admin: read and play only.
+  const teamView = data.access?.kind === 'team' ? data.access : null;
+  const offerShare = !teamView && meeting.status === 'complete' && hasBrief && me.data?.shareNotesOffer === true;
 
   return (
     <AppPage width="wide" className="gap-6">
@@ -112,7 +114,11 @@ function Loaded({
               <KindIcon item={{ variant }} size={20} />
             </span>
             <div className="min-w-0 flex-1">
-              <EditableTitle meetingId={meetingId} initial={meeting.title} onSaved={onSaved} />
+              {teamView ? (
+                <h1 className="min-w-0 break-words font-round text-2xl font-extrabold leading-tight text-ev-ink">{meeting.title}</h1>
+              ) : (
+                <EditableTitle meetingId={meetingId} initial={meeting.title} onSaved={onSaved} />
+              )}
               <div className="mt-1.5 flex flex-wrap items-center gap-1.5 font-round text-[12.5px] font-semibold text-ev-ink-2">
                 <MetaChip>{call ?? kind.label}</MetaChip>
                 {Number.isFinite(started.getTime()) ? (
@@ -135,7 +141,11 @@ function Loaded({
                     {device}
                   </MetaChip>
                 ) : null}
-                <ProjectPicker meetingId={meetingId} projectId={meeting.folderId ?? null} onSaved={onSaved} />
+                {teamView ? (
+                  <MetaChip>Recorded by {teamView.ownerName}</MetaChip>
+                ) : (
+                  <ProjectPicker meetingId={meetingId} projectId={meeting.folderId ?? null} onSaved={onSaved} />
+                )}
               </div>
             </div>
           </div>
@@ -152,15 +162,15 @@ function Loaded({
               </Link>
             ) : null}
             <CopyContextButton data={data} />
-            <a
+            {teamView ? null : <a
               href={`/api/export/${meeting.id}/zip`}
               className={appButton('secondary', 'sm')}
               title="Download summary, transcript, notes & audio as a .zip"
             >
               <Download className="h-3.5 w-3.5" />
               Export
-            </a>
-            {isDesktop() ? (
+            </a>}
+            {isDesktop() && !teamView ? (
               <button
                 type="button"
                 onClick={() => {
@@ -182,6 +192,11 @@ function Loaded({
         </header>
       </div>
 
+      {teamView ? (
+        <AppAlert tone="info">
+          {teamView.ownerName} recorded this. You can see it as an owner or admin of your team; only they can change it.
+        </AppAlert>
+      ) : null}
       {actionError ? <AppAlert>{actionError}</AppAlert> : null}
       {refreshError ? (
         <AppAlert>
@@ -213,7 +228,7 @@ function Loaded({
         <AppAlert tone="info">{meeting.statusError}</AppAlert>
       ) : null}
 
-      <ItemFlagsPanel itemId={meetingId} />
+      {teamView ? null : <ItemFlagsPanel itemId={meetingId} />}
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-5">
@@ -273,7 +288,7 @@ function Loaded({
               )}
               {/* The pipeline writes the brief once the recording is processed;
                   regenerating from a partial transcript would race it. */}
-              {isMeetingLive(data) ? null : (
+              {isMeetingLive(data) || teamView ? null : (
                 <div className="mt-5 border-t border-ev-line pt-3">
                   <BriefControls data={data} meetingId={meetingId} onSaved={onSaved} />
                 </div>
@@ -291,6 +306,7 @@ function Loaded({
               agentTranscript={meeting.agentTranscriptMd}
               attachments={data.attachments}
               onChanged={onSaved}
+              readOnly={Boolean(teamView)}
             />
           ) : (
             <AttachmentsSection attachments={data.attachments ?? []} />
@@ -302,13 +318,15 @@ function Loaded({
           />
         </div>
 
-        <aside className="flex min-w-0 flex-col gap-5 lg:sticky lg:top-4">
-          <MeetingChat
-            meetingId={meetingId}
-            ready={meeting.status === 'complete' || segments.length > 0}
-          />
-          <NotesEditor meetingId={meetingId} initial={data.notes?.contentMd ?? ''} />
-        </aside>
+        {teamView ? null : (
+          <aside className="flex min-w-0 flex-col gap-5 lg:sticky lg:top-4">
+            <MeetingChat
+              meetingId={meetingId}
+              ready={meeting.status === 'complete' || segments.length > 0}
+            />
+            <NotesEditor meetingId={meetingId} initial={data.notes?.contentMd ?? ''} />
+          </aside>
+        )}
       </div>
     </AppPage>
   );

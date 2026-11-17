@@ -41,6 +41,7 @@ export function TranscriptPlayer({
   agentTranscript,
   attachments = NO_ATTACHMENTS,
   onChanged,
+  readOnly = false,
 }: {
   meetingId: string;
   audioUrl: string | null;
@@ -51,6 +52,8 @@ export function TranscriptPlayer({
   /** Snapshots and screenshots, shown after the line being spoken when each was taken. */
   attachments?: MeetingAttachment[];
   onChanged: () => void;
+  /** Someone else's recording, read by a team owner or admin: play and copy, no edits or translation. */
+  readOnly?: boolean;
 }) {
   const audio = useRef<HTMLAudioElement | null>(null);
   const [playing, setPlaying] = useState(false);
@@ -75,7 +78,8 @@ export function TranscriptPlayer({
   const { data: me } = useMe();
   const [chosenLanguage, setChosenLanguage] = useState<Language | null | undefined>(undefined);
   const [translationRevision, setTranslationRevision] = useState(0);
-  const target = chosenLanguage === undefined ? (isLanguage(me?.notesLanguage) ? me.notesLanguage : null) : chosenLanguage;
+  // Translating stores lines on the recording, which only its author may do.
+  const target = readOnly ? null : chosenLanguage === undefined ? (isLanguage(me?.notesLanguage) ? me.notesLanguage : null) : chosenLanguage;
   const translation = useTranslation(meetingId, shown, target, translationRevision);
   const translated = (line: TranscriptLine) => (translation.showing ? translation.textFor(line) : undefined);
 
@@ -275,7 +279,7 @@ export function TranscriptPlayer({
               </ol>
             </div>
           ) : null}
-          {labelled ? (
+          {labelled && !readOnly ? (
             <SpeakerNames meetingId={meetingId} names={names} partialMs={partialAttributionMs(names)} onSaved={onChanged} />
           ) : null}
         </div>
@@ -302,7 +306,7 @@ export function TranscriptPlayer({
             ) : (
               <CopyText text={copyText} label={target ? "Copy translation" : "Copy transcript"} disabled={!!target && (translation.loading || !!translation.error)} />
             )}
-            <LanguagePicker value={target} pending={translation.loading} onChange={language => { setChosenLanguage(language); setTranslationRevision(value => value + 1); }} />
+            {readOnly ? null : <LanguagePicker value={target} pending={translation.loading} onChange={language => { setChosenLanguage(language); setTranslationRevision(value => value + 1); }} />}
           </div>
         </div>
         <div
@@ -332,6 +336,7 @@ export function TranscriptPlayer({
                   active={line.id === activeId}
                   follow={followPlayback && playing}
                   canSwitch={labelled}
+                  editable={!readOnly}
                   onPlay={() => { void seek(line.startMs); }}
                   onSave={(text) => {
                     void mutate(line.id, { method: 'PATCH', body: JSON.stringify({ text }) }, { text, isEdited: true });
@@ -374,6 +379,7 @@ function Line({
   active,
   follow,
   canSwitch,
+  editable,
   onPlay,
   onSave,
   onSwitch,
@@ -385,6 +391,7 @@ function Line({
   active: boolean;
   follow: boolean;
   canSwitch: boolean;
+  editable: boolean;
   onPlay: () => void;
   onSave: (text: string) => void;
   onSwitch: () => void;
@@ -449,7 +456,7 @@ function Line({
           </div>
         )}
       </div>
-      {draft === null ? (
+      {draft === null && editable ? (
         <div className="absolute right-1 top-1 hidden items-center gap-0.5 rounded-[var(--ev-r-ctl)] bg-ev-raised p-0.5 shadow-[var(--ev-e-2)] group-hover:flex">
           <IconButton label="Edit line" onClick={() => setDraft(line.text)}>
             <Pencil className="h-3.5 w-3.5" />

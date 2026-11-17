@@ -42,6 +42,8 @@ export interface MeetingData {
   attachments?: MeetingAttachment[];
   /** Where the live transcript stream resumes from; absent from older servers. */
   transcriptCursor?: number;
+  /** Whose recording this is: the viewer's own, or a teammate's read by a team owner or admin. */
+  access?: { kind: 'owner' } | { kind: 'team'; ownerName: string };
 }
 
 export interface MeetingAttachment {

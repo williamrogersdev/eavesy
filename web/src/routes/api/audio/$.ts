@@ -1,4 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
+import { getDb } from '@/db/client';
+import { teamReadableAudio } from '@/db/repo/team-access';
 import { resolveActor } from '@/server/auth';
 import { parseByteRange } from '@/lib/http/byte-range';
 import { safeMediaType } from '@/lib/http/media-type';
@@ -22,7 +24,8 @@ export const Route = createFileRoute('/api/audio/$')({
         if ((scope !== 'users' && scope !== 'anonymous') || !ownerId) {
           return Response.json({ error: 'invalid audio path' }, { status: 400 });
         }
-        if (ownerId !== actor.userId) {
+        // Your own audio, or a teammate's recording you can read as the team's owner or admin.
+        if (ownerId !== actor.userId && !(await teamReadableAudio(getDb(), { viewerId: actor.userId, key: path }))) {
           return Response.json({ error: 'forbidden' }, { status: 403 });
         }
 
