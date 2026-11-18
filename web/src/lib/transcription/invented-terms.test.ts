@@ -19,6 +19,18 @@ describe('droppedTerms', () => {
     expect(droppedTerms('the dashboard for Repackify is slow', 'Repackify’s dashboard is slow.', terms)).toEqual([]);
     expect(droppedTerms('open eavesy and check', 'Open Eavesy and check.', terms)).toEqual([]);
     expect(droppedTerms('nothing to see here', 'Nothing to see here.', terms)).toEqual([]);
+    expect(droppedTerms('we palleted the order', 'We palleted the order.', terms)).toEqual([]);
+  });
+
+  test('a longer word that only starts with the term is still a swap', () => {
+    expect(droppedTerms('check the pallet first', 'Check the palletizer first.', terms)).toEqual(['pallet']);
+  });
+
+  test('a picked tone may reword an everyday dictionary word, but not a name', () => {
+    const withCode = [...terms, 'code'];
+    expect(droppedTerms('can you review the code tonight', 'Could you review the changes tonight?', withCode, { rewording: true })).toEqual([]);
+    expect(droppedTerms('can you review the code tonight', 'Could you review the changes tonight?', withCode)).toEqual(['code']);
+    expect(droppedTerms('we moved Repackify to the new cache', 'We migrated Redis to the new cache.', withCode, { rewording: true })).toEqual(['Repackify']);
   });
 });
 

@@ -115,6 +115,10 @@ function changes(heard: readonly string[], written: readonly string[]): Change[]
   return out;
 }
 
+/** "pallets", "palleted", "palleting" for "pallet": the term inflected, not a longer word ("palletizer"). */
+const inflects = (word: string, key: string) =>
+  word.length > key.length && word.startsWith(key) && /^(?:s|es|ed|d|ing)$/.test(word.slice(key.length));
+
 /**
  * Dictionary terms the speaker said that a rewrite swapped for other words:
  * "Eavesy" written as "Eavesdrop", "Repackify" as "Redis", "pallet" as
@@ -123,8 +127,17 @@ function changes(heard: readonly string[], written: readonly string[]): Change[]
  * cut (a false start, a stutter), may be inflected ("pallet" to "pallets",
  * "Repackify's"), and may move. Too long to align, nothing is reported: the
  * other checks still judge the rewrite.
+ *
+ * `rewording` is for a tone someone picked, which may reword everyday words
+ * in the dictionary ("code", "notes"): those are left out, as in
+ * `inventedTerms`. A cleanup keeps the words, so it is held to all of them.
  */
-export function droppedTerms(said: string, candidate: string, terms: readonly string[]): string[] {
+export function droppedTerms(
+  said: string,
+  candidate: string,
+  terms: readonly string[],
+  opts: { rewording?: boolean } = {},
+): string[] {
   const heard = wordsOf(said), written = wordsOf(candidate);
   let changed: Change[] | null | undefined;
   const seen = new Set<string>();
@@ -132,17 +145,18 @@ export function droppedTerms(said: string, candidate: string, terms: readonly st
   for (const term of terms) {
     const length = wordsOf(term).length;
     const key = spoken(wordsOf(term));
-    if (key.length < 2 || seen.has(key)) continue;
+    if (key.length < 2 || seen.has(key) || (opts.rewording && isPlainWords(term))) continue;
     seen.add(key);
     const spans = writtenAs(heard, key, length);
     if (spans.length === 0) continue;
     const kept = (words: readonly string[]) =>
-      writtenAs(words, key, length).length + (length === 1 ? words.filter((word) => word !== key && word.startsWith(key)).length : 0);
+      writtenAs(words, key, length).length + (length === 1 ? words.filter((word) => inflects(word, key)).length : 0);
     if (kept(written) >= spans.length) continue;
     if (changed === undefined) changed = changes(heard, written);
-    if (!changed) continue;
+    const aligned = changed;
+    if (!aligned) continue;
     const swapped = spans.some((span) => {
-      const change = changed!.find((c) => span[0] < c.heard[1] && span[1] > c.heard[0]);
+      const change = aligned.find((c) => span[0] < c.heard[1] && span[1] > c.heard[0]);
       if (!change || change.written[0] === change.written[1]) return false;
       return kept(written.slice(change.written[0], change.written[1])) === 0;
     });

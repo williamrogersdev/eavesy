@@ -195,6 +195,16 @@ describe('glossary read-back', () => {
     expect(isHallucination({ text: 'Rust, docs, CI.' }, { glossary: dictionary, lenient: true })).toBe(false);
     expect(isGlossaryReadBack({ text: said }, dictionary)).toBe(false);
   });
+
+  test('keeps a list of the custom words said in the speaker’s own order', () => {
+    const listed = 'UI, docs, Rust, Repackify, Cloudflare, pallet, CI.';
+    expect(isHallucination({ text: listed }, { glossary: dictionary, lenient: true })).toBe(false);
+    expect(isHallucination({ text: listed, noSpeechProb: 0.1 }, { glossary: dictionary, lenient: true })).toBe(false);
+    expect(isGlossaryReadBack({ text: listed }, dictionary)).toBe(false);
+    // The same words in the prompt's order, and doubted, are still a read-back.
+    expect(isHallucination({ text: 'Repackify, Rust, pallet, Cloudflare, docs, CI, UI.', noSpeechProb: 0.1 }, { glossary: dictionary })).toBe(true);
+    expect(isHallucination({ text: listed, noSpeechProb: 0.6 }, { glossary: dictionary })).toBe(true);
+  });
 });
 
 describe('keptCallLines', () => {

@@ -288,7 +288,7 @@ export async function polishDictation(
       (restyle ? restyledIsValid(validationInput, candidate) : cleanedChunkIsValid(validationInput, candidate, 'solo'))
       && preservesSpellings(said, candidate, args.confirmedSpellings ?? [])
       && inventedTerms(said, candidate, terms, args.corrections).length === 0
-      && droppedTerms(said, candidate, [...BUILT_IN_TERMS, ...terms]).length === 0;
+      && droppedTerms(said, candidate, [...BUILT_IN_TERMS, ...terms], { rewording: restyle }).length === 0;
     // The Mac app is holding a paste for this: a slow answer gets a second
     // try alongside, and the first usable one is the dictation.
     const candidate = await hedged((signal) => cleanChunk(client, turns, system, signal), hedgeAfterMs(said.length), usable);

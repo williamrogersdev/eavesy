@@ -166,51 +166,75 @@ function isBareAppName(text: string): boolean {
 }
 
 /**
- * A list this long of nothing but the user's words is the prompt read back
- * whatever Whisper's score says, or when it gives none: nobody dictates their
- * own glossary. Shorter lists need Whisper to doubt them.
+ * A list this long of the user's words, in the prompt's own order, is the
+ * prompt read back whatever Whisper's score says, or when it gives none.
+ * Shorter lists, or lists in any other order, need Whisper to doubt them.
  */
 const LONG_READ_BACK_TERMS = 6;
+/** Longer than any prompt's glossary: a line this long is speech, and not worth tiling. */
+const MAX_READ_BACK_TOKENS = 200;
 
 /**
  * Whisper can read its prompt back on near-silent audio, which for the custom
  * words is a bare list: "Eavesy, Priya Raman, Kubernetes." A line counts as
  * that when it is nothing but `minTerms` or more of the user's words and
- * Whisper scored it as likely not speech, or when it is a long list of them
- * (`LONG_READ_BACK_TERMS`) whatever the score. A read-back is rarely word
- * perfect ("…, box, dc, ui, ui, ui"), so a long one may hold a stray word for
- * every four terms. One of the user's words, or a word in a sentence, is
- * always kept. The app's own name alone is the exception, judged in
- * `isHallucination`: every prompt has it.
+ * Whisper scored it as likely not speech. With no score, or a confident one,
+ * it counts only as a long list (`LONG_READ_BACK_TERMS`) that follows the
+ * prompt's order, a term repeated at most: someone listing their own words
+ * says them in their own order. A read-back is rarely word perfect ("…, box,
+ * dc, ui, ui, ui"), so that long one may hold a stray word for every four
+ * terms. One of the user's words, or a word in a sentence, is always kept.
+ * The app's own name alone is the exception, judged in `isHallucination`:
+ * every prompt has it. `glossary` is in the prompt's order (`whisperPrompt`).
  */
 function readsBackGlossary(line: WhisperLine, glossary: readonly string[], minTerms: number): boolean {
   const terms = glossary.map((term) => normalize(term).split(' ').filter(Boolean)).filter((term) => term.length > 0);
   const tokens = normalize(line.text).split(' ').filter(Boolean);
-  if (terms.length < minTerms || tokens.length === 0) return false;
+  if (terms.length < minTerms || tokens.length === 0 || tokens.length > MAX_READ_BACK_TOKENS) return false;
   const doubted = line.noSpeechProb !== undefined && line.noSpeechProb > 0.3;
-  // best[at][skipped]: the most whole terms that tile tokens[0, at) with
-  // `skipped` tokens left unmatched, or -1. Few skips are ever allowed, so
-  // the table stays small.
-  const maxSkips = Math.floor(tokens.length / 5);
-  const best = Array.from({ length: tokens.length + 1 }, () => new Array<number>(maxSkips + 1).fill(-1));
-  best[0][0] = 0;
+  if (doubted && tiledTerms(tokens, terms) >= minTerms) return true;
+  const ordered = inPromptOrder(tokens, terms);
+  return ordered.terms >= LONG_READ_BACK_TERMS && ordered.skipped * 4 <= ordered.terms;
+}
+
+/** The most whole terms that tile `tokens` end to end, in any order, or -1. */
+function tiledTerms(tokens: readonly string[], terms: readonly string[][]): number {
+  const most: number[] = new Array<number>(tokens.length + 1).fill(-1);
+  most[0] = 0;
   for (let at = 0; at < tokens.length; at += 1) {
-    for (let skipped = 0; skipped <= maxSkips; skipped += 1) {
-      const sofar = best[at][skipped];
-      if (sofar < 0) continue;
-      if (skipped < maxSkips) best[at + 1][skipped + 1] = Math.max(best[at + 1][skipped + 1], sofar);
-      for (const term of terms) {
-        if (term.every((word, i) => tokens[at + i] === word)) {
-          best[at + term.length][skipped] = Math.max(best[at + term.length][skipped], sofar + 1);
-        }
+    if (most[at] < 0) continue;
+    for (const term of terms) {
+      if (term.every((word, i) => tokens[at + i] === word)) {
+        most[at + term.length] = Math.max(most[at + term.length], most[at] + 1);
       }
     }
   }
-  return best[tokens.length].some((count, skipped) => {
-    if (count < 0) return false;
-    if (skipped === 0 && doubted && count >= minTerms) return true;
-    return count >= LONG_READ_BACK_TERMS && skipped * 4 <= count;
-  });
+  return most[tokens.length];
+}
+
+/**
+ * Walks `tokens` taking terms at or after the last one taken in `terms`
+ * (longest first where two start at once), and counts the tokens no such
+ * term covers. Greedy, so it can miss a tiling: it errs toward keeping a line.
+ */
+function inPromptOrder(tokens: readonly string[], terms: readonly string[][]): { terms: number; skipped: number } {
+  let last = 0, taken = 0, skipped = 0;
+  for (let at = 0; at < tokens.length; ) {
+    let found = -1;
+    for (let index = last; index < terms.length; index += 1) {
+      const term = terms[index];
+      if (term.every((word, i) => tokens[at + i] === word) && (found < 0 || term.length > terms[found].length)) found = index;
+    }
+    if (found < 0) {
+      skipped += 1;
+      at += 1;
+      continue;
+    }
+    last = found;
+    taken += 1;
+    at += terms[found].length;
+  }
+  return { terms: taken, skipped };
 }
 
 /** Whether a line is the prompt's custom words read back, which proves the audio under it silent. */

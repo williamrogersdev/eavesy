@@ -105,13 +105,16 @@ describe('dictation styles', () => {
     expect(calls[0].system).not.toContain('message for an AI agent');
   });
 
-  test('as spoken for agents is checked like as spoken: a rewrite is not used', async () => {
-    const heard = 'Okay so I was revolving around the idea that the guy who runs the site is lucky, can you look into why the checkout dropped off';
-    const rewrite = 'Investigate why checkout conversions dropped.\n\n## Context\nThe website owner has been unlucky.';
-    const { client } = fakeClient(rewrite);
+  test('as spoken for agents is checked like as spoken: a rewording the old check let through is not used', async () => {
+    const heard = 'so I keep thinking the guy who runs the site got lucky, can you look into why the checkout dropped off last week';
+    // Most of the longer words are the speaker's, which a restyle accepts; a
+    // cleanup must keep the words themselves, and this one doesn't.
+    const reworded = 'The website owner got unlucky. Look into why checkout dropped off last week.';
+    expect(restyledIsValid([{ speaker: null, text: heard }], reworded)).toBe(true);
+    const { client } = fakeClient(reworded);
     const result = await polishDictation(client, { text: heard, context: null, forAgents: true });
     expect(result.polished).toBe(false);
-    expect(result.text).toContain('revolving around the idea');
+    expect(result.text).toContain('the guy who runs the site got lucky');
   });
 
   test('a tone combines with formatting for agents', async () => {

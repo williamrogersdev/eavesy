@@ -89,11 +89,13 @@ function keepHeard(
   result: FileTranscriptionResult,
   opts: { lenient?: boolean; suspect?: boolean; glossary?: readonly string[] },
 ): FileTranscriptionResult {
-  // A read-back of the prompt's words shows Whisper was listening to silence,
-  // so the stock phrases it tacks on ("…, ui, ui, Thank you.") go with it.
-  const silent = result.segments.some((segment) => isGlossaryReadBack(segment, opts.glossary));
-  const judged = silent ? { ...opts, quiet: true } : opts;
-  const segments = result.segments.filter((segment) => !isHallucination(segment, judged));
+  // A read-back of the prompt's words shows Whisper was listening to silence
+  // there, so the stock phrase it tacks on after it ("…, ui, ui, Thank you.")
+  // goes with it. Every other line is judged as usual: a real "thank you"
+  // said before it stays.
+  const readBack = result.segments.map((segment) => isGlossaryReadBack(segment, opts.glossary));
+  const nearReadBack = (i: number) => readBack[i] || !!readBack[i - 1];
+  const segments = result.segments.filter((segment, i) => !isHallucination(segment, nearReadBack(i) ? { ...opts, quiet: true } : opts));
   return { ...result, segments, text: segments.map((segment) => segment.text).join(' ') };
 }
 

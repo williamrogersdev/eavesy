@@ -100,6 +100,28 @@ describe('Workers AI file transcription', () => {
     expect(result.text).toBe('');
   });
 
+  test('a read-back only takes the sign-off beside it: a real "thank you" earlier stays', async () => {
+    const vocabulary = ['Repackify', 'Rust', 'Gaylord Boxes', '1db', 'pallet', 'box', 'ui'];
+    const result = await transcribeAudioFile({
+      audio: new Uint8Array([1]),
+      vocabulary,
+      voiceNote: true,
+      ai: {
+        run: () =>
+          Promise.resolve({
+            text: 'x',
+            segments: [
+              { start: 0, end: 2, text: 'Send the Repackify quote to Dana.', no_speech_prob: 0.05 },
+              { start: 2, end: 3, text: 'Thank you.', no_speech_prob: 0.1 },
+              { start: 3, end: 9, text: 'Eavesy, Repackify, Rust, Gaylord Boxes, 1db, pallet, box, dc, ui, ui, ui,' },
+              { start: 9, end: 9.1, text: 'Thank you.' },
+            ],
+          }),
+      },
+    });
+    expect(result.text).toBe('Send the Repackify quote to Dana. Thank you.');
+  });
+
   test('a real "thank you" after real words is kept', async () => {
     const result = await transcribeAudioFile({
       audio: new Uint8Array([1]),
