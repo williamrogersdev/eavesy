@@ -50,7 +50,10 @@ export const Route = createFileRoute('/api/devices/pair')({
             .where(eq(devicePairingCodes.codeHash, codeHash))
             .limit(1)
         )[0];
-        if (!pairing || pairing.expiresAt <= Date.now() || pairing.rawToken || pairing.claimedByUserId || pairing.failure) {
+        if (pairing?.failure && pairing.expiresAt > Date.now()) {
+          return Response.json({ error: pairing.failure }, { status: 409 });
+        }
+        if (!pairing || pairing.expiresAt <= Date.now() || pairing.rawToken || pairing.claimedByUserId) {
           return Response.json({ error: 'pairing_code_expired' }, { status: 404 });
         }
         const origin = await pairingOrigin(codeHash);
@@ -97,6 +100,15 @@ export const Route = createFileRoute('/api/devices/pair')({
               .returning()
           )[0];
           if (!pairing) {
+            // A refused code stays refused (the device already stopped waiting for it), and says why.
+            const refused = (
+              await db
+                .select({ failure: devicePairingCodes.failure })
+                .from(devicePairingCodes)
+                .where(and(eq(devicePairingCodes.codeHash, codeHash), gt(devicePairingCodes.expiresAt, Date.now())))
+                .limit(1)
+            )[0]?.failure;
+            if (refused) return Response.json({ error: refused }, { status: 409 });
             return Response.json({ error: 'pairing_code_expired' }, { status: 404 });
           }
           try {

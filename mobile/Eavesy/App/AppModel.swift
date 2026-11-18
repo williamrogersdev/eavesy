@@ -416,11 +416,10 @@ final class AppModel {
                         // Waiting longer won't help. The server answers 404 for a code that
                         // expired or was already used; anything else is a refusal.
                         // 409: approving was refused because this iPhone still belongs to another account.
-                        if case .http(404, _) = error {
-                        } else if case .http(409, _) = error {
-                            ending = "This iPhone is still signed in to another Eavesy account. Sign in with that account instead."
-                        } else {
-                            ending = "Eavesy didn't accept that sign-in. Try again."
+                        switch error {
+                        case .http(404, _): break
+                        case .http(409, _): ending = "This iPhone is still signed in to another Eavesy account. Tap Sign in again and use that account."
+                        default: ending = "Eavesy didn't accept that sign-in. Try again."
                         }
                         break
                     } catch {

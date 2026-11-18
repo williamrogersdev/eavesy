@@ -31,6 +31,7 @@ vi.mock('../../src/server/auth', () => ({
 
 const segmentPut = handler(SegmentRoute, 'PUT');
 const pairPost = handler(PairRoute, 'POST');
+const pairGet = handler(PairRoute, 'GET');
 const pairStatus = handler(PairStatusRoute, 'POST');
 
 beforeAll(async () => {
@@ -330,7 +331,15 @@ describe('pairing codes', () => {
     expect(poll.status).toBe(409);
     expect(await poll.json()).toEqual({ status: 'failed', error: 'device_already_registered' });
 
+    // The device stopped waiting, so the code stays refused, for any account, and says why.
     actor.userId = 'user_holder';
-    expect((await claim()).status).toBe(404);
+    const again = await claim();
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({ error: 'device_already_registered' });
+    const check = await pairGet({
+      request: new Request(`https://eavesy.test/api/devices/pair?code=${CODE}`),
+      params: {},
+    });
+    expect(check.status).toBe(409);
   });
 });
