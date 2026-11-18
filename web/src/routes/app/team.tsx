@@ -14,6 +14,8 @@ type Role = z.infer<typeof roleSchema>;
 const teamSchema = z.union([
   z.object({
     team: z.null(),
+    /** The address invitations are matched against, so someone can tell an inviter which one to use. */
+    email: z.string().nullable().optional(),
     invitations: z.array(z.object({ id: z.string(), teamName: z.string(), role: z.enum(['admin', 'member']) })),
   }),
   z.object({
@@ -109,7 +111,7 @@ function TeamPage() {
       ) : state.team ? (
         <Team state={state} busy={busy} change={change} />
       ) : (
-        <NoTeam invitations={state.invitations} busy={busy} change={change} />
+        <NoTeam email={state.email ?? null} invitations={state.invitations} busy={busy} change={change} />
       )}
     </AppPage>
   );
@@ -117,7 +119,7 @@ function TeamPage() {
 
 type Change = (run: () => Promise<unknown>) => Promise<boolean>;
 
-function NoTeam({ invitations, busy, change }: { invitations: Extract<TeamState, { team: null }>['invitations']; busy: boolean; change: Change }) {
+function NoTeam({ email, invitations, busy, change }: { email: string | null; invitations: Extract<TeamState, { team: null }>['invitations']; busy: boolean; change: Change }) {
   const [name, setName] = useState('');
   const create = (event: FormEvent) => {
     event.preventDefault();
@@ -166,7 +168,9 @@ function NoTeam({ invitations, busy, change }: { invitations: Extract<TeamState,
         <AppEmptyState
           icon={<Users />}
           title="Joining someone else’s team?"
-          description="Ask them to invite the email address you sign in with. The invitation shows up here."
+          description={email
+            ? `Ask them to invite ${email}, the address you’re signed in with. The invitation shows up here.`
+            : 'Ask them to invite the email address you sign in with. The invitation shows up here.'}
         />
       ) : null}
     </div>

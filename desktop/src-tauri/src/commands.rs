@@ -853,8 +853,14 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
         .send()
         .await
         .map_err(|e| format!("could not contact Eavesy: {e}"))?;
+    if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        return Err("Too many sign-in attempts. Wait a minute, then click Sign in at eavesy.com again.".to_string());
+    }
     if !response.status().is_success() {
-        return Err(format!("could not start pairing (HTTP {})", response.status()));
+        return Err(format!(
+            "Eavesy couldn't start signing in (HTTP {}). Try Sign in at eavesy.com again in a moment.",
+            response.status().as_u16()
+        ));
     }
     if cancelled() {
         return Err(PAIR_CANCELLED.to_string());
@@ -896,7 +902,7 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
             Err(_) => continue,
         };
         if response.status() == reqwest::StatusCode::NOT_FOUND {
-            return Err("The pairing code expired. Run Connect account again.".to_string());
+            return Err("The sign-in link expired. Click Sign in at eavesy.com to get a new one.".to_string());
         }
         if !response.status().is_success() {
             continue;
@@ -913,7 +919,7 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
         }
     }
     Err(format!(
-        "Pairing timed out. Run Connect account and approve it within {minutes} minutes."
+        "Sign-in timed out. Click Sign in at eavesy.com again and approve it in the browser within {minutes} minutes."
     ))
 }
 

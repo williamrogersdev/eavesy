@@ -54,6 +54,7 @@ function ConfiguredSignInPage() {
 
 function AlreadySignedIn({ href }: { href: string }) {
   const pairing = href.includes('pair=') || href.startsWith('/connect/mac');
+  const connecting = href.startsWith('/connect/mcp');
   return (
     <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl border border-ev-line bg-ev-paper p-8 text-center shadow-[var(--ev-e-2)]">
       <BrandMark size={40} />
@@ -61,13 +62,15 @@ function AlreadySignedIn({ href }: { href: string }) {
       <p className="text-sm text-ev-ink-2">
         {pairing
           ? 'Continue to approve the Mac that’s waiting to pair.'
-          : 'Head to your dashboard to start capturing context.'}
+          : connecting
+            ? 'Continue to connect your AI assistant to Eavesy.'
+            : 'Head to your dashboard to start capturing context.'}
       </p>
       <a
         href={href}
         className="inline-flex items-center gap-2 rounded-full bg-ev-brand px-5 py-2.5 font-round text-sm font-bold text-ev-on-brand shadow-[var(--ev-e-2)] hover:bg-ev-brand-hover"
       >
-        {pairing ? 'Continue pairing' : 'Go to your dashboard'}
+        {pairing ? 'Continue pairing' : connecting ? 'Continue connecting' : 'Go to your dashboard'}
         <ArrowRight className="h-4 w-4" />
       </a>
     </div>
