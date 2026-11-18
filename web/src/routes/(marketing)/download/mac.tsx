@@ -62,11 +62,21 @@ function DownloadMacPage() {
     if (download) setStarted(true);
     // Take ?start=1 out of the address first. Left there, every reload,
     // restored tab or address-bar suggestion downloads the DMG again.
-    // The download starts whether or not the address change settles.
     const run = () => {
       if (download) window.location.assign(DMG_URL);
     };
-    void navigate({ search: {}, replace: true }).then(run, run);
+    // The download starts either way. If the router can't change the
+    // address, take the flag out directly so it still can't repeat.
+    void navigate({ search: {}, replace: true })
+      .catch((error: unknown) => {
+        console.warn('Could not remove ?start=1 through the router', error);
+        try {
+          window.history.replaceState(window.history.state, '', window.location.pathname);
+        } catch (historyError) {
+          console.warn('Could not remove ?start=1 from the address', historyError);
+        }
+      })
+      .then(run);
   }, [start, available, navigate]);
 
   return (

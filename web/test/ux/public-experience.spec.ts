@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from '@playwright/test';
 
@@ -120,12 +121,41 @@ test('the Mac download is the primary public call to action', async ({ page }) =
   await expect(page.getByRole('heading', { name: 'Eavesy for Mac' })).toBeVisible();
 });
 
-test('the download page drops its start flag, so a reload cannot download again', async ({ page }) => {
-  await page.goto('/download/mac?start=1', { waitUntil: 'networkidle' });
-  await expect(page).toHaveURL(/\/download\/mac$/);
-  await page.reload({ waitUntil: 'networkidle' });
-  await expect(page).toHaveURL(/\/download\/mac$/);
-  await expect(page.getByRole('heading', { name: 'Eavesy for Mac' })).toBeVisible();
+test.describe('on a Mac', () => {
+  test.use({
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36',
+  });
+
+  test('the download page downloads once, and not again on reload', async ({ page }) => {
+    // The page only auto-starts when the DMG exists, so put a stand-in in local R2.
+    execFileSync(
+      'bunx',
+      ['wrangler', 'r2', 'object', 'put', 'eavesy-audio/downloads/mac/eavesy-latest.dmg', '--local', '--file', 'package.json'],
+      { stdio: 'pipe' },
+    );
+    let downloads = 0;
+    await page.route('**/api/downloads/mac/latest', async (route) => {
+      downloads += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/x-apple-diskimage',
+        headers: { 'content-disposition': 'attachment; filename="Eavesy.dmg"' },
+        body: 'stand-in',
+      });
+    });
+
+    await page.goto('/download/mac?start=1', { waitUntil: 'networkidle' });
+    await expect(page.getByRole('heading', { name: 'Your download is starting' })).toBeVisible();
+    await expect(page).toHaveURL(/\/download\/mac$/);
+    await expect.poll(() => downloads).toBe(1);
+
+    await page.reload({ waitUntil: 'networkidle' });
+    await expect(page.getByRole('heading', { name: 'Eavesy for Mac' })).toBeVisible();
+    // Give a wrongly repeated download time to show up before counting.
+    await page.waitForTimeout(1000);
+    expect(downloads).toBe(1);
+  });
 });
 
 test('unknown routes show a branded not-found recovery path', async ({ page }) => {
