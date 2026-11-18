@@ -51,8 +51,8 @@ export const Route = createFileRoute('/api/dictations/polish')({
         const { source, carried } = rewriteSource(sent);
         const text = fixBuiltInTerms(source);
         if (!text || text.length > MAX_POLISH_CHARS) {
-          // A rewrite that carries its transcript stays whole, block and all.
-          const kept = carried && text ? sent : stripFillers(text);
+          // A rewrite that carries its transcript stays whole, block and all, even an empty one.
+          const kept = carried ? sent : stripFillers(text);
           return Response.json({ text: kept, polished: false, ...(text ? { reason: 'too_long' } : {}) });
         }
 

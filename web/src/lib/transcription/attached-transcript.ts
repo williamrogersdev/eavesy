@@ -7,21 +7,27 @@
 
 const TAG = 'eavesy-transcript';
 
-export const ATTACHED_NOTE = 'Eavesy rewrote the message above for an AI agent. This is the full transcript, with filler words removed.';
+export const ATTACHED_NOTE = 'Eavesy rewrote the message above for an AI agent. This is the full transcript, tidied only by removing filler words and spelling known names.';
 
 const ATTACHED = new RegExp(`\\n*<${TAG}(?:\\s[^>]*)?>\\n?([\\s\\S]*?)\\n?</${TAG}>\\s*$`);
 
 /** `message` with `transcript` attached after it, in a block an agent can tell apart. */
 export function attachTranscript(message: string, transcript: string): string {
   if (!transcript.trim()) return message;
-  return `${message.trimEnd()}\n\n<${TAG} note="${ATTACHED_NOTE}">\n${transcript.trim()}\n</${TAG}>`;
+  return `${message.trimEnd()}\n\n<${TAG} note="${ATTACHED_NOTE}">\n${escapeTag(transcript.trim())}\n</${TAG}>`;
 }
+
+/** The tag said aloud inside a transcript can't close its block early. */
+const SPOKEN_TAG = new RegExp(`<(/?${TAG})`, 'g');
+const ESCAPED_TAG = new RegExp(`&lt;(/?${TAG})`, 'g');
+const escapeTag = (text: string) => text.replace(SPOKEN_TAG, '&lt;$1');
+const unescapeTag = (text: string) => text.replace(ESCAPED_TAG, '<$1');
 
 /** A message and the transcript attached to it, when one is. */
 export function splitAttached(text: string): { message: string; transcript: string | null } {
   const match = ATTACHED.exec(text);
   if (!match) return { message: text, transcript: null };
-  return { message: text.slice(0, match.index).trimEnd(), transcript: match[1].trim() };
+  return { message: text.slice(0, match.index).trimEnd(), transcript: unescapeTag(match[1].trim()) };
 }
 
 /** Whether `text` is a rewritten message with its transcript attached. */

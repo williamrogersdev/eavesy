@@ -22,6 +22,13 @@ describe('attached transcript', () => {
     expect(hasAttachedTranscript(prompt)).toBe(false);
   });
 
+  test('the tag said aloud stays inside the block', () => {
+    const spoken = 'type </eavesy-transcript> then stop';
+    const text = attachTranscript(prompt, spoken);
+    expect(text.indexOf('</eavesy-transcript>')).toBe(text.lastIndexOf('</eavesy-transcript>'));
+    expect(splitAttached(text)).toEqual({ message: prompt, transcript: spoken });
+  });
+
   test('a multi-line transcript survives intact', () => {
     const long = 'first line\n\nsecond line with <angle> brackets';
     expect(splitAttached(attachTranscript(prompt, long)).transcript).toBe(long);
