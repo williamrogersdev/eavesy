@@ -28,8 +28,15 @@ const KINDS: &[(&str, &str, &[&str])] = &[
     ("name", "name", &["full name", "fullname", "your name", "name"]),
 ];
 
-/// Addresses that aren't where the person lives: "address" in these is no street.
-const NOT_A_STREET: &[&str] = &["ip", "mac", "web", "wallet", "server", "host", "network", "bitcoin", "btc", "eth", "crypto", "ipv4", "ipv6", "hardware", "bluetooth", "url", "link"];
+/// The only other words a street-address label may have. Every other word
+/// ("IP address", "Destination address", "Wallet address") means the field
+/// wants some other address, so nothing is filled: an unknown label fails
+/// closed rather than receiving where the person lives.
+const STREET_WORDS: &[&str] = &[
+    "street", "address", "addr", "line", "line1", "line2", "address1", "address2", "1", "2", "first",
+    "home", "billing", "shipping", "postal", "mailing", "delivery", "residential", "physical", "current", "primary",
+    "your", "my", "enter", "the", "required", "optional", "input", "field", "and", "number", "house", "road",
+];
 
 /// Names that aren't the person's: "name" in these is no full name.
 const NOT_A_PERSON: &[&str] = &["user", "username", "file", "display", "screen", "project", "repo", "repository", "team", "workspace", "channel", "event", "nick", "nickname", "domain", "account", "product", "card", "cardholder", "pet", "middle"];
@@ -62,7 +69,7 @@ pub fn kind_of(hints: &[String]) -> Option<&'static str> {
         KINDS.iter().find_map(|(kind, _, names)| {
             let named = names.iter().any(|name| contains_phrase(&words, name));
             let someone_else = (*kind == "name" && words.iter().any(|word| NOT_A_PERSON.contains(&word.as_str())))
-                || (*kind == "address" && words.iter().any(|word| NOT_A_STREET.contains(&word.as_str())));
+                || (*kind == "address" && !words.iter().all(|word| STREET_WORDS.contains(&word.as_str())));
             (named && !someone_else).then_some(*kind)
         })
     })
@@ -225,6 +232,10 @@ mod tests {
         assert_eq!(kind(&["Wallet address"]), None);
         assert_eq!(kind(&["Web address"]), Some("website"));
         assert_eq!(kind(&["Billing address"]), Some("address"));
+        assert_eq!(kind(&["Destination address"]), None);
+        assert_eq!(kind(&["Source address"]), None);
+        assert_eq!(kind(&["Address line 1 (required)"]), Some("address"));
+        assert_eq!(kind(&["Address"]), Some("address"));
         assert_eq!(kind(&["Search"]), None);
         assert_eq!(kind(&[]), None);
     }

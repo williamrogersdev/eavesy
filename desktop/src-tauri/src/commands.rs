@@ -67,7 +67,7 @@ pub async fn paste_to_frontmost(app: AppHandle, text: String, learn: Option<bool
         std::thread::sleep(std::time::Duration::from_millis(50));
     }
 
-    paste_text_with_learning(&app, &text, learn.unwrap_or(true))
+    paste_text_with_learning(&app, &text, learn.unwrap_or(true), || Ok(()))
 }
 
 /// A paste's pending restore of the user's own clipboard. A newer paste
@@ -139,20 +139,19 @@ fn restore() -> std::sync::MutexGuard<'static, Restore<clip::Snapshot>> {
 const RESTORE_AFTER: std::time::Duration = std::time::Duration::from_millis(800);
 
 pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
-    paste_text_with_learning(app, text, true)
+    paste_text_with_learning(app, text, true, || Ok(()))
 }
 /// Pastes text Eavesy didn't hear, such as a form-fill value: edits to it
-/// teach nothing. `ready` is asked last, right before the clipboard is
-/// written and ⌘V posted; when it says no, nothing is pasted and the
-/// clipboard is untouched. (⌘V is a key event: it reaches whatever has the
-/// keyboard when macOS delivers it, so a focus change in the moment between
-/// `ready` and delivery can't be ruled out. That moment is the clipboard write.)
+/// teach nothing. `ready` is asked last, with the text on the clipboard and
+/// ⌘V the next thing posted; when it says no, nothing is pasted and the
+/// user's clipboard is put back at once. (⌘V is a key event: it reaches
+/// whatever has the keyboard when macOS delivers it, microseconds after
+/// `ready`. No app can make a check and a key press one step.)
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn paste_text_quietly(app: &AppHandle, text: &str, ready: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
-    ready()?;
-    paste_text_with_learning(app, text, false)
+    paste_text_with_learning(app, text, false, ready)
 }
-fn paste_text_with_learning(app: &AppHandle, text: &str, learn: bool) -> Result<(), String> {
+fn paste_text_with_learning(app: &AppHandle, text: &str, learn: bool, ready: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
     let generation = {
         let mut restore = restore();
         let generation = restore.begin(clip::change_count(), clip::snapshot);
@@ -164,9 +163,22 @@ fn paste_text_with_learning(app: &AppHandle, text: &str, learn: bool) -> Result<
         generation
     };
 
+    #[cfg(not(target_os = "macos"))]
+    if let Err(why) = ready() {
+        let _ = restore().finish(generation, clip::change_count());
+        return Err(why);
+    }
     #[cfg(target_os = "macos")]
     {
         let learning_target = if learn { crate::paste_learning::capture() } else { None };
+        if let Err(why) = ready() {
+            // Nothing is pasted: the user's own clipboard comes back now.
+            let mut restore = restore();
+            if let Some(previous) = restore.finish(generation, clip::change_count()) {
+                clip::put_back(&previous);
+            }
+            return Err(why);
+        }
         // Fixes made to the last paste are learned from before these words land beside it.
         crate::paste_learning::superseded();
         if let Err(error) = crate::dictation::press_paste() {
