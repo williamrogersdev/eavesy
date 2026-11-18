@@ -120,9 +120,12 @@ test('the Mac download is the primary public call to action', async ({ page }) =
   await expect(page.getByRole('heading', { name: 'Eavesy for Mac' })).toBeVisible();
 });
 
-test('the download page starts a download once, not on every reload', async ({ page }) => {
+test('the download page drops its start flag, so a reload cannot download again', async ({ page }) => {
   await page.goto('/download/mac?start=1', { waitUntil: 'networkidle' });
   await expect(page).toHaveURL(/\/download\/mac$/);
+  await page.reload({ waitUntil: 'networkidle' });
+  await expect(page).toHaveURL(/\/download\/mac$/);
+  await expect(page.getByRole('heading', { name: 'Eavesy for Mac' })).toBeVisible();
 });
 
 test('unknown routes show a branded not-found recovery path', async ({ page }) => {

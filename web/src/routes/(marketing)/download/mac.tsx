@@ -62,9 +62,11 @@ function DownloadMacPage() {
     if (download) setStarted(true);
     // Take ?start=1 out of the address first. Left there, every reload,
     // restored tab or address-bar suggestion downloads the DMG again.
-    void navigate({ search: {}, replace: true }).finally(() => {
+    // The download starts whether or not the address change settles.
+    const run = () => {
       if (download) window.location.assign(DMG_URL);
-    });
+    };
+    void navigate({ search: {}, replace: true }).then(run, run);
   }, [start, available, navigate]);
 
   return (
