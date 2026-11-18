@@ -141,8 +141,15 @@ const RESTORE_AFTER: std::time::Duration = std::time::Duration::from_millis(800)
 pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
     paste_text_with_learning(app, text, true)
 }
-/// Pastes text Eavesy didn't hear, such as a form-fill value: edits to it teach nothing.
-pub fn paste_text_quietly(app: &AppHandle, text: &str) -> Result<(), String> {
+/// Pastes text Eavesy didn't hear, such as a form-fill value: edits to it
+/// teach nothing. `ready` is asked last, right before the clipboard is
+/// written and ⌘V posted; when it says no, nothing is pasted and the
+/// clipboard is untouched. (⌘V is a key event: it reaches whatever has the
+/// keyboard when macOS delivers it, so a focus change in the moment between
+/// `ready` and delivery can't be ruled out. That moment is the clipboard write.)
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn paste_text_quietly(app: &AppHandle, text: &str, ready: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    ready()?;
     paste_text_with_learning(app, text, false)
 }
 fn paste_text_with_learning(app: &AppHandle, text: &str, learn: bool) -> Result<(), String> {

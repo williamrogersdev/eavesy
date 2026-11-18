@@ -19,7 +19,7 @@ const KINDS: &[(&str, &str, &[&str])] = &[
     ("city", "city", &["city", "town", "locality"]),
     ("country", "country", &["country"]),
     ("phone", "phone number", &["phone", "telephone", "tel", "mobile", "cell", "phone number"]),
-    ("website", "website", &["website", "web site", "url", "homepage", "home page"]),
+    ("website", "website", &["website", "web site", "web address", "url", "homepage", "home page"]),
     ("company", "company", &["company", "organization", "organisation", "business", "employer", "company name"]),
     ("job_title", "job title", &["job title", "jobtitle", "job", "position"]),
     ("first_name", "first name", &["first name", "firstname", "given name", "forename", "fname"]),
@@ -27,6 +27,9 @@ const KINDS: &[(&str, &str, &[&str])] = &[
     ("address", "street address", &["street", "street address", "address", "address line", "address1", "address 1", "line1"]),
     ("name", "name", &["full name", "fullname", "your name", "name"]),
 ];
+
+/// Addresses that aren't where the person lives: "address" in these is no street.
+const NOT_A_STREET: &[&str] = &["ip", "mac", "web", "wallet", "server", "host", "network", "bitcoin", "btc", "eth", "crypto", "ipv4", "ipv6", "hardware", "bluetooth", "url", "link"];
 
 /// Names that aren't the person's: "name" in these is no full name.
 const NOT_A_PERSON: &[&str] = &["user", "username", "file", "display", "screen", "project", "repo", "repository", "team", "workspace", "channel", "event", "nick", "nickname", "domain", "account", "product", "card", "cardholder", "pet", "middle"];
@@ -58,7 +61,8 @@ pub fn kind_of(hints: &[String]) -> Option<&'static str> {
         let words = words(hint);
         KINDS.iter().find_map(|(kind, _, names)| {
             let named = names.iter().any(|name| contains_phrase(&words, name));
-            let someone_else = *kind == "name" && words.iter().any(|word| NOT_A_PERSON.contains(&word.as_str()));
+            let someone_else = (*kind == "name" && words.iter().any(|word| NOT_A_PERSON.contains(&word.as_str())))
+                || (*kind == "address" && words.iter().any(|word| NOT_A_STREET.contains(&word.as_str())));
             (named && !someone_else).then_some(*kind)
         })
     })
@@ -78,6 +82,8 @@ enum Outcome {
     NothingSaved(&'static str),
     /// The field lost the keyboard before the value went in: nothing was pasted.
     FocusMoved,
+    /// The app didn't say in time whether the field still had the keyboard: nothing was pasted.
+    FocusUnknown,
     Failed(String),
 }
 
@@ -89,6 +95,7 @@ impl Outcome {
             Outcome::Unknown => ("unknown_field", None),
             Outcome::NothingSaved(kind) => ("nothing_saved", Some(*kind)),
             Outcome::FocusMoved => ("focus_moved", None),
+            Outcome::FocusUnknown => ("focus_unknown", None),
             Outcome::Failed(_) => ("paste_failed", None),
         }
     }
@@ -107,6 +114,7 @@ impl Outcome {
                 format!("Add a snippet in Eavesy Settings → Dictionary and set it to fill {}.", label(kind)),
             )),
             Outcome::FocusMoved => say("Nothing was filled", "The field changed before Eavesy could fill it. Click into it and try again."),
+            Outcome::FocusUnknown => say("Nothing was filled", "The app was slow to answer, so Eavesy couldn’t check the field. Try again."),
             Outcome::Failed(why) => Some(("Couldn’t fill the field".to_string(), why)),
         }
     }
@@ -141,14 +149,31 @@ fn fill_now(app: &AppHandle) -> Outcome {
         Ok(chosen) => chosen,
         Err(outcome) => return outcome,
     };
-    // A personal value goes only into the field it was chosen for.
+    // A personal value goes only into the field it was chosen for, checked
+    // as late as the paste allows.
     let Some((field, _)) = &found else { return Outcome::NoField };
-    if !crate::paste_learning::still_focused(field) {
-        return Outcome::FocusMoved;
-    }
-    match crate::commands::paste_text_quietly(app, text) {
+    let mut refused = None;
+    let ready = || match focus_answer(|| crate::paste_learning::has_focus(field)) {
+        Ok(()) => Ok(()),
+        Err(outcome) => {
+            refused = Some(outcome);
+            Err("the field changed".to_string())
+        }
+    };
+    match crate::commands::paste_text_quietly(app, text, ready) {
         Ok(()) => Outcome::Filled(kind),
+        Err(_) if refused.is_some() => refused.unwrap_or(Outcome::FocusMoved),
         Err(why) => Outcome::Failed(why),
+    }
+}
+
+/// Whether to paste, from asking if the field has the keyboard: one more ask
+/// when the app is too slow to say, since a slow answer is no answer.
+fn focus_answer(mut ask: impl FnMut() -> Option<bool>) -> Result<(), Outcome> {
+    match ask().or_else(&mut ask) {
+        Some(true) => Ok(()),
+        Some(false) => Err(Outcome::FocusMoved),
+        None => Err(Outcome::FocusUnknown),
     }
 }
 
@@ -195,6 +220,11 @@ mod tests {
         assert_eq!(kind(&["Project name"]), None);
         assert_eq!(kind(&["Display name"]), None);
         assert_eq!(kind(&["Hotel"]), None);
+        assert_eq!(kind(&["IP address"]), None);
+        assert_eq!(kind(&["MAC address"]), None);
+        assert_eq!(kind(&["Wallet address"]), None);
+        assert_eq!(kind(&["Web address"]), Some("website"));
+        assert_eq!(kind(&["Billing address"]), Some("address"));
         assert_eq!(kind(&["Search"]), None);
         assert_eq!(kind(&[]), None);
     }
@@ -219,6 +249,20 @@ mod tests {
         assert_eq!(choose(Some(&hints(&["Phone"])), &saved), Err(Outcome::NothingSaved("phone")));
         assert_eq!(choose(Some(&hints(&["Search"])), &saved), Err(Outcome::Unknown));
         assert_eq!(choose(None, &saved), Err(Outcome::NoField));
+    }
+
+    #[test]
+    fn a_slow_answer_is_asked_again_and_never_taken_as_yes() {
+        let answers = |list: Vec<Option<bool>>| {
+            let mut list = list.into_iter();
+            move || list.next().flatten()
+        };
+        assert_eq!(focus_answer(answers(vec![Some(true)])), Ok(()));
+        assert_eq!(focus_answer(answers(vec![None, Some(true)])), Ok(()));
+        assert_eq!(focus_answer(answers(vec![Some(false)])), Err(Outcome::FocusMoved));
+        assert_eq!(focus_answer(answers(vec![None, Some(false)])), Err(Outcome::FocusMoved));
+        assert_eq!(focus_answer(answers(vec![None, None])), Err(Outcome::FocusUnknown));
+        assert_eq!(Outcome::FocusUnknown.event(), ("focus_unknown", None));
     }
 
     #[test]

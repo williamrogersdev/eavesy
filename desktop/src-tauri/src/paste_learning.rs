@@ -897,8 +897,13 @@ mod mac {
             Some((target, hints))
         }
     }
-    pub fn still_focused(target: &Target) -> bool {
+    fn still_focused(target: &Target) -> bool {
         focus(target) == Some(true)
+    }
+    /// Whether `target` still has the keyboard: None when it can't be told
+    /// right now (an AX timeout), which is neither yes nor no.
+    pub fn has_focus(target: &Target) -> Option<bool> {
+        focus(target)
     }
     /// Whether `target` has the keyboard, or None when the focused element
     /// can't be found right now (an AX timeout), which says nothing either way.
@@ -1523,7 +1528,7 @@ pub fn utf16_chunks(text: &str, max: usize) -> Vec<Vec<u16>> {
 }
 
 #[cfg(target_os = "macos")]
-pub use mac::{capture, field_hints, observe, replace, still_focused, superseded, LiveField};
+pub use mac::{capture, field_hints, has_focus, observe, replace, superseded, LiveField};
 #[cfg(not(target_os = "macos"))]
 pub fn replace(_app: &tauri::AppHandle, _previous: &str, _text: &str) -> Result<(), String> {
     Err("replacing pasted words is only supported on macOS".into())
