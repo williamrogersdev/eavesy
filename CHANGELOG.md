@@ -6,6 +6,12 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-11-18 - desktop
+
+### Added
+
+- Mac app: pause and resume a screen recording ([#419](https://github.com/williamrogersdev/eavesy/pull/419))
+
 ## [0.11.1] - 2026-11-17 - desktop
 
 ### Added
