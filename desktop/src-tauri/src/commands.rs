@@ -980,7 +980,10 @@ pub fn open_keyboard_settings(app: AppHandle, input_monitoring: bool) -> Result<
     let url = if input_monitoring {
         "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
     } else { "x-apple.systempreferences:com.apple.Keyboard-Settings.extension" };
-    app.shell().open(url, None).map_err(|e| e.to_string())
+    app.shell().open(url, None).map_err(|e| e.to_string())?;
+    crate::make_room::after_opening_settings(&app);
+    crate::panel::yield_while_settings_open(&app);
+    Ok(())
 }
 
 #[tauri::command]
