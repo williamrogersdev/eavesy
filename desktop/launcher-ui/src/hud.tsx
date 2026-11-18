@@ -395,15 +395,17 @@ function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: s
  * more for a finished dictation the server didn't say the tone of. A
  * finished dictation's own `written` outranks it where there is one.
  */
-function useWriting(state: HudState | null): [Writing | null, (next: Writing | null) => void, boolean, (next: boolean, saved?: boolean) => void, { readonly current: boolean }] {
+function useWriting(state: HudState | null): [Writing | null, (next: Writing | null) => void, boolean, (next: boolean, saved?: boolean) => void, { current: boolean }, { current: boolean }] {
   const [prefs, setPrefs] = useState<Writing | null>(browserPreviewWriting);
   // Whether an AI prompt carries the full transcript (Settings → Dictation). Off unless turned on.
   const [attach, setAttachShown] = useState(() => !tauri() && new URLSearchParams(window.location.search).has('attach'));
   // What the account last said, to go back to when a save fails.
   const savedAttach = useRef(attach);
+  // The value the latest toggle asked for, so an older failed save doesn't undo it.
+  const wantedAttach = useRef(attach);
   const setAttach = useCallback((next: boolean, saved?: boolean) => {
     setAttachShown(next);
-    if (saved) savedAttach.current = next;
+    if (saved) { savedAttach.current = next; wantedAttach.current = next; }
   }, []);
   const [reload, setReload] = useState(0);
   const untold = state?.phase === 'done' && state.mode === 'audio' && !!state.sessionId && !state.written ? state.sessionId : null;
@@ -426,7 +428,7 @@ function useWriting(state: HudState | null): [Writing | null, (next: Writing | n
     load(reload || untold ? 4 : 0);
     return () => { disposed = true; };
   }, [reload, untold]);
-  return [prefs, setPrefs, attach, setAttach, savedAttach];
+  return [prefs, setPrefs, attach, setAttach, savedAttach, wantedAttach];
 }
 
 /**
@@ -476,7 +478,7 @@ function Hud() {
   const [languageQuery, setLanguageQuery] = useState('');
   const [languageActive, setLanguageActive] = useState(0);
   const [recentLanguages, setRecentLanguages] = useState(loadRecentLanguages);
-  const [prefs, setPrefs, attach, setAttach, savedAttach] = useWriting(state);
+  const [prefs, setPrefs, attach, setAttach, savedAttach, wantedAttach] = useWriting(state);
   const peekDwell = useRef<number | null>(null);
   // Bumped (at most once a second) while the pointer moves over the control.
   const [pointerMoved, setPointerMoved] = useState(0);
@@ -1173,15 +1175,16 @@ function Hud() {
   // Attach transcript: kept on the account, in turn with the tone's saves.
   const toggleAttach = async () => {
     const next = !attach;
+    wantedAttach.current = next;
     setAttach(next);
     setActionError(null);
     if (!tauri()) return;
     const save = writeSave.current.then(() => invoke('account_call', { method: 'PATCH', path: '/api/me', body: { dictationAttachTranscript: next } }).then(() => true, () => false));
     writeSave.current = save;
     if (await save) { savedAttach.current = next; return; }
-    // Back to what the account holds, unless a later toggle has moved on since.
-    setAttach(savedAttach.current);
     setActionError('Couldn’t change that. Try again?');
+    // Back to what the account holds, unless a later toggle has moved on since: its own save says how it went.
+    if (wantedAttach.current === next) { wantedAttach.current = savedAttach.current; setAttach(savedAttach.current); }
   };
   const change = async (next: Writing) => {
     const sessionId = state.sessionId;
