@@ -120,6 +120,10 @@ const POLICIES: Record<string, Partial<Record<Method, Policy>>> = {
     unauthenticated: SIGNED_IN,
     scopedToCaller: 'Dictionary ownership comes from authenticated browser or paired device identity; feedback service tests verify stale text, cross-owner reads and writes, and forgetting',
   }])),
+  '/api/snippets': Object.fromEntries(['GET', 'PUT', 'DELETE'].map(method => [method, {
+    unauthenticated: SIGNED_IN,
+    scopedToCaller: 'Snippet ownership comes from authenticated browser or paired device identity; snippets service tests verify reads, edits and removals stay within the caller’s account',
+  }])),
   '/api/imports/': {
     GET: { unauthenticated: SIGNED_IN, crossUser: { call: { path: '/api/imports/' }, excludes: [MEETING] } },
     POST: { unauthenticated: SIGNED_IN, scopedToCaller: 'Creates a recording only for the authenticated owner; service tests cover deduplication and isolation' },

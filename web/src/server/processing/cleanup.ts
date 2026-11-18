@@ -97,6 +97,7 @@ export const ACCOUNT_TABLES = [
   'agent_feedback',
   'agent_listeners',
   'personal_dictionary',
+  'snippets',
   'webhook_endpoints',
   'mcp_tokens',
   'oauth_codes',

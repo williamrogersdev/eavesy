@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router';
 import { and, eq, isNull } from 'drizzle-orm';
 import { getDb } from '@/db/client';
 import * as dictionary from '@/db/repo/dictionary';
+import * as snippets from '@/db/repo/snippets';
 import { deviceTokens, users } from '@/db/schema';
 import { AUTO_LANGUAGE } from '@/lib/transcription/language';
 import { parseVocabulary, normalizeVocabulary } from '@/lib/transcription/vocabulary';
@@ -42,6 +43,8 @@ export const Route = createFileRoute('/api/devices/me')({
           // Newest first, for the Mac to spell dictations itself when polishing can't answer in time.
           corrections: entries.slice(0, 200).map(({ from, to }) => ({ from, to })),
           language: user?.defaultLanguage || AUTO_LANGUAGE,
+          // Spoken triggers the Mac expands in dictations, and the values Fill field pastes.
+          snippets: (await snippets.list(getDb(), actor.userId)).map(({ trigger, text, field }) => ({ trigger, text, field })),
         });
       },
       DELETE: async ({ request }) => {

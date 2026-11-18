@@ -45,7 +45,7 @@ import {
 
 export { SHORTCUT_LABELS, talkHint } from './shortcut-keys';
 
-const FALLBACK_DEFAULTS: HotkeyBindings = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space', screen: 'Alt+Shift+R', control: 'Alt+Shift+H', clipboard: 'Alt+Shift+V', screenshots: 'Alt+Shift+S' };
+const FALLBACK_DEFAULTS: HotkeyBindings = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space', screen: 'Alt+Shift+R', control: 'Alt+Shift+H', clipboard: 'Alt+Shift+V', screenshots: 'Alt+Shift+S', fill: 'Alt+Shift+F' };
 const NOTHING_HELD: HeldModifiers = { meta: false, ctrl: false, alt: false, shift: false };
 /**
  * How long a key the Mac app may report as an fn chord waits for that report:
@@ -93,7 +93,7 @@ export function useShortcuts(onChanged?: () => void): Shortcuts {
 
   const reload = useCallback(async () => {
     const settings = await getSettings().catch(() => null);
-    const next = settings ? { toggle: settings.toggle_hotkey ?? '', dictation: settings.dictation_hotkey ?? '', assistant: settings.assistant_hotkey ?? '', screen: settings.screen_hotkey ?? '', control: settings.control_hotkey ?? '', clipboard: settings.clipboard_hotkey ?? '', screenshots: settings.screenshots_hotkey ?? '' } : FALLBACK_DEFAULTS;
+    const next = settings ? { toggle: settings.toggle_hotkey ?? '', dictation: settings.dictation_hotkey ?? '', assistant: settings.assistant_hotkey ?? '', screen: settings.screen_hotkey ?? '', control: settings.control_hotkey ?? '', clipboard: settings.clipboard_hotkey ?? '', screenshots: settings.screenshots_hotkey ?? '', fill: settings.fill_hotkey ?? '' } : FALLBACK_DEFAULTS;
     bindingsRef.current = next;
     setBindings(next);
     // Shells out in the Mac app, so it never holds up the rows; only the latest check counts.
@@ -558,7 +558,7 @@ export function RestoreDefaultShortcuts({ shortcuts }: { shortcuts: Shortcuts })
       {confirming ? (
         <>
           <p className="ev-set-hint flex-1">
-            {SHORTCUT_LABELS.toggle} goes back to {keysText(defaults.toggle)}, {SHORTCUT_LABELS.dictation} to {keysText(defaults.dictation)}, {SHORTCUT_LABELS.assistant} to {keysText(defaults.assistant)}, {SHORTCUT_LABELS.screen} to {keysText(defaults.screen)}, {SHORTCUT_LABELS.control} to {keysText(defaults.control)}, {SHORTCUT_LABELS.clipboard} to {keysText(defaults.clipboard)} and {SHORTCUT_LABELS.screenshots} to {keysText(defaults.screenshots)}.
+            {SHORTCUT_LABELS.toggle} goes back to {keysText(defaults.toggle)}, {SHORTCUT_LABELS.dictation} to {keysText(defaults.dictation)}, {SHORTCUT_LABELS.assistant} to {keysText(defaults.assistant)}, {SHORTCUT_LABELS.screen} to {keysText(defaults.screen)}, {SHORTCUT_LABELS.control} to {keysText(defaults.control)}, {SHORTCUT_LABELS.clipboard} to {keysText(defaults.clipboard)}, {SHORTCUT_LABELS.screenshots} to {keysText(defaults.screenshots)} and {SHORTCUT_LABELS.fill} to {keysText(defaults.fill)}.
           </p>
           <Button variant="quiet" size="sm" disabled={busy} onClick={() => setConfirming(false)}>Cancel</Button>
           <Button variant="primary" size="sm" loading={busy} onClick={restore}>Restore</Button>

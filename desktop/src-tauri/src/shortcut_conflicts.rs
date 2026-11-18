@@ -87,6 +87,7 @@ pub fn check_saved(current: &Bindings) -> SavedConflicts {
         screen: lookup(current.get(Action::Screen), false),
         clipboard: lookup(current.get(Action::Clipboard), false),
         screenshots: lookup(current.get(Action::Screenshots), false),
+        fill: lookup(current.get(Action::Fill), false),
     }
 }
 
@@ -98,6 +99,7 @@ pub struct SavedConflicts {
     pub screen: Option<Conflict>,
     pub clipboard: Option<Conflict>,
     pub screenshots: Option<Conflict>,
+    pub fill: Option<Conflict>,
 }
 
 /// Sentences for the startup notice about saved shortcuts another app also
@@ -345,7 +347,7 @@ mod tests {
             "28":{"enabled":true,"value":{"parameters":[51,20,1179648]}},
             "184":{"enabled":true,"value":{"parameters":[53,23,1179648]}}
         }});
-        for action in [Action::Clipboard, Action::Screenshots] {
+        for action in [Action::Clipboard, Action::Screenshots, Action::Fill] {
             let Ok(Some(Keys::Plain { mods, key })) = keys(action.default_accelerator()) else { panic!("default parses") };
             assert_eq!(mods, Modifiers::ALT | Modifiers::SHIFT);
             assert_eq!(symbolic_match(&stock, keycode(key).unwrap(), flags(mods)), None);
@@ -392,7 +394,7 @@ mod tests {
 
     #[test]
     fn startup_says_once_which_saved_shortcut_another_app_uses() {
-        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "".into(), assistant: "Alt+Space".into(), screen: String::new(), control: String::new(), clipboard: String::new(), screenshots: String::new() };
+        let now = Bindings { toggle: "Cmd+Shift+Space".into(), dictation: "".into(), assistant: "Alt+Space".into(), screen: String::new(), control: String::new(), clipboard: String::new(), screenshots: String::new(), fill: String::new() };
         let raycast = |accelerator: &str| (accelerator == "Alt+Space").then(|| "Raycast".to_string());
         let mut noted = Vec::new();
         let first = new_app_conflicts(&now, &mut noted, raycast);

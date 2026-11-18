@@ -258,6 +258,9 @@ pub fn refresh(app: &AppHandle) {
             /// Absent from servers that don't send it: the cached fixes stay.
             #[serde(default)]
             corrections: Option<Vec<Correction>>,
+            /// Absent from servers that don't send it: the cached snippets stay.
+            #[serde(default)]
+            snippets: Option<Vec<crate::snippets::Snippet>>,
         }
         if let Ok(response) = response {
             if response.status().is_success() {
@@ -266,6 +269,9 @@ pub fn refresh(app: &AppHandle) {
                     store_language(&app, body.language.as_deref());
                     if let Some(corrections) = body.corrections {
                         store_corrections(&app, &corrections);
+                    }
+                    if let Some(snippets) = body.snippets {
+                        crate::snippets::store(&app, &snippets);
                     }
                 }
             }

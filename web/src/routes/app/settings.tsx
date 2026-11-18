@@ -1,4 +1,5 @@
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
+import { SnippetsSettings } from '@/components/snippets/snippets-settings';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { useEffect, useRef, useState } from 'react';
 import { isRecord, optionalString } from '@/lib/json';
@@ -356,6 +357,9 @@ function SettingsPage() {
             </AppSection>
             <AppSection title="Personal dictionary">
               <DictionarySettings />
+            </AppSection>
+            <AppSection title="Snippets and form fill">
+              <SnippetsSettings />
             </AppSection>
           </>
         ) : null}
