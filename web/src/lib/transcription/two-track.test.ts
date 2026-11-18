@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   findEchoLines,
   isConversation,
+  isGlossaryReadBack,
   isHallucination,
   isQuietAudio,
   isSilentTrack,
@@ -176,6 +177,23 @@ describe('glossary read-back', () => {
     expect(isHallucination({ text: 'Eavesy, Kubernetes.', noSpeechProb: 0.05 }, { glossary })).toBe(false);
     expect(isHallucination({ text: 'Eavesy, Kubernetes.', noSpeechProb: 0.6 }, { glossary, lenient: true })).toBe(false);
     expect(isHallucination({ text: 'Priya Raman, Kubernetes.' }, { glossary })).toBe(false);
+  });
+
+  // Whisper's reply to a near-silent dictation, word for word: the prompt read
+  // back with a stray "dc" and a run of "ui", and no score on the line.
+  const dictionary = ['Repackify', 'Rust', 'Next Js', 'Pallets', 'Gaylord Boxes', '1db', 'pallet', 'box', 'cloudflare', 'docs', 'ci', 'ui'];
+  const readBack = 'Eavesy, Repackify, Rust, Gaylord Boxes, 1db, pallet, box, dc, ui, ui, ui, ui, ui,';
+
+  test('drops a long read-back with a stray word in it, even with no score', () => {
+    expect(isHallucination({ text: readBack }, { glossary: dictionary, lenient: true })).toBe(true);
+    expect(isGlossaryReadBack({ text: readBack }, dictionary)).toBe(true);
+  });
+
+  test('keeps sentences built from the custom words', () => {
+    const said = 'Repackify ships pallets and Gaylord Boxes, and the docs live on Cloudflare.';
+    expect(isHallucination({ text: said }, { glossary: dictionary, lenient: true })).toBe(false);
+    expect(isHallucination({ text: 'Rust, docs, CI.' }, { glossary: dictionary, lenient: true })).toBe(false);
+    expect(isGlossaryReadBack({ text: said }, dictionary)).toBe(false);
   });
 });
 

@@ -81,6 +81,44 @@ describe('Workers AI file transcription', () => {
     expect(result.segments).toEqual([]);
   });
 
+  test('a dictation Whisper only read its prompt back to comes out empty, sign-off and all', async () => {
+    const result = await transcribeAudioFile({
+      audio: new Uint8Array([1]),
+      vocabulary: ['Repackify', 'Rust', 'Gaylord Boxes', '1db', 'pallet', 'box', 'ui'],
+      voiceNote: true,
+      ai: {
+        run: () =>
+          Promise.resolve({
+            text: 'Eavesy, Repackify, Rust, Gaylord Boxes, 1db, pallet, box, dc, ui, ui, ui, ui, ui, Thank you.',
+            segments: [
+              { start: 1.42, end: 5.78, text: 'Eavesy, Repackify, Rust, Gaylord Boxes, 1db, pallet, box, dc, ui, ui, ui, ui, ui,' },
+              { start: 5.78, end: 5.82, text: 'Thank you.' },
+            ],
+          }),
+      },
+    });
+    expect(result.text).toBe('');
+  });
+
+  test('a real "thank you" after real words is kept', async () => {
+    const result = await transcribeAudioFile({
+      audio: new Uint8Array([1]),
+      vocabulary: ['Repackify'],
+      voiceNote: true,
+      ai: {
+        run: () =>
+          Promise.resolve({
+            text: 'Send the Repackify quote to Dana. Thank you.',
+            segments: [
+              { start: 0, end: 3, text: 'Send the Repackify quote to Dana.', no_speech_prob: 0.05 },
+              { start: 3, end: 4, text: 'Thank you.', no_speech_prob: 0.1 },
+            ],
+          }),
+      },
+    });
+    expect(result.text).toBe('Send the Repackify quote to Dana. Thank you.');
+  });
+
   test('lets Whisper detect the language when set to auto', async () => {
     let input: Record<string, unknown> = {};
     await transcribeAudioFile({

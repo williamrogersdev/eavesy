@@ -116,6 +116,42 @@ function changes(heard: readonly string[], written: readonly string[]): Change[]
 }
 
 /**
+ * Dictionary terms the speaker said that a rewrite swapped for other words:
+ * "Eavesy" written as "Eavesdrop", "Repackify" as "Redis", "pallet" as
+ * "parcel". The recognizer heard the term spelled the user's way, so nothing
+ * is left to fix there. A term may still go with a whole stretch the rewrite
+ * cut (a false start, a stutter), may be inflected ("pallet" to "pallets",
+ * "Repackify's"), and may move. Too long to align, nothing is reported: the
+ * other checks still judge the rewrite.
+ */
+export function droppedTerms(said: string, candidate: string, terms: readonly string[]): string[] {
+  const heard = wordsOf(said), written = wordsOf(candidate);
+  let changed: Change[] | null | undefined;
+  const seen = new Set<string>();
+  const dropped: string[] = [];
+  for (const term of terms) {
+    const length = wordsOf(term).length;
+    const key = spoken(wordsOf(term));
+    if (key.length < 2 || seen.has(key)) continue;
+    seen.add(key);
+    const spans = writtenAs(heard, key, length);
+    if (spans.length === 0) continue;
+    const kept = (words: readonly string[]) =>
+      writtenAs(words, key, length).length + (length === 1 ? words.filter((word) => word !== key && word.startsWith(key)).length : 0);
+    if (kept(written) >= spans.length) continue;
+    if (changed === undefined) changed = changes(heard, written);
+    if (!changed) continue;
+    const swapped = spans.some((span) => {
+      const change = changed!.find((c) => span[0] < c.heard[1] && span[1] > c.heard[0]);
+      if (!change || change.written[0] === change.written[1]) return false;
+      return kept(written.slice(change.written[0], change.written[1])) === 0;
+    });
+    if (swapped) dropped.push(term);
+  }
+  return dropped;
+}
+
+/**
  * Dictionary terms a rewrite wrote where the speaker didn't say them. A
  * recognizer only mishears a word as something that sounds like it, so each
  * "Repackify" the rewrite adds must stand where it changed heard words that
