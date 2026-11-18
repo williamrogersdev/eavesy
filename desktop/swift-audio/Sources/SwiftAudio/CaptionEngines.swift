@@ -373,7 +373,7 @@ final class SFSpeechEngine: SpeechEngine {
             return .success(
                 AnalyzerEngine(
                     transcriber: transcribers[0], previewer: transcribers.dropFirst().first, speller: speller,
-                    vocabulary: vocabulary, format: format))
+                    vocabulary: vocabulary, spell: spell, format: format))
         }
 
         /// The transcriber that hears custom words, once its model is on this
@@ -389,7 +389,7 @@ final class SFSpeechEngine: SpeechEngine {
 
         private init(
             transcriber: SpeechTranscriber, previewer: SpeechTranscriber?, speller: DictationTranscriber?,
-            vocabulary: [String], format: AVAudioFormat
+            vocabulary: [String], spell: Bool, format: AVAudioFormat
         ) {
             self.transcriber = transcriber
             self.previewer = previewer
@@ -405,7 +405,9 @@ final class SFSpeechEngine: SpeechEngine {
             self.spellInput = spellInput
             relay = DraftRelay(
                 previewFeed: previewFeed, spellFeed: speller == nil ? nil : spellFeed,
-                speller: Speller(vocabulary: speller == nil ? [] : vocabulary))
+                // A dictation spells its words even when the custom-word
+                // transcriber isn't here: then only from the accurate words.
+                speller: Speller(vocabulary: spell ? vocabulary : []))
             if speller == nil { spellFeed.finish() }
         }
 
