@@ -1,4 +1,4 @@
-import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import { StrictMode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { AudioLines, ArrowDown, ArrowUp, Camera, Check, ChevronDown, Clapperboard, ClipboardList, Copy, EyeOff, History, House, Languages, Maximize2, Mic, MicOff, Highlighter, Minus, Pause, Play, Search, ShieldCheck, Square, Users, Volume2, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import type { LiveRow } from '@/lib/desktop/live-captions';
@@ -395,10 +395,16 @@ function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: s
  * more for a finished dictation the server didn't say the tone of. A
  * finished dictation's own `written` outranks it where there is one.
  */
-function useWriting(state: HudState | null): [Writing | null, (next: Writing | null) => void, boolean, (next: boolean) => void] {
+function useWriting(state: HudState | null): [Writing | null, (next: Writing | null) => void, boolean, (next: boolean, saved?: boolean) => void, { readonly current: boolean }] {
   const [prefs, setPrefs] = useState<Writing | null>(browserPreviewWriting);
   // Whether an AI prompt carries the full transcript (Settings → Dictation). Off unless turned on.
-  const [attach, setAttach] = useState(() => !tauri() && new URLSearchParams(window.location.search).has('attach'));
+  const [attach, setAttachShown] = useState(() => !tauri() && new URLSearchParams(window.location.search).has('attach'));
+  // What the account last said, to go back to when a save fails.
+  const savedAttach = useRef(attach);
+  const setAttach = useCallback((next: boolean, saved?: boolean) => {
+    setAttachShown(next);
+    if (saved) savedAttach.current = next;
+  }, []);
   const [reload, setReload] = useState(0);
   const untold = state?.phase === 'done' && state.mode === 'audio' && !!state.sessionId && !state.written ? state.sessionId : null;
   useEvent('account:changed', () => setReload((n) => n + 1));
@@ -412,7 +418,7 @@ function useWriting(state: HudState | null): [Writing | null, (next: Writing | n
           const raw = me as { dictationStyle?: unknown; dictationForAgents?: unknown; dictationAttachTranscript?: unknown } | null;
           const writing = writingFrom({ style: raw?.dictationStyle ?? 'natural', forAgents: raw?.dictationForAgents });
           if (writing) setPrefs({ style: writing.style, forAgents: writing.forAgents });
-          if (raw) setAttach(raw.dictationAttachTranscript === true);
+          if (raw) setAttach(raw.dictationAttachTranscript === true, true);
         })
         .catch(() => { if (attempt < 4 && !disposed) window.setTimeout(() => load(attempt + 1), 500 * 2 ** attempt); });
     };
@@ -420,7 +426,7 @@ function useWriting(state: HudState | null): [Writing | null, (next: Writing | n
     load(reload || untold ? 4 : 0);
     return () => { disposed = true; };
   }, [reload, untold]);
-  return [prefs, setPrefs, attach, setAttach];
+  return [prefs, setPrefs, attach, setAttach, savedAttach];
 }
 
 /**
@@ -470,7 +476,7 @@ function Hud() {
   const [languageQuery, setLanguageQuery] = useState('');
   const [languageActive, setLanguageActive] = useState(0);
   const [recentLanguages, setRecentLanguages] = useState(loadRecentLanguages);
-  const [prefs, setPrefs, attach, setAttach] = useWriting(state);
+  const [prefs, setPrefs, attach, setAttach, savedAttach] = useWriting(state);
   const peekDwell = useRef<number | null>(null);
   // Bumped (at most once a second) while the pointer moves over the control.
   const [pointerMoved, setPointerMoved] = useState(0);
@@ -1172,7 +1178,10 @@ function Hud() {
     if (!tauri()) return;
     const save = writeSave.current.then(() => invoke('account_call', { method: 'PATCH', path: '/api/me', body: { dictationAttachTranscript: next } }).then(() => true, () => false));
     writeSave.current = save;
-    if (!await save) { setAttach(!next); setActionError('Couldn’t change that. Try again?'); }
+    if (await save) { savedAttach.current = next; return; }
+    // Back to what the account holds, unless a later toggle has moved on since.
+    setAttach(savedAttach.current);
+    setActionError('Couldn’t change that. Try again?');
   };
   const change = async (next: Writing) => {
     const sessionId = state.sessionId;
@@ -1507,12 +1516,11 @@ function Hud() {
     else if (dictating && choosing && !opening && !rowOnly) below = (
       <div className="ctl-options">
         {writeMenu(prefs ?? PLAIN, cancelDisabled, (next) => { void pickWhileRecording(next); void showOptions(false); })}
-        {writingChoice(prefs ?? PLAIN) === 'ai' && (
-          <button type="button" role="switch" aria-checked={attach} disabled={cancelDisabled} className="ctl-switch-row ctl-option-switch"
-            title={ATTACH_TRANSCRIPT_HINT} onClick={() => void toggleAttach()}>
-            <span>Attach transcript</span><span className="ctl-switch" aria-hidden />
-          </button>
-        )}
+        {/* Always there, so the menu keeps its size: it does something only for an AI prompt. */}
+        <button type="button" role="switch" aria-checked={attach} disabled={cancelDisabled || writingChoice(prefs ?? PLAIN) !== 'ai'} className="ctl-switch-row ctl-option-switch"
+          title={writingChoice(prefs ?? PLAIN) === 'ai' ? ATTACH_TRANSCRIPT_HINT : `For AI prompts. ${ATTACH_TRANSCRIPT_HINT}`} onClick={() => void toggleAttach()}>
+          <span>Attach transcript</span><span className="ctl-switch" aria-hidden />
+        </button>
         <button type="button" role="switch" aria-checked={typeLive} disabled={cancelDisabled} className="ctl-switch-row ctl-option-switch"
           title={typeLive ? 'Your words are typed where your cursor is while you talk. Turn off to paste them when you stop.' : 'Your words are pasted when you stop. Turn on to type them where your cursor is while you talk.'}
           onClick={() => void toggleTypeLive()}>

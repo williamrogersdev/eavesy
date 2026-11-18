@@ -11,7 +11,7 @@ import * as projectsRepo from '@/db/repo/projects';
 import * as teamsRepo from '@/db/repo/teams';
 import { DICTATION_STYLES, writtenWith, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { stripFillers } from '@/lib/transcription/agent-transcript';
-import { deliverable, rewriteSource } from '@/lib/transcription/attached-transcript';
+import { deliverable, keptUnrewritten, rewriteSource } from '@/lib/transcription/attached-transcript';
 import { BUILT_IN_CONTEXT, fixBuiltInTerms, parseVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor } from '@/server/device-auth';
 import { guardUserQuota } from '@/server/rate-limit';
@@ -51,8 +51,10 @@ export const Route = createFileRoute('/api/dictations/polish')({
         const { source, carried } = rewriteSource(sent);
         const text = fixBuiltInTerms(source);
         if (!text || text.length > MAX_POLISH_CHARS) {
-          // A rewrite that carries its transcript stays whole, block and all, even an empty one.
-          const kept = carried ? sent : stripFillers(text);
+          // A rewrite that carries its transcript stays as it is: block and
+          // all (even an empty one) with Attach transcript on, the message alone with it off.
+          const attach = carried && (await usersRepo.getById(getDb(), actor.userId))?.dictationAttachTranscript === true;
+          const kept = carried ? keptUnrewritten(sent, attach) : stripFillers(text);
           return Response.json({ text: kept, polished: false, ...(text ? { reason: 'too_long' } : {}) });
         }
 
