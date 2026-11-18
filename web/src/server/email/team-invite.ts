@@ -24,7 +24,7 @@ export function renderTeamInvite(content: TeamInviteContent) {
   const team = plain(content.teamName);
   const intro = `Someone on Eavesy invited you to join their team as ${role}.`;
   const fields = [['Invited by', inviter], ['Team', team]] as const;
-  const how = 'Sign in to Eavesy with this email address, then accept the invitation on the Team page.';
+  const how = 'Sign in to Eavesy, or create an account, with this email address. Then accept the invitation on the Team page.';
   const notice = 'Team owners and admins can see the recordings you make after you join.';
   const expiry = `The invitation is open until ${until}. If you weren’t expecting it, you can ignore this email.`;
   const safety = 'Eavesy never asks for your password or payment details by email.';
