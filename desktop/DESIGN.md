@@ -89,7 +89,7 @@ Rules:
 | Hotkey error | Include ⌘ or ⌃ in the shortcut. | Add ⌘ or ⌃ so it won't clash with typing. |
 | Sign-in button | Sign in with browser | Sign in at eavesy.com |
 | Sign-in waiting | Finish in your browser… | Waiting for you in the browser… |
-| Skip sign-in | Skip for now | Stay local for now |
+| Skip sign-in | Skip for now | (none in setup: signing in is the way in) |
 | HUD transcribing | Transcribing… | Writing it down… |
 | Copy toast | Transcript copied | Copied |
 | Panel title | Capture history | (no title: the date groups are the structure) |
@@ -853,29 +853,31 @@ Keep scroll anchored (`overflow-anchor: auto`). If the user has scrolled
 down, insert above without moving their view and show a "1 new" coat pill
 at the top.
 
-## 7. Onboarding (in the panel, mascot-guided)
+## 7. Onboarding (in the panel)
 
-There are four steps, and they really are a sequence, so they're numbered.
-The layout is a 96px mascot on the left with a bubble on the right. Below
-that are the step body and a dot progress indicator (4 dots, current in
-coat). The footer has the primary action on the right and "Stay local for
-now" as a ghost button on the left.
+Three numbered steps. Setup gets a roomier panel (540×600, clamped to the
+screen) and gives the person's own panel size back when it ends. The head is
+a 44px mascot with the step dots and the step's name; below it a title, one
+line of lead, and the step's content. The footer always has the one primary
+action on the right and Back on the left. No speech bubble: the title and
+lead say it once.
 
-1. **Sign in** (`idle`): "Hi, I'm Eavesy. I live up here and write things
-   down for you." [Sign in at eavesy.com] or "Stay local for now".
-   Waiting state: `thinking`, "Waiting for you in the browser…", Cancel.
-2. **Permissions checklist** (`listening` *only after the mic is granted*,
-   `idle` before): rows for Microphone (required), Accessibility (paste at
-   cursor), and Screen Recording (optional, "Later" allowed). Each row shows
-   a status disc (granted: leaf check; not yet: an outline ring), title,
-   hint and an "Allow" button that becomes "Open Settings" after a denial.
-   Rows update live. Each grant plays a one-shot `happy`.
-3. **Shortcuts** (`listening` while practising): "Hold `fn` and say anything.
-   I'll show you what I heard." A practice field shows the live transcript.
-   Shortcut rows: Talk (`fn` hold), Open Eavesy (`⌘⇧Space`), each editable.
-   If fn opens the emoji picker, show the inline fix from §2.
-4. **Done** (`happy`, then `idle`): "That's it. I'll be in the menu bar,
-   under the hat icon." [Start using Eavesy].
+1. **Sign in** (`idle`, `thinking` while waiting): "Sign in to Eavesy", one
+   line on what the account gives, and a note that the same page creates an
+   account. [Sign in at eavesy.com]. There is no skip: the account is what
+   makes Eavesy useful, and a skip next to it is the button everyone presses.
+   Waiting: "Approve this Mac in your browser", Cancel and "Waiting for you in
+   the browser…". Once the browser approves, setup moves on by itself.
+2. **Permissions**: Microphone (required), Accessibility (paste at cursor),
+   Input Monitoring only when a shortcut uses `fn`. Each row has a status
+   disc, title, a one-line hint and Allow, which becomes Open Settings after a
+   denial. Rows update live; each grant plays a one-shot `happy`. Opening
+   System Settings moves the panel aside and drops it to the normal window
+   level while Settings is open, so it never covers the switch being turned
+   on. Continue needs the microphone.
+3. **You're ready**: how to Talk in one line, an optional practice field, and
+   the Talk shortcut row (to fix a clash). [Start using Eavesy] is always
+   enabled: trying it is never required.
 
 ## 8. Primitives (`web/src/components/launcher/ui/`)
 

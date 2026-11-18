@@ -176,8 +176,8 @@ const BREW = 'brew install --cask williamrogersdev/eavesy/eavesy';
 
 const STEPS = [
   { title: 'Install', body: 'Open Eavesy.dmg and drag Eavesy into Applications. If Eavesy is already there, replace it rather than keep both.' },
+  { title: 'Sign in', body: 'Setup opens eavesy.com to sign in or create an account, for cloud transcripts, briefs and sync.' },
   { title: 'Allow the mic', body: 'Setup asks for the microphone. Screen Recording and the rest are optional.' },
-  { title: 'Sign in, if you like', body: 'Free sign-in adds cloud transcripts, briefs and sync. You can stay local.' },
   { title: 'Press ⌘⇧Space', body: 'Opens Eavesy from anywhere. ⌘⇧D starts Talk and types where your cursor is.' },
 ];
 

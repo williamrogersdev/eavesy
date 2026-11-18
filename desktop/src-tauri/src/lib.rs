@@ -290,6 +290,7 @@ pub fn run() {
             commands::show_notice,
             commands::suspend_hotkeys,
             panel::resize_panel,
+            panel::set_setup_layout,
             updates::install_update,
             updates::check_for_updates,
             updates::get_app_info,

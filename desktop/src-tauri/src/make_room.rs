@@ -50,6 +50,11 @@ fn move_clear_of(app: &AppHandle, other: Rect) {
     }
 }
 
+/// Whether a System Settings window is on screen.
+pub fn settings_open() -> bool {
+    system_settings_frame().is_some()
+}
+
 fn system_settings_frame() -> Option<Rect> {
     frontmost_window_of(&["System Settings", "System Preferences"], Layer::Normal)
 }

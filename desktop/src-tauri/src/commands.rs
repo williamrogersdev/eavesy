@@ -552,7 +552,7 @@ pub fn complete_setup(app: AppHandle) -> Result<(), String> {
 }
 
 /// Setup's steps, in the launcher's order.
-const SETUP_STEPS: [&str; 3] = ["permissions", "try_it", "sign_in"];
+const SETUP_STEPS: [&str; 3] = ["sign_in", "permissions", "try_it"];
 
 /// The launcher showed a setup step. The last one an install reports is where
 /// it stopped, which `app_launched` alone (`setup_completed: false`) can't say.
@@ -1113,6 +1113,7 @@ pub fn open_privacy_settings(app: AppHandle, pane: String) -> Result<(), String>
     };
     app.shell().open(url, None).map_err(|e| e.to_string())?;
     crate::make_room::after_opening_settings(&app);
+    crate::panel::yield_while_settings_open(&app);
     Ok(())
 }
 
