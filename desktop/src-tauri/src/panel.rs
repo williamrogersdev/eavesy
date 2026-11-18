@@ -74,6 +74,7 @@ pub fn yield_while_settings_open(app: &tauri::AppHandle) {
         SETTINGS_REOPENED.store(true, Ordering::SeqCst);
         return;
     }
+    SETTINGS_REOPENED.store(false, Ordering::SeqCst);
     let guard = yield_for_system_prompt(app);
     let app = app.clone();
     std::thread::spawn(move || {
@@ -88,14 +89,18 @@ pub fn yield_while_settings_open(app: &tauri::AppHandle) {
                 start = Instant::now();
                 left = false;
             }
-            // No launcher window to yield for, or no answer about its focus, ends the hold.
-            let focused = app.get_webview_window("main").and_then(|main| main.is_focused().ok());
-            let Some(focused) = focused else { break };
+            // No launcher window to yield for ends the hold; a focus error counts as away.
+            let Some(main) = app.get_webview_window("main") else { break };
+            let focused = main.is_focused().unwrap_or(false);
             left |= !focused;
             if settings_hold_finished(start.elapsed(), crate::make_room::settings_open(), left && focused) { break; }
         }
         SETTINGS_YIELD.store(false, Ordering::SeqCst);
         drop(guard);
+        // Opened again while this hold was ending: that opening gets a hold of its own.
+        if SETTINGS_REOPENED.swap(false, Ordering::SeqCst) {
+            yield_while_settings_open(&app);
+        }
     });
 }
 
@@ -195,7 +200,11 @@ pub fn resize_panel(app: tauri::AppHandle, width: f64, height: f64) -> Result<()
     let area = crate::placement::work_area_at(&app, pos.x + size.width / 2.0, pos.y + 1.0);
     let (x, y, w, h) = resized_frame((pos.x, pos.y, size.width, size.height), (width, height), area);
     main.set_size(tauri::LogicalSize::new(w, h)).map_err(|e| e.to_string())?;
-    main.set_position(tauri::LogicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+    if let Err(error) = main.set_position(tauri::LogicalPosition::new(x, y)) {
+        // All or nothing: a caller that sees the error can trust the size is unchanged.
+        let _ = main.set_size(tauri::LogicalSize::new(size.width, size.height));
+        return Err(error.to_string());
+    }
     Ok(())
 }
 
