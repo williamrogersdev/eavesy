@@ -11,9 +11,12 @@ export const DICTATION_STYLES = [
   { id: 'concise', label: 'Concise', hint: 'Just the point, in as few words as it takes. No swearing.' },
 ] as const;
 
-/** Matches AGENT_BRIEF in lib/ai/agent-transcript.ts: keep the two in step. */
+/**
+ * Matches AGENT_LAYOUT_RULE and AGENT_BRIEF in lib/ai/agent-transcript.ts:
+ * keep them in step. As spoken only lays the words out; a tone rewrites.
+ */
 export const FOR_AGENTS_HINT =
-  'Rewrites what you say as a prompt for Claude, ChatGPT or a coding agent: what you want first, then context, requirements and constraints. Headings only when it’s long, and nothing you didn’t say. Works with any tone. No swearing.';
+  'Lays what you say out as a prompt for Claude, ChatGPT or a coding agent: paragraphs, lists and code in backticks, in your own words. With a tone picked, it’s rewritten as a prompt in that tone instead, with no swearing.';
 
 /** One sentence, said out loud, and what each choice types for it. Shown beside the style pickers. */
 export const DICTATION_EXAMPLE = {
@@ -27,7 +30,7 @@ export const DICTATION_EXAMPLE = {
   },
   forAgents: {
     verbatim: 'Um so can you rename the summarize file to summary and uh fix the imports, the build keeps failing. Oh and don’t touch the API.',
-    natural: 'Rename the `summarize` file to `summary` and fix the imports.\n\nThe build keeps failing.\n\nDon’t touch the API.',
+    natural: 'Can you rename the `summarize` file to `summary` and fix the imports? The build keeps failing.\n\nDon’t touch the API.',
     professional: 'Rename the `summarize` file to `summary` and update the imports.\n\nContext: the build is currently failing.\n\nConstraint: leave the API unchanged.',
     friendly: 'Please rename the `summarize` file to `summary` and fix up the imports.\n\nThe build keeps failing, so this would really help.\n\nLeave the API as it is.',
     concise: 'Rename `summarize` to `summary` and fix the imports.\n\nContext: build failing.\nConstraint: don’t touch the API.',
@@ -104,7 +107,7 @@ export type WritingChoice = DictationStyle | 'ai';
 
 export const WRITING_CHOICES: readonly { id: WritingChoice; label: string; hint: string }[] = [
   ...DICTATION_STYLES,
-  { id: 'ai', label: 'AI prompt', hint: 'Rewritten as a prompt for Claude, ChatGPT or a coding agent: what you want first, then context and constraints. Keeps the tone you last picked.' },
+  { id: 'ai', label: 'AI prompt', hint: 'Laid out as a prompt for Claude, ChatGPT or a coding agent, in your own words. With a tone you last picked, rewritten as a prompt in that tone.' },
 ];
 
 export function writingChoice(writing: Writing): WritingChoice {

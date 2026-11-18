@@ -166,30 +166,56 @@ function isBareAppName(text: string): boolean {
 }
 
 /**
+ * A list this long of nothing but the user's words is the prompt read back
+ * whatever Whisper's score says, or when it gives none: nobody dictates their
+ * own glossary. Shorter lists need Whisper to doubt them.
+ */
+const LONG_READ_BACK_TERMS = 6;
+
+/**
  * Whisper can read its prompt back on near-silent audio, which for the custom
  * words is a bare list: "Eavesy, Priya Raman, Kubernetes." A line counts as
- * that only when it is nothing but `minTerms` or more of the user's words and
- * Whisper scored it as likely not speech; with no score it is kept. One of the
- * user's words, or a word in a sentence, is always kept. The app's own name
- * alone is the exception, judged in `isHallucination`: every prompt has it.
+ * that when it is nothing but `minTerms` or more of the user's words and
+ * Whisper scored it as likely not speech, or when it is a long list of them
+ * (`LONG_READ_BACK_TERMS`) whatever the score. A read-back is rarely word
+ * perfect ("…, box, dc, ui, ui, ui"), so a long one may hold a stray word for
+ * every four terms. One of the user's words, or a word in a sentence, is
+ * always kept. The app's own name alone is the exception, judged in
+ * `isHallucination`: every prompt has it.
  */
 function readsBackGlossary(line: WhisperLine, glossary: readonly string[], minTerms: number): boolean {
-  if (line.noSpeechProb === undefined || line.noSpeechProb <= 0.3) return false;
   const terms = glossary.map((term) => normalize(term).split(' ').filter(Boolean)).filter((term) => term.length > 0);
   const tokens = normalize(line.text).split(' ').filter(Boolean);
   if (terms.length < minTerms || tokens.length === 0) return false;
-  // The most whole glossary terms that tile the line end to end, or -1.
-  const most: number[] = new Array<number>(tokens.length + 1).fill(-1);
-  most[0] = 0;
+  const doubted = line.noSpeechProb !== undefined && line.noSpeechProb > 0.3;
+  // best[at][skipped]: the most whole terms that tile tokens[0, at) with
+  // `skipped` tokens left unmatched, or -1. Few skips are ever allowed, so
+  // the table stays small.
+  const maxSkips = Math.floor(tokens.length / 5);
+  const best = Array.from({ length: tokens.length + 1 }, () => new Array<number>(maxSkips + 1).fill(-1));
+  best[0][0] = 0;
   for (let at = 0; at < tokens.length; at += 1) {
-    if (most[at] < 0) continue;
-    for (const term of terms) {
-      if (term.every((word, i) => tokens[at + i] === word)) {
-        most[at + term.length] = Math.max(most[at + term.length], most[at] + 1);
+    for (let skipped = 0; skipped <= maxSkips; skipped += 1) {
+      const sofar = best[at][skipped];
+      if (sofar < 0) continue;
+      if (skipped < maxSkips) best[at + 1][skipped + 1] = Math.max(best[at + 1][skipped + 1], sofar);
+      for (const term of terms) {
+        if (term.every((word, i) => tokens[at + i] === word)) {
+          best[at + term.length][skipped] = Math.max(best[at + term.length][skipped], sofar + 1);
+        }
       }
     }
   }
-  return most[tokens.length] >= minTerms;
+  return best[tokens.length].some((count, skipped) => {
+    if (count < 0) return false;
+    if (skipped === 0 && doubted && count >= minTerms) return true;
+    return count >= LONG_READ_BACK_TERMS && skipped * 4 <= count;
+  });
+}
+
+/** Whether a line is the prompt's custom words read back, which proves the audio under it silent. */
+export function isGlossaryReadBack(line: WhisperLine, glossary: readonly string[] = []): boolean {
+  return readsBackGlossary(line, normalizeVocabulary([...BUILT_IN_TERMS, ...glossary]), 2);
 }
 
 export interface AttributedLine {
