@@ -2,7 +2,7 @@ import { getCloudflareContext } from '@/server/cloudflare-context';
 import type { TimedWord, WordTimedSegment } from './sentences';
 import { audioBase64 } from './base64';
 import { retryLanguage, whisperLanguage } from './language';
-import { isHallucination } from './two-track';
+import { isGlossaryReadBack, isHallucination } from './two-track';
 import { fixBuiltInTerms, whisperPrompt } from './vocabulary';
 import { isRecord } from '@/lib/json';
 
@@ -89,7 +89,11 @@ function keepHeard(
   result: FileTranscriptionResult,
   opts: { lenient?: boolean; suspect?: boolean; glossary?: readonly string[] },
 ): FileTranscriptionResult {
-  const segments = result.segments.filter((segment) => !isHallucination(segment, opts));
+  // A read-back of the prompt's words shows Whisper was listening to silence,
+  // so the stock phrases it tacks on ("…, ui, ui, Thank you.") go with it.
+  const silent = result.segments.some((segment) => isGlossaryReadBack(segment, opts.glossary));
+  const judged = silent ? { ...opts, quiet: true } : opts;
+  const segments = result.segments.filter((segment) => !isHallucination(segment, judged));
   return { ...result, segments, text: segments.map((segment) => segment.text).join(' ') };
 }
 

@@ -94,14 +94,24 @@ test('a polish that drops in a dictionary word nobody said is not used', async (
 describe('dictation styles', () => {
   const ramble = 'Okay so the fucking login page keeps breaking, um, can you fix the redirect in auth dot ts and, like, make sure it goes back to the dashboard, and add a test for it';
 
-  test('formatting for agents restructures the request as a prompt', async () => {
-    const reply = 'Fix the redirect in `auth.ts`: the login page keeps breaking.\n\n## Requirements\n1. Make sure login goes back to the dashboard.\n2. Add a test for the redirect.';
+  test('as spoken for agents lays the words out without rewording them', async () => {
+    const reply = 'The fucking login page keeps breaking. Can you fix the redirect in `auth.ts`?\n\n1. Make sure it goes back to the dashboard.\n2. Add a test for it.';
     const { client, calls } = fakeClient(reply);
     const result = await polishDictation(client, { text: ramble, context: null, forAgents: true });
     expect(result).toEqual({ text: reply, polished: true });
-    expect(calls[0].system).toContain('message for an AI agent');
-    expect(calls[0].system).toContain("keep the speaker's own voice");
-    expect(calls[0].system).toContain('Add facts, requirements');
+    expect(calls[0].system).toContain('clean up a dictation');
+    expect(calls[0].system).toContain('goes to an AI agent');
+    expect(calls[0].system).toContain('never turn a question, a hunch or a musing into an instruction');
+    expect(calls[0].system).not.toContain('message for an AI agent');
+  });
+
+  test('as spoken for agents is checked like as spoken: a rewrite is not used', async () => {
+    const heard = 'Okay so I was revolving around the idea that the guy who runs the site is lucky, can you look into why the checkout dropped off';
+    const rewrite = 'Investigate why checkout conversions dropped.\n\n## Context\nThe website owner has been unlucky.';
+    const { client } = fakeClient(rewrite);
+    const result = await polishDictation(client, { text: heard, context: null, forAgents: true });
+    expect(result.polished).toBe(false);
+    expect(result.text).toContain('revolving around the idea');
   });
 
   test('a tone combines with formatting for agents', async () => {
@@ -127,9 +137,10 @@ describe('dictation styles', () => {
     expect(result.text).toContain('login page keeps breaking');
   });
 
-  test('formatting for agents drops swearing in the fallback too', async () => {
+  test('a tone for agents drops swearing in the fallback too; as spoken for agents keeps the words', async () => {
     const failing = fakeClient(new Error('overloaded'));
-    expect((await polishDictation(failing.client, { text: ramble, context: null, forAgents: true })).text).not.toMatch(/fuck/i);
+    expect((await polishDictation(failing.client, { text: ramble, context: null, style: 'concise', forAgents: true })).text).not.toMatch(/fuck/i);
+    expect((await polishDictation(failing.client, { text: ramble, context: null, forAgents: true })).text).toContain('fucking');
   });
 
   test('the natural style keeps the speaker’s words when the model fails', async () => {
