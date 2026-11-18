@@ -50,6 +50,7 @@ import { cn } from '@/lib/utils';
 import { AGENT_INSTRUCTIONS } from '@/lib/agent-instructions';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { DictionarySettings } from '@/components/dictionary/dictionary-settings';
+import { SnippetsSettings } from '@/components/snippets/snippets-settings';
 import { DictationCard, LanguagesCard, ModelsCard, ProjectsSettings, useAccountPrefs, useProjects, WordsCard } from './account-settings';
 import { AssistantSettings } from './assistant-settings';
 import { settingsMatch } from './settings-search';
@@ -387,7 +388,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
     { id: 'dictation', group: 'recording' as const, label: 'Dictation', icon: AudioLines, hint: 'How your words are written when Eavesy types them for you.' },
     { id: 'transcription', group: 'recording' as const, label: 'Transcription', icon: Languages, hint: 'The languages Eavesy listens for, and the AI models it uses.' },
     { id: 'shortcuts', group: 'recording' as const, label: 'Shortcuts', icon: Keyboard, hint: 'Make Eavesy work the way you do.' },
-    { id: 'dictionary', group: 'words' as const, label: 'Dictionary', icon: BookOpen, hint: 'Words to spell your way, and words to swap for others.' },
+    { id: 'dictionary', group: 'words' as const, label: 'Dictionary', icon: BookOpen, hint: 'Words to spell your way, words to swap for others, and snippets you can say.' },
     { id: 'prompts', group: 'words' as const, label: 'Prompts', icon: MessageSquareText, hint: 'Text you send often, ready to paste or to run as a slash command.' },
     { id: 'projects', group: 'words' as const, label: 'Projects', icon: FolderOpen, hint: 'Group recordings, words and dictation style by codebase, client or topic.' },
     { id: 'connections', group: 'connected' as const, label: 'Connections', icon: Cable, hint: 'Your Google Calendar, and the AI apps that use Eavesy.' },
@@ -708,7 +709,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
           {account ? <ModelsCard account={accountPrefs} /> : null}
         </div>
         <div id="settings-dictionary" hidden={section !== 'dictionary'}>
-          {account ? <><WordsCard account={accountPrefs} /><DictionarySettings active={section === 'dictionary'} /></> : signInFirst('keep a dictionary')}
+          {account ? <><WordsCard account={accountPrefs} /><DictionarySettings active={section === 'dictionary'} /><SnippetsSettings /></> : signInFirst('keep a dictionary')}
         </div>
         <div id="settings-prompts" hidden={section !== 'prompts'}>
           {account
@@ -805,6 +806,7 @@ export function SettingsView({ standalone = false, section: shownSection, onSect
           <ShortcutRow shortcuts={shortcuts} action="screen" hint="Start a screen recording with your microphone. Press it again to stop." />
           <ShortcutRow shortcuts={shortcuts} action="clipboard" hint="Open what you copied. Press return to paste it where you were." />
           <ShortcutRow shortcuts={shortcuts} action="screenshots" hint="Open your screenshots. Press return to paste one where you were." />
+          <ShortcutRow shortcuts={shortcuts} action="fill" hint="Paste your saved email, name, address or other details into the form field you’re in. Set them up as snippets in Dictionary." />
           <ShortcutRow shortcuts={shortcuts} action="control" hint="Hide the pill while it records, for when you share your screen, and bring it back. The recording carries on." />
           <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Show or hide this panel." />
           {shortcuts.bindings ? <RestoreDefaultShortcuts shortcuts={shortcuts} /> : null}

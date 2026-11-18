@@ -9,7 +9,7 @@ const SECTION_KEYWORDS: Record<SettingsSection, string> = {
   pill: 'recording control capture control hud bar appearance look colour color theme tint see-through translucent transparent transparency opacity hide hidden show visible never position place live words lines type as i talk result preview',
   dictation: 'tone style format for agents dictate typing paste',
   transcription: 'languages language notes translate ai models model claude sonnet opus haiku assistant',
-  dictionary: 'custom words vocabulary spelling replacements swap',
+  dictionary: 'custom words vocabulary spelling replacements swap snippets text expansion autofill form fill email address',
   shortcuts: 'hotkey keyboard keys fn talk push to talk toggle panel',
   prompts: 'snippets templates slash commands saved text',
   projects: 'codebase client topic folder group',

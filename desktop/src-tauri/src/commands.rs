@@ -141,6 +141,10 @@ const RESTORE_AFTER: std::time::Duration = std::time::Duration::from_millis(800)
 pub fn paste_text(app: &AppHandle, text: &str) -> Result<(), String> {
     paste_text_with_learning(app, text, true)
 }
+/// Pastes text Eavesy didn't hear, such as a form-fill value: edits to it teach nothing.
+pub fn paste_text_quietly(app: &AppHandle, text: &str) -> Result<(), String> {
+    paste_text_with_learning(app, text, false)
+}
 fn paste_text_with_learning(app: &AppHandle, text: &str, learn: bool) -> Result<(), String> {
     let generation = {
         let mut restore = restore();

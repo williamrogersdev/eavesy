@@ -308,12 +308,15 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
         // Words the user fixed in the field while they were typed stand as
         // they left them: only the words heard after go in, tidied but not
         // polished, so a tone rewrite can't undo their fix.
+        let snippets = crate::snippets::cached(&app);
         let kept = match &live {
-            crate::live_typing::Typed::Field(field) => {
-                field.keep_edits(&text, |tail| crate::vocabulary::fix_built_in_terms(&crate::transcribe::drop_fillers(tail)))
-            }
+            crate::live_typing::Typed::Field(field) => field.keep_edits(&text, |tail| {
+                crate::snippets::expand(&crate::vocabulary::fix_built_in_terms(&crate::transcribe::drop_fillers(tail)), &snippets)
+            }),
             _ => None,
         };
+        // The user's own edits stay as they left them: only words heard after them are expanded, above.
+        let expand_all = kept.is_none();
         let corrected = if kept.is_some() { None } else { crate::live_edit::corrected(&session_id, &text) };
         let source_text = corrected.as_ref().map(|_| text.clone());
         // Fillers still go: nobody types "um", corrected or not.
@@ -326,6 +329,8 @@ pub fn deliver_dictation(app: &AppHandle, session_id: &str, text: &str) {
                 (crate::vocabulary::fix_built_in_terms(&polished.text), polished.written)
             }
         };
+        // Snippet phrases become their text.
+        let text = if expand_all { crate::snippets::expand(&text, &snippets) } else { text };
         // Nothing but "um"s: nothing to paste, and Done with no words would
         // say otherwise.
         if text.trim().is_empty() {
@@ -580,7 +585,7 @@ fn deliver_then(app: &AppHandle, session_id: &str, text: &str, launcher_on_fallb
     });
 }
 
-fn accessibility_trusted() -> bool {
+pub(crate) fn accessibility_trusted() -> bool {
     #[cfg(target_os = "macos")]
     return unsafe { ax::AXIsProcessTrusted() };
     #[cfg(not(target_os = "macos"))]

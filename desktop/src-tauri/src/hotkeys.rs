@@ -6,7 +6,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
 use crate::panel;
-use crate::settings::{self, Settings, DEFAULT_ASSISTANT_HOTKEY, DEFAULT_CLIPBOARD_HOTKEY, DEFAULT_CONTROL_HOTKEY, DEFAULT_DICTATION_HOTKEY, DEFAULT_SCREENSHOTS_HOTKEY, DEFAULT_SCREEN_HOTKEY, DEFAULT_TOGGLE_HOTKEY, OLD_ASSISTANT_HOTKEY};
+use crate::settings::{self, Settings, DEFAULT_ASSISTANT_HOTKEY, DEFAULT_CLIPBOARD_HOTKEY, DEFAULT_CONTROL_HOTKEY, DEFAULT_DICTATION_HOTKEY, DEFAULT_FILL_HOTKEY, DEFAULT_SCREENSHOTS_HOTKEY, DEFAULT_SCREEN_HOTKEY, DEFAULT_TOGGLE_HOTKEY, OLD_ASSISTANT_HOTKEY};
 
 pub const EVENT_LAUNCHER_OPENED: &str = "launcher:opened";
 /// A lone fn tap while shortcuts are suspended for recording one in Settings.
@@ -33,10 +33,12 @@ pub enum Action {
     Clipboard,
     /// Open the screenshot history.
     Screenshots,
+    /// Paste the saved value the focused form field asks for.
+    Fill,
 }
 
 impl Action {
-    pub const ALL: [Action; 7] = [Action::Toggle, Action::Dictation, Action::Assistant, Action::Screen, Action::Control, Action::Clipboard, Action::Screenshots];
+    pub const ALL: [Action; 8] = [Action::Toggle, Action::Dictation, Action::Assistant, Action::Screen, Action::Control, Action::Clipboard, Action::Screenshots, Action::Fill];
 
     pub fn parse(s: &str) -> Result<Self, HotkeyError> {
         match s {
@@ -47,6 +49,7 @@ impl Action {
             "control" => Ok(Action::Control),
             "clipboard" => Ok(Action::Clipboard),
             "screenshots" => Ok(Action::Screenshots),
+            "fill" => Ok(Action::Fill),
             other => Err(HotkeyError::invalid(format!("unknown shortcut action '{other}'"))),
         }
     }
@@ -61,6 +64,7 @@ impl Action {
             Action::Control => "Show or hide Eavesy",
             Action::Clipboard => "Clipboard history",
             Action::Screenshots => "Screenshot history",
+            Action::Fill => "Fill field",
         }
     }
 
@@ -74,12 +78,13 @@ impl Action {
             Action::Control => "control",
             Action::Clipboard => "clipboard",
             Action::Screenshots => "screenshots",
+            Action::Fill => "fill",
         }
     }
 
     /// Pressed, not held: fn belongs to talking, so these never take it.
     fn press_only(self) -> bool {
-        matches!(self, Action::Screen | Action::Control | Action::Clipboard | Action::Screenshots)
+        matches!(self, Action::Screen | Action::Control | Action::Clipboard | Action::Screenshots | Action::Fill)
     }
 
     /// What Settings says when one of those is given fn.
@@ -96,6 +101,7 @@ impl Action {
             Action::Control => DEFAULT_CONTROL_HOTKEY,
             Action::Clipboard => DEFAULT_CLIPBOARD_HOTKEY,
             Action::Screenshots => DEFAULT_SCREENSHOTS_HOTKEY,
+            Action::Fill => DEFAULT_FILL_HOTKEY,
         }
     }
 }
@@ -111,6 +117,7 @@ pub enum TakenBy {
     Control,
     Clipboard,
     Screenshots,
+    Fill,
     /// Another app or macOS registered it first.
     Other,
 }
@@ -125,6 +132,7 @@ impl From<Action> for TakenBy {
             Action::Control => TakenBy::Control,
             Action::Clipboard => TakenBy::Clipboard,
             Action::Screenshots => TakenBy::Screenshots,
+            Action::Fill => TakenBy::Fill,
         }
     }
 }
@@ -140,6 +148,7 @@ impl TakenBy {
             TakenBy::Control => Some(Action::Control),
             TakenBy::Clipboard => Some(Action::Clipboard),
             TakenBy::Screenshots => Some(Action::Screenshots),
+            TakenBy::Fill => Some(Action::Fill),
             TakenBy::Other => None,
         }
     }
@@ -315,6 +324,7 @@ pub struct Bindings {
     pub control: String,
     pub clipboard: String,
     pub screenshots: String,
+    pub fill: String,
 }
 
 impl Bindings {
@@ -327,6 +337,7 @@ impl Bindings {
             control: DEFAULT_CONTROL_HOTKEY.into(),
             clipboard: DEFAULT_CLIPBOARD_HOTKEY.into(),
             screenshots: DEFAULT_SCREENSHOTS_HOTKEY.into(),
+            fill: DEFAULT_FILL_HOTKEY.into(),
         }
     }
 
@@ -339,6 +350,7 @@ impl Bindings {
             control: settings.control_hotkey.clone(),
             clipboard: settings.clipboard_hotkey.clone(),
             screenshots: settings.screenshots_hotkey.clone(),
+            fill: settings.fill_hotkey.clone(),
         }
     }
 
@@ -351,6 +363,7 @@ impl Bindings {
             Action::Control => &self.control,
             Action::Clipboard => &self.clipboard,
             Action::Screenshots => &self.screenshots,
+            Action::Fill => &self.fill,
         }
     }
 
@@ -363,6 +376,7 @@ impl Bindings {
             Action::Control => self.control = accelerator,
             Action::Clipboard => self.clipboard = accelerator,
             Action::Screenshots => self.screenshots = accelerator,
+            Action::Fill => self.fill = accelerator,
         }
     }
 }
@@ -465,6 +479,9 @@ fn register(app: &AppHandle, action: Action, accelerator: &str) -> Result<(), Ho
         }),
         Action::Screenshots => app.global_shortcut().on_shortcut(shortcut, move |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed { crate::clipboard::toggle(app, crate::clipboard::View::Screenshots); }
+        }),
+        Action::Fill => app.global_shortcut().on_shortcut(shortcut, move |app, _shortcut, event| {
+            if event.state == ShortcutState::Pressed { crate::form_fill::fill(app); }
         }),
         Action::Control => app.global_shortcut().on_shortcut(shortcut, move |app, _shortcut, event| {
             if event.state == ShortcutState::Pressed {
@@ -621,6 +638,7 @@ fn apply(app: &AppHandle, settings: &mut Settings, current: &Bindings, next: &Bi
         config.control_hotkey = next.control.clone();
         config.clipboard_hotkey = next.clipboard.clone();
         config.screenshots_hotkey = next.screenshots.clone();
+        config.fill_hotkey = next.fill.clone();
         // Someone who chose their Talk to Eavesy shortcut keeps it.
         if next.assistant != current.assistant { config.assistant_hotkey_settled = Some(true); }
     });
@@ -818,7 +836,7 @@ mod tests {
     fn the_clipboard_and_screenshot_panels_have_their_own_shortcuts() {
         let now = Bindings::defaults();
         assert_eq!((now.clipboard.as_str(), now.screenshots.as_str()), ("Alt+Shift+V", "Alt+Shift+S"));
-        for action in [Action::Clipboard, Action::Screenshots] {
+        for action in [Action::Clipboard, Action::Screenshots, Action::Fill] {
             assert_eq!(validate(action.default_accelerator()), Ok(()));
             assert_eq!(Action::parse(action.key()), Ok(action));
             assert_eq!(plan(&now, action, "Ctrl+Alt+V", false).map(|next| next.get(action).to_string()), Ok("Ctrl+Alt+V".into()));

@@ -69,6 +69,8 @@ mod tray;
 mod ui;
 mod updates;
 mod vocabulary;
+mod snippets;
+mod form_fill;
 
 use tauri::Manager;
 
@@ -236,6 +238,7 @@ pub fn run() {
             translation::translation_request,
             commands::paste_to_frontmost,
             learning::dictionary_request,
+            learning::snippets_request,
             learning::correct_recording,
             commands::hide_panel,
             commands::list_recordings,
