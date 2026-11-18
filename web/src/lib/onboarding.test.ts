@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { MAX_ONBOARDING_PROJECTS, newProjectNames, takeProjectDraft } from './onboarding';
+import { FIRST_RUN_PATH, MAX_ONBOARDING_PROJECTS, afterOnboardingPath, newProjectNames, takeProjectDraft } from './onboarding';
 
 describe('newProjectNames', () => {
   test('tidies names and skips blanks and repeats, including existing projects', () => {
@@ -29,5 +29,19 @@ describe('takeProjectDraft', () => {
     });
     const many = Array.from({ length: 12 }, (_, i) => `P${i}`).join(',');
     expect(takeProjectDraft([], many, true).projects).toHaveLength(MAX_ONBOARDING_PROJECTS);
+  });
+});
+
+describe('afterOnboardingPath', () => {
+  test('the default /app return leads to the first recording', () => {
+    for (const value of [null, undefined, '', '/app', '/app/', 'https://evil.example/app']) {
+      expect(afterOnboardingPath(value)).toBe(FIRST_RUN_PATH);
+    }
+  });
+
+  test('a real destination is kept', () => {
+    expect(afterOnboardingPath('/app/team')).toBe('/app/team');
+    expect(afterOnboardingPath('/app?tab=x')).toBe('/app?tab=x');
+    expect(afterOnboardingPath('/connect/mac?code=ABC123')).toBe('/connect/mac?code=ABC123');
   });
 });
