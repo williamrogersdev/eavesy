@@ -6,6 +6,19 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-11-18 - desktop
+
+### Added
+
+- Setup starts with signing in, and the step moves on by itself once the browser approves. Then permissions (only the microphone is required), then an optional try. Each step has one title, one line and one main button, in a roomier panel that goes back to your own size afterwards.
+
+### Fixed
+
+- System Settings opened from Eavesy (a permission, or the fn-key fixes) is no longer covered by the panel: it moves aside and lets Settings come to the front while it's open.
+- Sign-in errors name the real button, Sign in at eavesy.com, and too many attempts in a row say to wait a minute instead of showing an HTTP code.
+- The recording bar's writing menu shows every writing choice.
+- The Mac spells Repackify and Eavesy where it used to mishear them.
+
 ### Changed
 
 - With the new **Attach transcript** switch on (off by default, under "AI prompt" in the HUD's writing menu and in Settings → Dictation), a dictation rewritten as a prompt for an AI agent carries the full transcript, word for word, in a labelled `<eavesy-transcript>` block below it, wherever it is pasted or copied. A new tone starts from that transcript, so nothing gets lost. The Mac HUD and the capture history say when a message was rewritten.
