@@ -5,6 +5,7 @@ import * as dictionaryRepo from '@/db/repo/dictionary';
 import * as capturesRepo from '@/db/repo/captures';
 import * as dictationsRepo from '@/db/repo/dictations';
 import * as meetingsRepo from '@/db/repo/meetings';
+import * as snippetsRepo from '@/db/repo/snippets';
 import * as promptsRepo from '@/db/repo/prompts';
 import * as templatesRepo from '@/db/repo/templates';
 import * as usersRepo from '@/db/repo/users';
@@ -21,6 +22,7 @@ captures.json    Screenshots and videos you captured, with their transcripts.
 templates.json   Your brief templates.
 prompts.json     Your saved prompts.
 dictionary.json  Your learned speech corrections.
+snippets.json    Your voice snippets and form-fill values.
 account.json     Your profile.
 
 Audio and video files are not in this zip. Download them from each recording
@@ -49,6 +51,7 @@ export const Route = createFileRoute('/api/account/export')({
         const zip = new JSZip();
         zip.file('README.txt', README);
         zip.file('dictionary.json', json(await dictionaryRepo.list(db, actor.userId)));
+        zip.file('snippets.json', json(await snippetsRepo.list(db, actor.userId)));
         zip.file('prompts.json', json(await promptsRepo.list(db, actor.userId)));
 
         // Fifty meetings per D1 round trip rather than one batch per meeting.

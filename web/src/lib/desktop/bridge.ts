@@ -1009,6 +1009,7 @@ export interface Settings {
   control_hotkey?: string;
   clipboard_hotkey?: string;
   screenshots_hotkey?: string;
+  fill_hotkey?: string;
   device_id: string;
   setup_completed: boolean;
   recordings_root?: string | null;
@@ -1135,7 +1136,7 @@ export async function setupStepShown(step: number): Promise<void> {
   await invoke('setup_step_shown', { step }).catch(() => undefined);
 }
 
-export type HotkeyAction = 'toggle' | 'dictation' | 'assistant' | 'screen' | 'control' | 'clipboard' | 'screenshots';
+export type HotkeyAction = 'toggle' | 'dictation' | 'assistant' | 'screen' | 'control' | 'clipboard' | 'screenshots' | 'fill';
 /** Every shortcut; "" means unbound, "Fn" the fn / 🌐 key on its own, "Fn+Space" fn held with a key. */
 export type HotkeyBindings = Record<HotkeyAction, string>;
 /** Why the Mac app refused a shortcut (Rust `HotkeyError`). */
@@ -1178,7 +1179,7 @@ export async function checkAllHotkeys(): Promise<Partial<Record<HotkeyAction, Ho
 }
 
 export async function getHotkeyDefaults(): Promise<HotkeyBindings> {
-  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space', screen: 'Alt+Shift+R', control: 'Alt+Shift+H', clipboard: 'Alt+Shift+V', screenshots: 'Alt+Shift+S' };
+  const fallback = { toggle: 'Cmd+Shift+Space', dictation: 'Cmd+Shift+D', assistant: 'Alt+Shift+Space', screen: 'Alt+Shift+R', control: 'Alt+Shift+H', clipboard: 'Alt+Shift+V', screenshots: 'Alt+Shift+S', fill: 'Alt+Shift+F' };
   if (!isDesktop()) return fallback;
   return (await invoke<HotkeyBindings | null>('get_hotkey_defaults').catch(() => null)) ?? fallback;
 }
@@ -1350,6 +1351,15 @@ export async function dictionaryRequest<T>(method: 'GET' | 'POST' | 'PUT' | 'DEL
   const response = await fetch('/api/dictionary', { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
   if (!response.ok) throw new Error(response.status === 409 ? 'Transcript changed. Reopen it and try again.' : 'Could not save your dictionary. Please try again.');
   return response.json();
+}
+
+/** Voice snippets: through the paired Mac's credential in the app, the session in a browser. */
+export async function snippetsRequest<T>(method: 'GET' | 'PUT' | 'DELETE', body?: Record<string, unknown>): Promise<T> {
+  if (isDesktop()) return invoke<T>('snippets_request', { method, body });
+  const response = await fetch('/api/snippets', { method, headers: { 'content-type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
+  const result = await response.json().catch(() => ({})) as { message?: string };
+  if (!response.ok) throw new Error(result.message ?? 'Couldn’t save your snippets. Please try again.');
+  return result as T;
 }
 
 export async function correctTranscript(id: string, original: string, corrected: string): Promise<{ learned: number; warning?: string }> {

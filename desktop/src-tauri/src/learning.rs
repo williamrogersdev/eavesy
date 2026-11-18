@@ -3,8 +3,14 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter};
 
 pub fn request(app: &AppHandle, method: &str, body: Option<Value>) -> Result<Value, String> {
+    account_request(app, "/api/dictionary", method, body, "Could not save your dictionary")
+}
+
+/// An account-scoped list the Settings window edits (the dictionary, the
+/// snippets). A change refreshes the cached words and snippets dictation uses.
+fn account_request(app: &AppHandle, path: &str, method: &str, body: Option<Value>, failed: &str) -> Result<Value, String> {
     let credential = crate::settings::device_credential(app)
-        .ok_or("Pair this Mac with your Eavesy account to learn corrections.")?;
+        .ok_or("Pair this Mac with your Eavesy account first.")?;
     let base = &credential.base;
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(20))
@@ -13,14 +19,14 @@ pub fn request(app: &AppHandle, method: &str, body: Option<Value>) -> Result<Val
     let changed = method != "GET";
     let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
     let mut req = client
-        .request(method, format!("{base}/api/dictionary"))
+        .request(method, format!("{base}{path}"))
         .bearer_auth(&credential.token);
     if let Some(body) = body {
         req = req.json(&body);
     }
     let response = req
         .send()
-        .map_err(|_| "Could not connect to your dictionary".to_string())?;
+        .map_err(|_| format!("{failed}: Eavesy couldn’t be reached."))?;
     if !response.status().is_success() {
         let status = response.status();
         use std::io::Read;
@@ -33,15 +39,15 @@ pub fn request(app: &AppHandle, method: &str, body: Option<Value>) -> Result<Val
             .and_then(|_| serde_json::from_slice::<Value>(&bytes).ok());
         let message = body
             .as_ref()
-            .and_then(|b| b.get("error"))
+            .and_then(|b| b.get("message").or_else(|| b.get("error")))
             .and_then(Value::as_str)
             .filter(|s| s.len() < 256)
-            .unwrap_or("Could not save your dictionary");
+            .unwrap_or(failed);
         return Err(format!("{message} ({status})"));
     }
     let value = response
         .json()
-        .map_err(|_| "Invalid dictionary response".to_string())?;
+        .map_err(|_| format!("{failed}: the answer couldn’t be read."))?;
     if changed {
         crate::vocabulary::refresh(app);
     }
@@ -66,6 +72,16 @@ pub async fn dictionary_request(
         return Err("Unsupported dictionary operation".into());
     }
     tauri::async_runtime::spawn_blocking(move || request(&app, &method, body))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub async fn snippets_request(app: AppHandle, method: String, body: Option<Value>) -> Result<Value, String> {
+    if !["GET", "PUT", "DELETE"].contains(&method.as_str()) {
+        return Err("Unsupported snippets operation".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || account_request(&app, "/api/snippets", &method, body, "Could not save your snippets"))
         .await
         .map_err(|e| e.to_string())?
 }

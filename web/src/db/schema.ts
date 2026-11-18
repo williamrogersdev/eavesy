@@ -952,6 +952,23 @@ export const personalDictionary = sqliteTable('personal_dictionary', {
 }, t => [uniqueIndex('personal_dictionary_user_source_uq').on(t.userId, t.sourceKey)]);
 
 /**
+ * Voice snippets: saying `trigger` in a dictation types `text` instead. A
+ * snippet with a `field` is also what the Mac's Fill field shortcut pastes
+ * into a form field asking for that (see `@/lib/snippets`).
+ */
+export const snippets = sqliteTable('snippets', {
+  id: text('id').primaryKey(),
+  userId: text('user_id').notNull().references(() => users.id),
+  /** The trigger, lowercased with its spacing collapsed: one snippet per phrase. */
+  triggerKey: text('trigger_key').notNull(),
+  trigger: text('trigger').notNull(),
+  text: text('text').notNull(),
+  field: text('field'),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+}, t => [uniqueIndex('snippets_user_trigger_uq').on(t.userId, t.triggerKey)]);
+
+/**
  * A notetaker bot sent to an online meeting: Eavesy's own (`eavesy`), or a
  * Recall.ai bot from before it (`recall`, kept for old rows; the hourly cron
  * fails any still on its way, since that service is gone). `provider_bot_id`

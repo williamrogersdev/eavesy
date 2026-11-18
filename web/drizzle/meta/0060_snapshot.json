@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "8073e608-d7b6-478d-adb4-cb04fcc50ead",
+  "id": "77cf36c5-c998-4539-b0a5-204d1cee3f19",
   "prevId": "2800f183-c84d-4253-81b0-d7cf59be7120",
   "tables": {
     "activity_log": {
@@ -1170,13 +1170,6 @@
         },
         "claimed_by_user_id": {
           "name": "claimed_by_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "failure": {
-          "name": "failure",
           "type": "text",
           "primaryKey": false,
           "notNull": false,
@@ -3963,6 +3956,95 @@
         "saved_prompts_user_id_users_id_fk": {
           "name": "saved_prompts_user_id_users_id_fk",
           "tableFrom": "saved_prompts",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "snippets": {
+      "name": "snippets",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "trigger_key": {
+          "name": "trigger_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "trigger": {
+          "name": "trigger",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "text": {
+          "name": "text",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "field": {
+          "name": "field",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "snippets_user_trigger_uq": {
+          "name": "snippets_user_trigger_uq",
+          "columns": [
+            "user_id",
+            "trigger_key"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "snippets_user_id_users_id_fk": {
+          "name": "snippets_user_id_users_id_fk",
+          "tableFrom": "snippets",
           "tableTo": "users",
           "columnsFrom": [
             "user_id"

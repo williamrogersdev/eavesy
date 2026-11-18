@@ -19,6 +19,8 @@ pub const DEFAULT_CONTROL_HOTKEY: &str = "Alt+Shift+H";
 pub const DEFAULT_CLIPBOARD_HOTKEY: &str = "Alt+Shift+V";
 /// Screenshot history: S, beside it.
 pub const DEFAULT_SCREENSHOTS_HOTKEY: &str = "Alt+Shift+S";
+/// Fill field: F, in the same ⌥⇧ family.
+pub const DEFAULT_FILL_HOTKEY: &str = "Alt+Shift+F";
 /// What Talk to Eavesy defaulted to before; `hotkeys::migrate_assistant_default`
 /// moves it when another app also uses it.
 pub const OLD_ASSISTANT_HOTKEY: &str = "Alt+Space";
@@ -76,6 +78,8 @@ pub struct Settings {
     pub clipboard_hotkey: String,
     #[serde(default = "default_screenshots_hotkey")]
     pub screenshots_hotkey: String,
+    #[serde(default = "default_fill_hotkey")]
+    pub fill_hotkey: String,
     #[serde(default = "new_device_id")]
     pub device_id: String,
     #[serde(default)]
@@ -321,6 +325,10 @@ fn default_screenshots_hotkey() -> String {
     DEFAULT_SCREENSHOTS_HOTKEY.to_string()
 }
 
+fn default_fill_hotkey() -> String {
+    DEFAULT_FILL_HOTKEY.to_string()
+}
+
 fn new_device_id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
@@ -335,6 +343,7 @@ impl Default for Settings {
             control_hotkey: DEFAULT_CONTROL_HOTKEY.to_string(),
             clipboard_hotkey: DEFAULT_CLIPBOARD_HOTKEY.to_string(),
             screenshots_hotkey: DEFAULT_SCREENSHOTS_HOTKEY.to_string(),
+            fill_hotkey: DEFAULT_FILL_HOTKEY.to_string(),
             device_id: new_device_id(),
             setup_completed: false,
             recordings_root: None,
@@ -944,6 +953,7 @@ mod tests {
         assert_eq!(before.assistant_hotkey, DEFAULT_ASSISTANT_HOTKEY);
         assert_eq!(before.screen_hotkey, DEFAULT_SCREEN_HOTKEY, "settings saved before the shortcut existed get it");
         assert_eq!((before.clipboard_hotkey.as_str(), before.screenshots_hotkey.as_str()), (DEFAULT_CLIPBOARD_HOTKEY, DEFAULT_SCREENSHOTS_HOTKEY));
+        assert_eq!(before.fill_hotkey, DEFAULT_FILL_HOTKEY);
         assert!(before.clipboard_history(), "kept unless turned off");
         assert_eq!(before.assistant_hotkey_settled, None);
         // A saved ⌥Space is read as it is; moving it is the migration's call.

@@ -863,8 +863,47 @@ mod mac {
             Some(Target(field as usize))
         }
     }
+    /// What the focused text field says it is for: its label, placeholder,
+    /// help and identifiers, as the app gives them. None when no text field
+    /// has the keyboard, or it is a password field. Its text is never read.
+    pub fn field_hints() -> Option<(Target, Vec<String>)> {
+        #[link(name = "CoreFoundation", kind = "framework")]
+        extern "C" {
+            fn CFEqual(a: Ref, b: Ref) -> bool;
+        }
+        let target = capture()?;
+        let field = target.0 as Ref;
+        unsafe {
+            let mut hints: Vec<String> = ["AXTitle", "AXDescription", "AXPlaceholderValue", "AXHelp", "AXIdentifier", "AXDOMIdentifier"]
+                .iter()
+                .filter_map(|name| string(field, name))
+                .collect();
+            // A native form's label is often its own element, linked from the
+            // field. A static text label holds its words in AXValue, so that is
+            // read only from a static text element, never from the field itself.
+            if let Some(label) = attribute(field, "AXTitleUIElement") {
+                if !CFEqual(label, field) {
+                    AXUIElementSetMessagingTimeout(label, 0.25);
+                    let names: &[&str] = if string(label, "AXRole").as_deref() == Some("AXStaticText") {
+                        &["AXValue", "AXTitle", "AXDescription"]
+                    } else {
+                        &["AXTitle", "AXDescription"]
+                    };
+                    hints.extend(names.iter().filter_map(|name| string(label, name)));
+                }
+                CFRelease(label);
+            }
+            hints.retain(|hint| !hint.trim().is_empty() && hint.chars().count() <= 200);
+            Some((target, hints))
+        }
+    }
     fn still_focused(target: &Target) -> bool {
         focus(target) == Some(true)
+    }
+    /// Whether `target` still has the keyboard: None when it can't be told
+    /// right now (an AX timeout), which is neither yes nor no.
+    pub fn has_focus(target: &Target) -> Option<bool> {
+        focus(target)
     }
     /// Whether `target` has the keyboard, or None when the focused element
     /// can't be found right now (an AX timeout), which says nothing either way.
@@ -1489,7 +1528,7 @@ pub fn utf16_chunks(text: &str, max: usize) -> Vec<Vec<u16>> {
 }
 
 #[cfg(target_os = "macos")]
-pub use mac::{capture, observe, replace, superseded, LiveField};
+pub use mac::{capture, field_hints, has_focus, observe, replace, superseded, LiveField};
 #[cfg(not(target_os = "macos"))]
 pub fn replace(_app: &tauri::AppHandle, _previous: &str, _text: &str) -> Result<(), String> {
     Err("replacing pasted words is only supported on macOS".into())
