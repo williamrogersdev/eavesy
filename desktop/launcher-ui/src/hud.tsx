@@ -8,6 +8,7 @@ import { errMsg } from '@/lib/desktop/errors';
 import { addCaption, EMPTY_RUNNING, runningText, type LiveCaption } from '@/lib/desktop/live-captions';
 import { mergeTranscript } from '@/lib/desktop/live-edit';
 import { learnedLabel, learnedPending, type LearningEvent } from '@/lib/desktop/learning';
+import { hasAttachedTranscript, splitAttached } from '@/lib/transcription/attached-transcript';
 import { isWritingChoice, sameWriting, WRITING_CHOICES, writingChoice, writingFor, writingFrom, type DictationStyle, type Writing } from '@/lib/transcription/dictation-style';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { requestTranslation } from '@/lib/translation/client';
@@ -1376,7 +1377,8 @@ function Hud() {
       </div>
     );
   };
-  const tooLong = words.length > MAX_REWRITE_CHARS;
+  // A rewrite for an AI is redone from the transcript it carries, so only that counts.
+  const tooLong = (splitAttached(words).transcript ?? words).length > MAX_REWRITE_CHARS;
   const toneControls = !!state.sessionId && (tooLong ? (
     <div className="ctl-tones">
       <span className="ctl-say ctl-quiet">Too long to change the tone here</span>
@@ -1574,6 +1576,7 @@ function Hud() {
       <>
         {status}
         {notice && !notPasted && !learnedStamp && !toneStamp && !errorSay && <span className="ctl-say ctl-quiet">{draftKept ? 'Tidied on clipboard' : '⌘V to paste'}</span>}
+        {!notice && !toneStamp && !errorSay && hasAttachedTranscript(words) && <span className="ctl-say ctl-quiet" title="Rewritten as a prompt for an AI agent, with the full transcript attached below it">Rewritten · transcript attached</span>}
         <span className="ctl-fill" />
         {notPasted && <button type="button" className="ctl-btn" onClick={() => act('open_privacy_settings', { pane: 'accessibility' })}><ShieldCheck className="h-3.5 w-3.5" />Allow</button>}
         {size === 'result' && <button type="button" className="ctl-btn ctl-icon" onClick={() => act('show_launcher')} aria-label="Open in Eavesy" title="Open in Eavesy, with the whole transcript"><Maximize2 className="h-3.5 w-3.5" /></button>}

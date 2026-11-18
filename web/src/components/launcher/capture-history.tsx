@@ -44,6 +44,7 @@ import {
 } from '@/lib/desktop/bridge';
 import { loadRecordingDetails } from '@/lib/launcher/data';
 import { fillPrompt, matchPrompts, promptsOnly, type SavedPrompt } from '@/lib/prompts';
+import { hasAttachedTranscript } from '@/lib/transcription/attached-transcript';
 import { FOR_AGENTS_HINT, toneChoices, type Tone } from '@/lib/transcription/dictation-style';
 import { MAX_RESTYLE_CHARS, requestRestyle } from '@/lib/transcription/restyle-client';
 import { useHistoryPage } from './use-history-page';
@@ -586,7 +587,8 @@ const CaptureRow = memo(function CaptureRow({
           <LanguagePicker value={translation.language} pending={translation.busy} disabled={fetchingFull} onChange={pickLanguage} onOpenChange={setLanguageOpen} />
           {rewrite.busy
             ? <span className="ev-tones-state" role="status">Rewriting…</span>
-            : tones && tooLong && <span className="ev-tones-state">Too long to rewrite here</span>}
+            : tones && tooLong ? <span className="ev-tones-state">Too long to rewrite here</span>
+            : rewrite.text !== null && hasAttachedTranscript(rewrite.text) && <span className="ev-tones-state" title="Copy and paste include everything that was said, below the rewrite">Rewritten · full transcript attached</span>}
         </div>
       )}
       {trayOpen && rewrite.error && <p role="alert" className="ev-sub" style={{ color: 'var(--ev-warn-ink)' }}>{rewrite.error}</p>}

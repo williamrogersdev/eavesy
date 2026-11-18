@@ -11,6 +11,7 @@ import * as projectsRepo from '@/db/repo/projects';
 import * as teamsRepo from '@/db/repo/teams';
 import { DICTATION_STYLES, writtenWith, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { stripFillers } from '@/lib/transcription/agent-transcript';
+import { attachTranscript, splitAttached } from '@/lib/transcription/attached-transcript';
 import { BUILT_IN_CONTEXT, fixBuiltInTerms, parseVocabulary } from '@/lib/transcription/vocabulary';
 import { resolveIngestActor } from '@/server/device-auth';
 import { guardUserQuota } from '@/server/rate-limit';
@@ -44,7 +45,10 @@ export const Route = createFileRoute('/api/dictations/polish')({
         }
         const parsed = schema.safeParse(await request.json().catch(() => null));
         if (!parsed.success) return Response.json({ error: 'invalid_request' }, { status: 400 });
-        const text = fixBuiltInTerms(parsed.data.text.trim());
+        // A message rewritten earlier carries the whole dictation: a new tone
+        // starts from that, never from the rewrite, so nothing it left out is lost.
+        const sent = parsed.data.text.trim();
+        const text = fixBuiltInTerms(splitAttached(sent).transcript ?? sent);
         if (!text || text.length > MAX_POLISH_CHARS) {
           return Response.json({ text: stripFillers(text), polished: false, ...(text ? { reason: 'too_long' } : {}) });
         }
@@ -78,7 +82,11 @@ export const Route = createFileRoute('/api/dictations/polish')({
         // Told back with the words, for the Mac app's tone row: the tone in
         // force for them (the setting the row shows and changes) and whether
         // the model applied it. When it didn't, the words went out plain.
-        return Response.json({ ...result, written: { ...tone, applied: result.polished } });
+        // A prompt for an AI agent goes out with the full transcript attached,
+        // so the agent has everything that was said, and can tell it was rewritten.
+        const reformatted = result.polished && tone.forAgents && tone.style !== 'verbatim';
+        const message = reformatted ? attachTranscript(result.text, stripFillers(text)) : result.text;
+        return Response.json({ ...result, text: message, reformatted, written: { ...tone, applied: result.polished } });
       },
     },
   },
