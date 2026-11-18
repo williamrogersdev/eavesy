@@ -132,7 +132,7 @@ test.describe('on a Mac', () => {
     execFileSync(
       'bunx',
       ['wrangler', 'r2', 'object', 'put', 'eavesy-audio/downloads/mac/eavesy-latest.dmg', '--local', '--file', 'package.json'],
-      { stdio: 'ignore' },
+      { stdio: 'pipe' },
     );
     let downloads = 0;
     await page.route('**/api/downloads/mac/latest', async (route) => {
@@ -152,6 +152,8 @@ test.describe('on a Mac', () => {
 
     await page.reload({ waitUntil: 'networkidle' });
     await expect(page.getByRole('heading', { name: 'Eavesy for Mac' })).toBeVisible();
+    // Give a wrongly repeated download time to show up before counting.
+    await page.waitForTimeout(1000);
     expect(downloads).toBe(1);
   });
 });

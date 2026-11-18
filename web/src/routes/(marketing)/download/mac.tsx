@@ -70,7 +70,11 @@ function DownloadMacPage() {
     void navigate({ search: {}, replace: true })
       .catch((error: unknown) => {
         console.warn('Could not remove ?start=1 through the router', error);
-        window.history.replaceState(window.history.state, '', window.location.pathname);
+        try {
+          window.history.replaceState(window.history.state, '', window.location.pathname);
+        } catch (historyError) {
+          console.warn('Could not remove ?start=1 from the address', historyError);
+        }
       })
       .then(run);
   }, [start, available, navigate]);
