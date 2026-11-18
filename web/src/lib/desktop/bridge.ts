@@ -208,6 +208,12 @@ export async function relaunchApp(): Promise<void> {
   await invoke('relaunch_app');
 }
 
+/** Setup shows in a roomier panel; leaving it puts back the person's own size. */
+export async function setSetupLayout(active: boolean): Promise<void> {
+  if (!isDesktop()) return;
+  await invoke('set_setup_layout', { active });
+}
+
 export async function resizePanel(width: number, height: number): Promise<void> {
   if (!isDesktop()) return;
   await invoke('resize_panel', { width, height });

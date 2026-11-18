@@ -58,6 +58,56 @@ pub fn yield_while_prompt_shows(app: &tauri::AppHandle, done: impl Fn() -> bool 
     });
 }
 
+static SETTINGS_YIELD: AtomicBool = AtomicBool::new(false);
+static SETTINGS_REOPENED: AtomicBool = AtomicBool::new(false);
+const SETTINGS_MIN_HOLD: Duration = Duration::from_secs(3);
+const SETTINGS_MAX_HOLD: Duration = Duration::from_secs(10 * 60);
+
+/// System Settings opened from Eavesy (a permission, say) must not sit under the launcher. The
+/// launcher already moves aside when there's room; while a Settings window is on screen the
+/// panels also drop to the normal window level, so Settings comes to the front when clicked.
+/// The hold ends when Settings closes, when the person clicks back into the launcher, or after
+/// `SETTINGS_MAX_HOLD`.
+pub fn yield_while_settings_open(app: &tauri::AppHandle) {
+    if SETTINGS_YIELD.swap(true, Ordering::SeqCst) {
+        // A hold is running: Settings was opened again, so the hold starts over for it.
+        SETTINGS_REOPENED.store(true, Ordering::SeqCst);
+        return;
+    }
+    SETTINGS_REOPENED.store(false, Ordering::SeqCst);
+    let guard = yield_for_system_prompt(app);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        use tauri::Manager;
+        let mut start = Instant::now();
+        // The launcher has focus when its button opens Settings: only coming back to it after
+        // Settings took focus counts as a return.
+        let mut left = false;
+        loop {
+            std::thread::sleep(Duration::from_millis(250));
+            if SETTINGS_REOPENED.swap(false, Ordering::SeqCst) {
+                start = Instant::now();
+                left = false;
+            }
+            // No launcher window to yield for ends the hold; a focus error counts as away.
+            let Some(main) = app.get_webview_window("main") else { break };
+            let focused = main.is_focused().unwrap_or(false);
+            left |= !focused;
+            if settings_hold_finished(start.elapsed(), crate::make_room::settings_open(), left && focused) { break; }
+        }
+        SETTINGS_YIELD.store(false, Ordering::SeqCst);
+        drop(guard);
+        // Opened again while this hold was ending: that opening gets a hold of its own.
+        if SETTINGS_REOPENED.swap(false, Ordering::SeqCst) {
+            yield_while_settings_open(&app);
+        }
+    });
+}
+
+fn settings_hold_finished(elapsed: Duration, settings_open: bool, launcher_focused: bool) -> bool {
+    elapsed >= SETTINGS_MAX_HOLD || (elapsed >= SETTINGS_MIN_HOLD && (!settings_open || launcher_focused))
+}
+
 const PROMPT_MIN_HOLD: Duration = Duration::from_secs(8);
 const PROMPT_MAX_HOLD: Duration = Duration::from_secs(90);
 
@@ -79,6 +129,8 @@ fn on_main_and_wait(app: &tauri::AppHandle, work: impl FnOnce(&tauri::AppHandle)
 
 fn remember_size(app: &tauri::AppHandle) {
     use tauri::Manager;
+    // Setup's roomier size is setup's own, not a size the person chose.
+    if SETUP_LAYOUT.load(Ordering::SeqCst) { return; }
     let Some(main) = app.get_webview_window("main") else { return };
     let (Ok(scale), Ok(size)) = (main.scale_factor(), main.inner_size()) else { return };
     let size = size.to_logical::<f64>(scale);
@@ -95,6 +147,30 @@ fn restore_size(app: &tauri::AppHandle) {
 }
 
 const MIN_SIZE: (f64, f64) = (360.0, 320.0);
+/// The panel's size before anyone resizes it (tauri.conf.json).
+const DEFAULT_SIZE: (f64, f64) = (420.0, 440.0);
+/// First-run setup: room for a step without crowding, still clear of most of the screen.
+const SETUP_SIZE: (f64, f64) = (540.0, 600.0);
+static SETUP_LAYOUT: AtomicBool = AtomicBool::new(false);
+
+/// Setup shows in a roomier panel. Leaving it puts back the size the person chose, or the default.
+#[tauri::command]
+pub fn set_setup_layout(app: tauri::AppHandle, active: bool) -> Result<(), String> {
+    if SETUP_LAYOUT.swap(active, Ordering::SeqCst) == active {
+        return Ok(());
+    }
+    let (width, height) = if active {
+        SETUP_SIZE
+    } else {
+        crate::settings::load(&app).panel_size.map_or(DEFAULT_SIZE, |size| (size.width, size.height))
+    };
+    let resized = resize_panel(app, width, height);
+    if resized.is_err() {
+        // Not resized: the next call tries again, and the person's size can still be saved.
+        SETUP_LAYOUT.store(!active, Ordering::SeqCst);
+    }
+    resized
+}
 const MAX_SIZE: (f64, f64) = (960.0, 1200.0);
 
 fn resized_frame(current: (f64, f64, f64, f64), requested: (f64, f64), area: Option<(f64, f64, f64, f64)>) -> (f64, f64, f64, f64) {
@@ -124,7 +200,11 @@ pub fn resize_panel(app: tauri::AppHandle, width: f64, height: f64) -> Result<()
     let area = crate::placement::work_area_at(&app, pos.x + size.width / 2.0, pos.y + 1.0);
     let (x, y, w, h) = resized_frame((pos.x, pos.y, size.width, size.height), (width, height), area);
     main.set_size(tauri::LogicalSize::new(w, h)).map_err(|e| e.to_string())?;
-    main.set_position(tauri::LogicalPosition::new(x, y)).map_err(|e| e.to_string())?;
+    if let Err(error) = main.set_position(tauri::LogicalPosition::new(x, y)) {
+        // All or nothing: a caller that sees the error can trust the size is unchanged.
+        let _ = main.set_size(tauri::LogicalSize::new(size.width, size.height));
+        return Err(error.to_string());
+    }
     Ok(())
 }
 
@@ -136,6 +216,16 @@ mod tests {
     #[test]
     fn width_grows_around_the_centre_and_top_stays_put() {
         assert_eq!(resized_frame((500.0, 60.0, 420.0, 440.0), (520.0, 500.0), AREA), (450.0, 60.0, 520.0, 500.0));
+    }
+
+    #[test]
+    fn settings_hold_ends_when_settings_closes_or_the_launcher_is_back() {
+        let s = Duration::from_secs;
+        assert!(!settings_hold_finished(s(1), false, false), "Settings may still be opening");
+        assert!(!settings_hold_finished(s(30), true, false));
+        assert!(settings_hold_finished(s(30), false, false));
+        assert!(settings_hold_finished(s(30), true, true));
+        assert!(settings_hold_finished(SETTINGS_MAX_HOLD, true, false));
     }
 
     #[test]

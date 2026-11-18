@@ -2,21 +2,23 @@
 
 import { Check } from 'lucide-react';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Bubble, Button, Kbd, Mascot, type MascotState } from '@/components/launcher/ui';
+import { Button, Kbd, Mascot, type MascotState } from '@/components/launcher/ui';
 import { ackDictationText, onDictationText, setDictationInPanel, type AccountInfo, type Permissions, type PrivacyPane } from '@/lib/desktop/bridge';
-import { answered, PermissionChecklist, setupPermissionsReady, setupSpeechRefused, usesFnKey, useOnGrant } from './permission-checklist';
-import { ShortcutRow, talkHint, useShortcuts } from './shortcut-row';
+import { PermissionChecklist, setupPermissionsReady, usesFnKey, useOnGrant } from './permission-checklist';
+import { ShortcutRow, useShortcuts } from './shortcut-row';
 import type { SetupPermissionKind } from './use-setup-permissions';
 import { useLiveLines } from './use-live-lines';
 
 /**
- * The first win comes before any account: allow the mic, talk once, then decide about signing in.
- * The order is also the analytics order (`SETUP_STEPS` in desktop/src-tauri/src/commands.rs).
+ * Sign in first: an account is what makes Eavesy useful (sync, summaries, agents), so it is the
+ * way in, not an option at the end. Then access, then an optional try. Each step has one primary
+ * button, always in the same place. The order is also the analytics order (`SETUP_STEPS` in
+ * desktop/src-tauri/src/commands.rs).
  */
-export const STEPS = ['Permissions', 'Try it', 'Sign in'] as const;
-const PERMISSIONS = 0;
-const TRY_IT = 1;
-const SIGN_IN = 2;
+export const STEPS = ['Sign in', 'Permissions', 'Try it'] as const;
+const SIGN_IN = 0;
+const PERMISSIONS = 1;
+const TRY_IT = 2;
 
 export function SetupView({
   step,
@@ -67,17 +69,22 @@ export function SetupView({
   // Only a paste proves dictation reached the cursor; typing in the box doesn't count.
   const [pasted, setPasted] = useState(false);
   const fnInUse = usesFnKey(dictationHotkey, toggleHotkey);
-  const micOn = permissions?.mic === true;
   const pasteOn = permissions?.accessibility === true;
   const talk = dictationHotkey;
   const shortcuts = useShortcuts(onShortcutsChanged);
   const tryBox = useRef<HTMLTextAreaElement>(null);
   const ready = setupPermissionsReady(permissions, paired);
-  // Signed out without Speech Recognition nothing can be typed yet, so Try it is skipped and
-  // signing in becomes the way to dictation.
-  const speechRefused = setupSpeechRefused(permissions, paired);
-  const speechOff = permissions?.speech === false && answered(permissions, 'speech');
   const hearing = useLiveLines(step === TRY_IT && listening ? liveSessionId : null, 2).map((line) => line.text).join(' ');
+
+  // Signing in finishes in the browser: when the sign-in started here lands, move on by itself.
+  const waitedForBrowser = useRef(false);
+  useEffect(() => {
+    if (connecting) waitedForBrowser.current = true;
+    if (!paired || !waitedForBrowser.current) return;
+    waitedForBrowser.current = false;
+    if (step === SIGN_IN) setStep(PERMISSIONS);
+  }, [connecting, paired, step, setStep]);
+
   // Dictating into this panel can't go through ⌘V: Eavesy hands the words over itself.
   useEffect(() => {
     if (step !== TRY_IT) return;
@@ -116,93 +123,81 @@ export function SetupView({
   const heard = pasted && tried.trim().length > 0;
   const mascot: MascotState = listening
     ? 'listening'
-    : cheer || (step === TRY_IT && heard) || (step === SIGN_IN && paired)
+    : cheer || heard || (step === SIGN_IN && paired)
       ? 'happy'
-      : step === SIGN_IN && connecting
-        ? 'thinking'
-        : step === PERMISSIONS && micOn
-          ? 'listening'
-          : 'idle';
-
-  const bubble: ReactNode = [
-    !micOn
-      ? "Hi, I'm Eavesy. I type what you say, anywhere. I'll need to borrow your ears, only while you're talking to me."
-      : speechOff
-        ? paired
-          ? 'Speech Recognition is off. Turn it on in System Settings any time for live captions.'
-          : 'That’s all right. Without Speech Recognition I’ll type for you once you sign in, on the next step.'
-      : permissions?.speech === false
-        ? paired
-          ? 'Thank you. Allow Speech Recognition too and I can paste the moment you stop.'
-          : 'Thank you. Allow Speech Recognition too, so I can understand you right here on this Mac.'
-        : !pasteOn
-          ? 'One more and I can type for you, right where your cursor is.'
-          : fnInUse && permissions?.inputMonitoring === false
-            ? 'One more so I can hear a tap of fn.'
-            : 'Lovely. That’s everything I need.',
-    heard
-      ? 'Heard you. That works in any app, wherever your cursor is.'
-      : listening
-        ? "I'm listening. Tap again when you're done."
-        : "Go on, say something. I'll show you what I heard.",
-    paired
-      ? "Nice to meet you properly. I'll be in the menu bar, under the hat icon."
       : connecting
-        ? "I'll wait here while you finish in the browser."
-        : 'Last thing, and it’s up to you.',
-  ][step];
+        ? 'thinking'
+        : 'idle';
 
-  // Try it can't work signed out without Speech Recognition, so that path goes Permissions ⇄ Sign in.
-  const skipTry = speechRefused && (step === PERMISSIONS || step === SIGN_IN);
-  const prevStep = skipTry && step === SIGN_IN ? PERMISSIONS : step - 1;
-  const nextStep = skipTry && step === PERMISSIONS ? SIGN_IN : step + 1;
-  const back = step > 0 ? <Button variant="ghost" size="md" onClick={() => setStep(prevStep)}>Back</Button> : <span />;
-  const next = (label = 'Continue', disabled = false, title?: string) => (
-    <Button variant="primary" size="md" disabled={disabled} title={title} onClick={() => setStep(nextStep)}>
-      {label}
-    </Button>
+  const back = step > 0 ? <Button variant="ghost" size="md" onClick={() => setStep(step - 1)}>Back</Button> : <span />;
+  const next = (disabled = false, title?: string) => (
+    <Button variant="primary" size="md" disabled={disabled} title={title} onClick={() => setStep(step + 1)}>Continue</Button>
   );
 
   let body: ReactNode;
   let footer: ReactNode;
-  if (step === PERMISSIONS) {
+  if (step === SIGN_IN) {
+    body = paired ? (
+      <>
+        <h2 className="ev-onb-title">You’re signed in</h2>
+        <p className="ev-onb-lead">{account?.email ?? account?.name ?? 'This Mac is connected to your account.'}</p>
+      </>
+    ) : connecting ? (
+      <>
+        <h2 className="ev-onb-title">Approve this Mac in your browser</h2>
+        <p className="ev-onb-lead">Click <b>Approve this Mac</b> on the page that opened. This screen moves on by itself.</p>
+      </>
+    ) : (
+      <>
+        <h2 className="ev-onb-title">Sign in to Eavesy</h2>
+        <p className="ev-onb-lead">Your recordings sync to your account, with summaries you can share or hand to an AI agent.</p>
+        <p className="ev-onb-note">New to Eavesy? You can create an account on the same page.</p>
+      </>
+    );
+    footer = paired ? (
+      <><span />{next()}</>
+    ) : connecting ? (
+      <>
+        <Button variant="ghost" size="md" onClick={onCancelConnect}>Cancel</Button>
+        <Button variant="primary" size="md" loading disabled>Waiting for you in the browser…</Button>
+      </>
+    ) : (
+      <><span /><Button variant="primary" size="md" onClick={onConnect}>Sign in at eavesy.com</Button></>
+    );
+  } else if (step === PERMISSIONS) {
+    const kinds: SetupPermissionKind[] = ['mic', 'accessibility'];
+    if (fnInUse) kinds.push('inputMonitoring');
+    if (!paired) kinds.splice(1, 0, 'speech');
     body = (
       <>
         <h2 className="ev-onb-title">Let Eavesy hear you</h2>
-        <p className="ev-onb-lead">macOS asks once for each one. This list updates on its own.</p>
+        <p className="ev-onb-lead">macOS asks once for each. Only the microphone is required.</p>
         <div className="ev-card">
           <PermissionChecklist
             permissions={permissions}
             checking={checking}
             fnInUse={fnInUse}
             speechRequired={!paired}
-            only={['mic', 'speech', 'accessibility', 'inputMonitoring']}
+            only={kinds}
             onRequest={onRequest}
             onOpenSettings={onOpenPrivacy}
             onRelaunch={onRelaunch}
           />
         </div>
-        {!ready ? (
-          <p className="ev-onb-note">
-            {micOn ? 'Allow Speech Recognition to continue.' : 'Allow the microphone to continue.'} Screenshots, video and notifications can wait for Settings.
-          </p>
-        ) : speechRefused && (
-          <p className="ev-onb-note">Without Speech Recognition, Eavesy types your words only once you sign in, so that’s next. To use this Mac alone, turn it on in System Settings.</p>
-        )}
       </>
     );
-    const why = ready ? undefined : micOn ? 'Allow Speech Recognition first' : 'Allow the microphone first';
-    footer = <>{back}{next('Continue', !ready, why)}</>;
-  } else if (step === TRY_IT) {
+    const why = ready ? undefined : permissions?.mic === true ? 'Allow Speech Recognition first' : 'Allow the microphone first';
+    footer = <>{back}{next(!ready, why)}</>;
+  } else {
     body = (
       <>
-        <h2 className="ev-onb-title">Try it once</h2>
+        <h2 className="ev-onb-title">You’re ready</h2>
         <p className="ev-onb-lead">
           {!talk
-            ? 'Talk has no shortcut yet. Pick one below, then say something. Your words land in the box.'
+            ? 'Give Talk a shortcut below to dictate into any app.'
             : usesFnKey(talk)
-            ? <>Tap <Kbd keys="fn" />, say something, then tap <Kbd keys="fn" /> again. Your words land in the box.</>
-            : <>Hold <Kbd keys={talk} />, say something, then let go. Your words land in the box.</>}
+              ? <>Tap <Kbd keys="fn" />, talk, then tap <Kbd keys="fn" /> again. Your words appear where your cursor is.</>
+              : <>Hold <Kbd keys={talk} /> and talk, then let go. Your words appear where your cursor is.</>}
         </p>
         <textarea
           ref={tryBox}
@@ -216,77 +211,38 @@ export function SetupView({
             if (inputType === 'insertFromPaste') setPasted(true);
             else if (!event.target.value.trim()) setPasted(false);
           }}
-          placeholder={listening ? 'Listening… keep talking' : 'Your words land here…'}
+          placeholder={listening ? 'Listening…' : 'Optional: try it here'}
           rows={3}
           aria-label="Try dictation here"
         />
         <p className="ev-onb-note" role="status">
           {heard ? (
-            <span className="ev-onb-ok"><Check size={14} strokeWidth={2.25} aria-hidden /> Pasted. You’re all set.</span>
+            <span className="ev-onb-ok"><Check size={14} strokeWidth={2.25} aria-hidden /> It works.</span>
           ) : listening ? (
-            <span className="ev-onb-hearing"><span className="ev-onb-rec" aria-hidden />{hearing ? <bdi>{hearing}</bdi> : 'Listening… tap again when you’re done.'}</span>
-          ) : pasteOn ? (
-            'Nothing to send anywhere. This box is just for practice.'
-          ) : (
-            <>Accessibility is off, so I’ll copy instead of paste. Press <Kbd keys="⌘V" /> here.</>
+            <span className="ev-onb-hearing"><span className="ev-onb-rec" aria-hidden />{hearing ? <bdi>{hearing}</bdi> : 'Listening…'}</span>
+          ) : pasteOn ? null : (
+            <>Accessibility is off, so press <Kbd keys="⌘V" /> to paste.</>
           )}
         </p>
-        {/* Every shortcut you'll use from day one, so a clash with another app is caught and fixed during setup. */}
         <div className="ev-card">
-          <ShortcutRow shortcuts={shortcuts} action="dictation" hint={`${talkHint(shortcuts.bindings?.dictation ?? '')} Types into the app you’re in.`} />
-          <ShortcutRow shortcuts={shortcuts} action="assistant" hint="Asks Eavesy a question instead. Nothing is typed into your app; Eavesy answers on the pill and out loud." />
-          <ShortcutRow shortcuts={shortcuts} action="toggle" hint="Shows this panel with everything you've captured." />
+          <ShortcutRow shortcuts={shortcuts} action="dictation" hint="Change it if it clashes with another app." />
         </div>
       </>
     );
-    footer = <>{back}{next(heard ? 'Continue' : 'Skip for now')}</>;
-  } else {
-    body = (
-      <>
-        <h2 className="ev-onb-title">{paired ? "You're signed in" : 'Sign in, or stay local'}</h2>
-        <p className="ev-onb-lead">
-          {paired
-            ? `${account?.email ?? account?.name ?? 'This Mac'} is connected. Transcripts and summaries sync to your account.`
-            : speechRefused
-              ? 'Speech Recognition is off, so signing in is how Eavesy types what you say. Everything still stays in ~/Eavesy on this Mac, and you also get summaries, sync and agent access.'
-              : 'Everything stays in ~/Eavesy on this Mac either way. Signing in adds sharper transcripts, summaries, sync across your Macs, and lets Claude, Cursor and other agents read your captures.'}
-        </p>
-        {connecting && <p className="ev-onb-note">Click “Approve this Mac” on the page that opened. This updates on its own.</p>}
-      </>
-    );
-    const start = (variant: 'primary' | 'ghost', label: string) => (
-      <Button variant={variant} size="md" onClick={onFinish}>{label}</Button>
-    );
-    footer = paired ? (
-      <>{back}{start('primary', 'Start using Eavesy')}</>
-    ) : connecting ? (
-      <>
-        <Button variant="ghost" size="md" onClick={onCancelConnect}>Cancel</Button>
-        <Button variant="primary" size="md" loading disabled>Waiting for you in the browser…</Button>
-      </>
-    ) : (
-      <>
-        {back}
-        <div className="flex gap-2">
-          {start('ghost', 'Stay local')}
-          <Button variant="primary" size="md" onClick={onConnect}>Sign in at eavesy.com</Button>
-        </div>
-      </>
-    );
+    footer = <>{back}<Button variant="primary" size="md" onClick={onFinish}>Start using Eavesy</Button></>;
   }
 
   return (
     <div className="ev-onb">
       <div className="ev-onb-scroll">
-        <div className="ev-onb-hero">
-          <Mascot state={mascot} size={96} recording={listening} />
-          <Bubble tail="left" className="ev-onb-bubble">{bubble}</Bubble>
-        </div>
-        <div className="ev-steps" role="img" aria-label={`Step ${step + 1} of ${STEPS.length}: ${STEPS[step]}`}>
-          {STEPS.map((name, i) => (
-            <i key={name} data-state={i < step ? 'done' : i === step ? 'on' : undefined} />
-          ))}
-          <span>Step {step + 1} of {STEPS.length}</span>
+        <div className="ev-onb-head">
+          <Mascot state={mascot} size={44} recording={listening} />
+          <div className="ev-steps" role="img" aria-label={`Step ${step + 1} of ${STEPS.length}: ${STEPS[step]}`}>
+            {STEPS.map((name, i) => (
+              <i key={name} data-state={i < step ? 'done' : i === step ? 'on' : undefined} />
+            ))}
+            <span>{STEPS[step]}</span>
+          </div>
         </div>
         {body}
       </div>

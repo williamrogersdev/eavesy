@@ -552,7 +552,7 @@ pub fn complete_setup(app: AppHandle) -> Result<(), String> {
 }
 
 /// Setup's steps, in the launcher's order.
-const SETUP_STEPS: [&str; 3] = ["permissions", "try_it", "sign_in"];
+const SETUP_STEPS: [&str; 3] = ["sign_in", "permissions", "try_it"];
 
 /// The launcher showed a setup step. The last one an install reports is where
 /// it stopped, which `app_launched` alone (`setup_completed: false`) can't say.
@@ -568,6 +568,8 @@ pub fn setup_step_shown(app: AppHandle, step: u8) -> Result<(), String> {
         serde_json::json!({
             "step": step,
             "step_name": name,
+            // `step` numbers changed meaning when sign-in moved first: compare by name, or by this.
+            "step_order": 2,
             "from_step_name": from_name,
             "went_back": from_name.is_some() && from > step,
             "paired": settings::device_token(&app).is_some(),
@@ -984,7 +986,10 @@ pub fn open_keyboard_settings(app: AppHandle, input_monitoring: bool) -> Result<
     let url = if input_monitoring {
         "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
     } else { "x-apple.systempreferences:com.apple.Keyboard-Settings.extension" };
-    app.shell().open(url, None).map_err(|e| e.to_string())
+    app.shell().open(url, None).map_err(|e| e.to_string())?;
+    crate::make_room::after_opening_settings(&app);
+    crate::panel::yield_while_settings_open(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -1119,6 +1124,7 @@ pub fn open_privacy_settings(app: AppHandle, pane: String) -> Result<(), String>
     };
     app.shell().open(url, None).map_err(|e| e.to_string())?;
     crate::make_room::after_opening_settings(&app);
+    crate::panel::yield_while_settings_open(&app);
     Ok(())
 }
 
@@ -1150,7 +1156,7 @@ mod tests {
     fn setup_steps_are_named_in_the_launchers_order() {
         // The launcher's setupStep numbering (STEPS in setup-view.tsx) must match.
         let names: Vec<_> = (0..4).map(setup_step_name).collect();
-        assert_eq!(names, [Some("permissions"), Some("try_it"), Some("sign_in"), None]);
+        assert_eq!(names, [Some("sign_in"), Some("permissions"), Some("try_it"), None]);
     }
 
     #[test]

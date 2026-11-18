@@ -59,7 +59,7 @@ function Gallery() {
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           <Button variant="primary">Sign in at eavesy.com</Button>
-          <Button>Stay local for now</Button>
+          <Button>Cancel</Button>
           <Button variant="quiet" size="sm">Save</Button>
           <Button variant="outline" size="sm" icon={FolderOpen}>Change</Button>
           <Button variant="danger-rec" size="sm">Stop</Button>

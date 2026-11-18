@@ -23,6 +23,7 @@ import {
   saveNote,
   setPanelPinned,
   setupStepShown,
+  setSetupLayout,
   type ImportResult,
   type PrivacyPane,
 } from '@/lib/desktop/bridge';
@@ -96,6 +97,12 @@ export function DesktopPanel() {
   useEffect(() => {
     if (setupKnown && view === 'setup') void setupStepShown(setupStep);
   }, [setupKnown, view, setupStep, opened]);
+
+  // Setup gets a roomier panel; the captures go back to the size the person chose.
+  const setupLayout = setupKnown && view === 'setup';
+  useEffect(() => {
+    if (setupKnown) void setSetupLayout(setupLayout).catch(() => {});
+  }, [setupKnown, setupLayout]);
 
   const { toast, flash, runTask } = useToastTasks();
   useEffect(() => {
