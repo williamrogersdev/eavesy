@@ -1,4 +1,4 @@
-import { StrictMode, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
+import { StrictMode, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from 'react';
 import { AudioLines, ArrowDown, ArrowUp, Camera, Check, ChevronDown, Clapperboard, ClipboardList, Copy, EyeOff, History, House, Languages, Maximize2, Mic, MicOff, Highlighter, Minus, Pause, Play, Search, ShieldCheck, Square, Users, Volume2, X } from 'lucide-react';
 import { useLiveLines } from '@/components/launcher/use-live-lines';
 import type { LiveRow } from '@/lib/desktop/live-captions';
@@ -395,18 +395,10 @@ function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: s
  * more for a finished dictation the server didn't say the tone of. A
  * finished dictation's own `written` outranks it where there is one.
  */
-function useWriting(state: HudState | null): [Writing | null, (next: Writing | null) => void, boolean, (next: boolean, saved?: boolean) => void, { current: boolean }, { current: boolean }] {
+function useWriting(state: HudState | null): [Writing | null, (next: Writing | null) => void, boolean, (next: boolean) => void] {
   const [prefs, setPrefs] = useState<Writing | null>(browserPreviewWriting);
   // Whether an AI prompt carries the full transcript (Settings → Dictation). Off unless turned on.
-  const [attach, setAttachShown] = useState(() => !tauri() && new URLSearchParams(window.location.search).has('attach'));
-  // What the account last said, to go back to when a save fails.
-  const savedAttach = useRef(attach);
-  // The value the latest toggle asked for, so an older failed save doesn't undo it.
-  const wantedAttach = useRef(attach);
-  const setAttach = useCallback((next: boolean, saved?: boolean) => {
-    setAttachShown(next);
-    if (saved) { savedAttach.current = next; wantedAttach.current = next; }
-  }, []);
+  const [attach, setAttach] = useState(() => !tauri() && new URLSearchParams(window.location.search).has('attach'));
   const [reload, setReload] = useState(0);
   const untold = state?.phase === 'done' && state.mode === 'audio' && !!state.sessionId && !state.written ? state.sessionId : null;
   useEvent('account:changed', () => setReload((n) => n + 1));
@@ -420,7 +412,7 @@ function useWriting(state: HudState | null): [Writing | null, (next: Writing | n
           const raw = me as { dictationStyle?: unknown; dictationForAgents?: unknown; dictationAttachTranscript?: unknown } | null;
           const writing = writingFrom({ style: raw?.dictationStyle ?? 'natural', forAgents: raw?.dictationForAgents });
           if (writing) setPrefs({ style: writing.style, forAgents: writing.forAgents });
-          if (raw) setAttach(raw.dictationAttachTranscript === true, true);
+          if (raw) setAttach(raw.dictationAttachTranscript === true);
         })
         .catch(() => { if (attempt < 4 && !disposed) window.setTimeout(() => load(attempt + 1), 500 * 2 ** attempt); });
     };
@@ -428,7 +420,7 @@ function useWriting(state: HudState | null): [Writing | null, (next: Writing | n
     load(reload || untold ? 4 : 0);
     return () => { disposed = true; };
   }, [reload, untold]);
-  return [prefs, setPrefs, attach, setAttach, savedAttach, wantedAttach];
+  return [prefs, setPrefs, attach, setAttach];
 }
 
 /**
@@ -478,7 +470,9 @@ function Hud() {
   const [languageQuery, setLanguageQuery] = useState('');
   const [languageActive, setLanguageActive] = useState(0);
   const [recentLanguages, setRecentLanguages] = useState(loadRecentLanguages);
-  const [prefs, setPrefs, attach, setAttach, savedAttach, wantedAttach] = useWriting(state);
+  const [prefs, setPrefs, attach, setAttach] = useWriting(state);
+  // One Attach transcript save at a time: the switch waits for it, so what it shows is what was saved.
+  const [attachSaving, setAttachSaving] = useState(false);
   const peekDwell = useRef<number | null>(null);
   // Bumped (at most once a second) while the pointer moves over the control.
   const [pointerMoved, setPointerMoved] = useState(0);
@@ -1174,17 +1168,19 @@ function Hud() {
   };
   // Attach transcript: kept on the account, in turn with the tone's saves.
   const toggleAttach = async () => {
+    if (attachSaving) return;
     const next = !attach;
-    wantedAttach.current = next;
     setAttach(next);
     setActionError(null);
     if (!tauri()) return;
+    setAttachSaving(true);
     const save = writeSave.current.then(() => invoke('account_call', { method: 'PATCH', path: '/api/me', body: { dictationAttachTranscript: next } }).then(() => true, () => false));
     writeSave.current = save;
-    if (await save) { savedAttach.current = next; return; }
-    setActionError('Couldn’t change that. Try again?');
-    // Back to what the account holds, unless a later toggle has moved on since: its own save says how it went.
-    if (wantedAttach.current === next) { wantedAttach.current = savedAttach.current; setAttach(savedAttach.current); }
+    const ok = await save;
+    setAttachSaving(false);
+    // Saved: shown again, in case the account was read back while it was going. Not saved: back as it was.
+    setAttach(ok ? next : !next);
+    if (!ok) setActionError('Couldn’t change that. Try again?');
   };
   const change = async (next: Writing) => {
     const sessionId = state.sessionId;
@@ -1520,7 +1516,7 @@ function Hud() {
       <div className="ctl-options">
         {writeMenu(prefs ?? PLAIN, cancelDisabled, (next) => { void pickWhileRecording(next); void showOptions(false); })}
         {/* Always there, so the menu keeps its size: it does something only for an AI prompt. */}
-        <button type="button" role="switch" aria-checked={attach} disabled={cancelDisabled || writingChoice(prefs ?? PLAIN) !== 'ai'} className="ctl-switch-row ctl-option-switch"
+        <button type="button" role="switch" aria-checked={attach} disabled={cancelDisabled || attachSaving || writingChoice(prefs ?? PLAIN) !== 'ai'} className="ctl-switch-row ctl-option-switch"
           title={writingChoice(prefs ?? PLAIN) === 'ai' ? ATTACH_TRANSCRIPT_HINT : `For AI prompts. ${ATTACH_TRANSCRIPT_HINT}`} onClick={() => void toggleAttach()}>
           <span>Attach transcript</span><span className="ctl-switch" aria-hidden />
         </button>
