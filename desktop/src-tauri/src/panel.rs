@@ -59,6 +59,7 @@ pub fn yield_while_prompt_shows(app: &tauri::AppHandle, done: impl Fn() -> bool 
 }
 
 static SETTINGS_YIELD: AtomicBool = AtomicBool::new(false);
+static SETTINGS_REOPENED: AtomicBool = AtomicBool::new(false);
 const SETTINGS_MIN_HOLD: Duration = Duration::from_secs(3);
 const SETTINGS_MAX_HOLD: Duration = Duration::from_secs(10 * 60);
 
@@ -69,18 +70,29 @@ const SETTINGS_MAX_HOLD: Duration = Duration::from_secs(10 * 60);
 /// `SETTINGS_MAX_HOLD`.
 pub fn yield_while_settings_open(app: &tauri::AppHandle) {
     if SETTINGS_YIELD.swap(true, Ordering::SeqCst) {
+        // A hold is running: Settings was opened again, so the hold starts over for it.
+        SETTINGS_REOPENED.store(true, Ordering::SeqCst);
         return;
     }
     let guard = yield_for_system_prompt(app);
     let app = app.clone();
     std::thread::spawn(move || {
         use tauri::Manager;
-        let start = Instant::now();
+        let mut start = Instant::now();
+        // The launcher has focus when its button opens Settings: only coming back to it after
+        // Settings took focus counts as a return.
+        let mut left = false;
         loop {
             std::thread::sleep(Duration::from_millis(250));
-            // No launcher window to yield for ends the hold, as does a click back into it.
-            let back = app.get_webview_window("main").map_or(true, |main| main.is_focused().unwrap_or(false));
-            if settings_hold_finished(start.elapsed(), crate::make_room::settings_open(), back) { break; }
+            if SETTINGS_REOPENED.swap(false, Ordering::SeqCst) {
+                start = Instant::now();
+                left = false;
+            }
+            // No launcher window to yield for, or no answer about its focus, ends the hold.
+            let focused = app.get_webview_window("main").and_then(|main| main.is_focused().ok());
+            let Some(focused) = focused else { break };
+            left |= !focused;
+            if settings_hold_finished(start.elapsed(), crate::make_room::settings_open(), left && focused) { break; }
         }
         SETTINGS_YIELD.store(false, Ordering::SeqCst);
         drop(guard);
