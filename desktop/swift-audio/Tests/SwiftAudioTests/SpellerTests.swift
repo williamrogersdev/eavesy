@@ -67,6 +67,94 @@ final class SpellerTests: XCTestCase {
         XCTAssertEqual(Speller(vocabulary: []).spell(heard), heard)
     }
 
+    // Real mishearings of "Repackify" from the owner's dictations, where the
+    // custom-word transcriber heard it but the letters alone were too far off.
+    func testAMishearingThatSoundsLikeTheUsersWordIsSpelledWhereItWasHeard() {
+        // Accurate words, the custom-word transcriber's "Repackify" (start, end), and the result.
+        let cases: [([(String, Int64, Int64)], (Int64, Int64), String)] = [
+            ([("the", 1900, 2190), ("Rebecca", 2190, 2600), ("5", 2600, 2880), ("one.", 2880, 3100)], (2190, 2880),
+             "the Repackify one."),
+            // "or packed" sounds as much like it, but "packed to 5" is timed like the hit.
+            ([("in", 84660, 84900), ("or", 84900, 85560), ("packed", 85560, 85860), ("to", 85860, 85980), ("5", 85980, 86160),
+              ("for", 86160, 86340)], (85500, 86190), "in or Repackify for"),
+            ([("issue", 23900, 24240), ("interpacted", 24240, 24870), ("by", 24870, 25000)], (24240, 24870),
+             "issue Repackify by"),
+        ]
+        for (accurate, hit, expected) in cases {
+            let speller = speller(["Repackify"], heard: [("Repackify", hit.0, hit.1)])
+            XCTAssertEqual(speller.spell(final(accurate)).text, expected)
+        }
+    }
+
+    // Words next to the right one that add no sound stay: the bench once
+    // spelled "agent that" as "agent" and "Repackify 5 admins" as "Repackify admins".
+    func testWordsBesideTheRightWordStay() {
+        let agent = speller(["agent"], heard: [("agent", 1000, 1500)])
+        let heard = final([("another", 500, 1000), ("agent", 1000, 1400), ("that", 1400, 1600), ("recently", 1600, 2000)])
+        XCTAssertEqual(agent.spell(heard), heard)
+
+        let repackify = speller(["Repackify"], heard: [("Repackify", 1000, 1800)])
+        let named = final([("both", 500, 1000), ("Repackify", 1000, 1600), ("5", 1600, 1800), ("admins", 1800, 2200)])
+        XCTAssertEqual(repackify.spell(named), named)
+        XCTAssertEqual(
+            speller(["Repackify"], heard: [("Repackify", 26760, 27300)])
+                .spell(final([("that", 25980, 26520), ("repack", 26520, 27000), ("if", 27000, 27180), ("I", 27180, 27300),
+                              ("bought,", 27300, 27720)])).text,
+            "that Repackify I bought,")
+    }
+
+    private let english = EnglishWords(
+        ["what", "has", "on", "there", "for", "pacify", "well", "with", "easy", "is", "repack", "of", "they", "are",
+         "be", "being", "used", "it", "the", "one", "plug", "in", "internal", "assistant", "admin"])
+
+    func testANonWordVeryCloseToANameIsSpelledWithoutTheSecondTranscriber() {
+        let speller = Speller(vocabulary: ["Eavesy", "Repackify"], english: english)
+        XCTAssertEqual(speller.spell(final([("what", 0, 300), ("repackupy", 300, 900), ("has", 900, 1100)])).text, "what Repackify has")
+        XCTAssertEqual(
+            speller.spell(final([("one", 0, 300), ("repack", 300, 600), ("of", 600, 700), ("5", 700, 900), ("plug-in,", 900, 1300)])).text,
+            "one Repackify plug-in,")
+        XCTAssertEqual(speller.spell(final([("with", 0, 300), ("Evesy", 300, 700), ("is", 700, 900)])).text, "with Eavesy is")
+    }
+
+    func testRealWordsAreNeverSpelledAsANameOnLettersAlone() {
+        let speller = Speller(vocabulary: ["Eavesy", "Repackify"], english: english)
+        for heard in [
+            final([("for", 0, 300), ("Pacify", 300, 800), ("well.", 800, 1000)]),
+            final([("with", 0, 300), ("Easy", 300, 700), ("is", 700, 900)]),
+            final([("the", 0, 300), ("repack", 300, 600), ("of", 600, 800), ("it", 800, 900)]),
+            final([("they", 0, 300), ("aren't", 300, 600), ("being", 600, 900), ("used.", 900, 1200)]),
+        ] {
+            XCTAssertEqual(speller.spell(heard), heard)
+        }
+        // Without the word list, nothing is spelled on letters alone.
+        let blind = Speller(vocabulary: ["Repackify"], english: EnglishWords(nil))
+        let heard = final([("what", 0, 300), ("repackupy", 300, 900)])
+        XCTAssertEqual(blind.spell(heard), heard)
+    }
+
+    func testEverydayWordsInTheDictionaryAreOnlySpelledWhereTheSecondTranscriberHeardThem() {
+        let speller = Speller(vocabulary: ["admin"], english: english)
+        let heard = final([("the", 0, 300), ("admn", 300, 700), ("is", 700, 900)])
+        XCTAssertEqual(speller.spell(heard), heard)
+    }
+
+    func testSoundsKeepsTheConsonantsAsSaid() {
+        XCTAssertEqual(Speller.sounds("Repackify"), "RPKF")
+        XCTAssertEqual(Speller.sounds("Rebecca 5"), "RPKF")
+        XCTAssertEqual(Speller.sounds("Pacify"), "PSF")
+        XCTAssertEqual(Speller.sounds("quantity"), "KNT")
+    }
+
+    func testEnglishWordsTakesEndingsOffAndKeepsApostrophes() {
+        XCTAssertTrue(english.contains("admins"))
+        XCTAssertTrue(english.contains("Used"))
+        XCTAssertTrue(english.contains("aren't"))
+        XCTAssertTrue(english.contains("team's") == false)
+        XCTAssertFalse(english.contains("repackupy"))
+        XCTAssertEqual(EnglishWords.tokens("They aren’t, Fy's"), ["they", "aren't", "fy's"])
+        XCTAssertTrue(EnglishWords(nil).contains("repackupy"))
+    }
+
     func testLikenessCountsSharedLettersAndRefusesVeryDifferentLengths() {
         XCTAssertEqual(Speller.likeness("pallet", "pallet"), 1)
         XCTAssertEqual(Speller.likeness("palettes", "pallets"), 0.8, accuracy: 0.01)

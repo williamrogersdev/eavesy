@@ -11,9 +11,20 @@ import Foundation
 /// transcriber's. On 80 of the owner's recordings this got 39 of 75
 /// dictionary words right, against 15 for the accurate one alone and 38 for
 /// the second one alone, and fewer words wrong overall than either.
+///
+/// "Sound like it" is by letters or, failing that, by consonant sounds: the
+/// accurate transcriber writes "Repackify" as "Rebecca 5" or "interpacted",
+/// which share few letters with it but its R-P-K-F. Without a second
+/// transcriber's word, a name is still spelled where the accurate words hold
+/// a non-word and come very close to it ("repackupy", "Repacka Fy's",
+/// "repack of 5"); real words ("pacify", "easy", "repack of") are never
+/// replaced on spelling alone.
 struct Speller {
     /// How alike, 0–1, the accurate words and the user's word must be.
     static let likeness = 0.6
+    /// How alike by letters accurate words holding a non-word must be to a
+    /// name for it to be spelled with no second transcriber's word over them.
+    static let unheardLikeness = 0.75
     /// Words more than this many times longer or shorter than the user's word
     /// are a different word ("rust-based" for "Rust").
     static let lengthRatio = 1.75
@@ -25,6 +36,9 @@ struct Speller {
         let key: String
         /// How many of the second transcriber's words it can take ("cloud flare").
         let words: Int
+        /// Not everyday words ("Repackify", "Gaylord Boxes"), so it may be
+        /// spelled from the accurate words alone.
+        let isName: Bool
     }
 
     private struct Hit {
@@ -34,11 +48,18 @@ struct Speller {
     }
 
     private let terms: [Term]
+    private let english: EnglishWords
     private var hits: [Hit] = []
 
-    init(vocabulary: [String]) {
+    init(vocabulary: [String], english: EnglishWords = .system) {
+        self.english = english
         terms = vocabulary
-            .map { Term(spelling: $0, key: Self.key($0), words: max(1, Self.words($0).count)) }
+            .map {
+                let words = Self.words($0)
+                return Term(
+                    spelling: $0, key: Self.key($0), words: max(1, words.count),
+                    isName: Self.key($0).count >= 4 && !EnglishWords.tokens($0).allSatisfy(english.contains))
+            }
             .filter { !$0.key.isEmpty }
             .sorted { $0.key.count > $1.key.count }
     }
@@ -65,25 +86,22 @@ struct Speller {
         if hits.count > Self.maxHits { hits.removeFirst(hits.count - Self.maxHits) }
     }
 
-    /// `final` with the user's words spelled their way; unchanged when none
-    /// was heard over it.
+    /// `final` with the user's words spelled their way: where the second
+    /// transcriber heard one over words that sound like it, then where the
+    /// words hold a non-word very close to a name. Unchanged otherwise.
     func spell(_ final: Heard) -> Heard {
         guard final.isFinal, !final.words.isEmpty else { return final }
         var words = final.words
         var used = Set<Int>()
         var changed = false
-        for hit in hits where hit.endMs > final.startMs && hit.startMs < final.endMs {
-            let over = words.indices.filter {
-                !used.contains($0) && words[$0].endMs > hit.startMs && words[$0].startMs < hit.endMs
-            }
-            guard let window = Self.closest(over, in: words, to: hit.term) else { continue }
+        func replace(_ window: ClosedRange<Int>, with term: Term) {
             used.formUnion(window)
             let heard = window.map { words[$0].text }.joined()
-            guard Self.words(heard) != Self.words(hit.term.spelling), !Self.onlyNumberDiffers(heard, hit.term.key)
-            else { continue }
+            guard Self.words(heard) != Self.words(term.spelling), !Self.onlyNumberDiffers(heard, term.key)
+            else { return }
             let first = words[window.lowerBound]
             let last = words[window.upperBound]
-            var spelling = hit.term.spelling
+            var spelling = term.spelling
             if spelling == spelling.lowercased(), Self.core(first.text).first?.isUppercase == true {
                 spelling = spelling.prefix(1).uppercased() + spelling.dropFirst()
             }
@@ -94,26 +112,116 @@ struct Speller {
             }
             changed = true
         }
+        for hit in hits where hit.endMs > final.startMs && hit.startMs < final.endMs {
+            let over = words.indices.filter {
+                !used.contains($0) && words[$0].endMs > hit.startMs && words[$0].startMs < hit.endMs
+            }
+            guard let window = Self.closest(over, in: words, to: hit) else { continue }
+            replace(window, with: hit.term)
+        }
+        var at = 0
+        while at < words.count {
+            if !used.contains(at), let (window, term) = unheardName(at: at, in: words, skipping: used) {
+                replace(window, with: term)
+                at = window.upperBound + 1
+            } else {
+                at += 1
+            }
+        }
         guard changed else { return final }
         return Heard(
             text: words.map(\.text).joined(), isFinal: true, startMs: final.startMs, endMs: final.endMs,
             words: words.filter { !$0.text.isEmpty })
     }
 
-    /// The run of `over` that sounds most like `term`, if any sounds enough like it.
-    private static func closest(_ over: [Int], in words: [HeardWord], to term: Term) -> ClosedRange<Int>? {
-        var best: (score: Double, window: ClosedRange<Int>)?
-        for (a, start) in over.enumerated() {
-            for b in a..<min(a + term.words + 1, over.count) {
-                let end = over[b]
-                guard end - start == b - a else { break }
-                let said = spoken(words[start...end].map(\.text).joined())
-                let score = likeness(said, term.key)
-                if score > (best?.score ?? 0) { best = (score, start...end) }
+    /// A name the accurate words starting at `at` are a mishearing of, with no
+    /// second transcriber's word to go on: up to three words, at least one of
+    /// them no English word (or a digit, "repack of 5"), none already the
+    /// name, very close to it by letters and starting like it.
+    private func unheardName(
+        at start: Int, in words: [HeardWord], skipping used: Set<Int>
+    ) -> (ClosedRange<Int>, Term)? {
+        var best: (score: Double, window: ClosedRange<Int>, term: Term)?
+        for end in start..<min(start + 3, words.count) {
+            if used.contains(end) { break }
+            let window = start...end
+            let said = window.flatMap { Self.words(words[$0].text) }
+            let written = window.flatMap { EnglishWords.tokens(words[$0].text) }
+            guard written.contains(where: { $0.first?.isNumber == true || !english.contains($0) }) else { continue }
+            let key = Self.spoken(said.joined(separator: " "))
+            for term in terms where term.isName && key.first == term.key.first {
+                if said.contains(where: { Self.spoken($0).hasPrefix(term.key) }) { continue }
+                let score = Self.likeness(key, term.key)
+                if score >= Self.unheardLikeness, score > (best?.score ?? 0) { best = (score, window, term) }
             }
         }
-        guard let best, best.score >= likeness else { return nil }
-        return best.window
+        return best.map { ($0.window, $0.term) }
+    }
+
+    /// The run of `over` that sounds most like the hit's term, if any sounds
+    /// enough like it, by letters or by consonant sounds. A word can be heard
+    /// as a few ("packed to 5"), so a run may hold two more words than the
+    /// term. Of runs that sound as alike, a run inside another wins, since the
+    /// words around it added no sound ("agent that" is "agent" and "that");
+    /// then the one timed most like the hit: "or packed to 5" under
+    /// "Repackify" is "packed to 5", not "or packed".
+    private static func closest(_ over: [Int], in words: [HeardWord], to hit: Hit) -> ClosedRange<Int>? {
+        let term = hit.term
+        var runs: [(score: Double, fit: Double, window: ClosedRange<Int>)] = []
+        for (a, start) in over.enumerated() {
+            for b in a..<min(a + term.words + 2, over.count) {
+                let end = over[b]
+                guard end - start == b - a else { break }
+                let text = words[start...end].map(\.text).joined()
+                let score = max(likeness(spoken(text), term.key), likeness(sounds(text), sounds(term.spelling)))
+                let fit = timeFit(words[start].startMs, words[end].endMs, hit.startMs, hit.endMs)
+                runs.append((score, fit, start...end))
+            }
+        }
+        guard let top = runs.map(\.score).max(), top >= likeness else { return nil }
+        let tied = runs.filter { top - $0.score < 0.001 }
+        let innermost = tied.filter { run in
+            !tied.contains { $0.window != run.window && run.window.contains($0.window.lowerBound)
+                && run.window.contains($0.window.upperBound) }
+        }
+        return innermost.max { $0.fit < $1.fit }?.window
+    }
+
+    /// How well two stretches of time line up, 0–1: their overlap over their union.
+    private static func timeFit(_ aStart: Int64, _ aEnd: Int64, _ bStart: Int64, _ bEnd: Int64) -> Double {
+        let overlap = max(0, min(aEnd, bEnd) - max(aStart, bStart))
+        let union = max(aEnd, bEnd) - min(aStart, bStart)
+        return union > 0 ? Double(overlap) / Double(union) : 0
+    }
+
+    /// The consonants as said, alike ones together: b/p, c/k/g/q, d/t, f/v,
+    /// s/z, and numbers as words, so "Rebecca 5" and "Repackify" are both
+    /// R-P-K-F. Vowels, h, w and y are left out, and doubled sounds counted once.
+    static func sounds(_ text: String) -> String {
+        var out = ""
+        for word in words(text) {
+            // "1db" is said "one D B".
+            let letters = Array(word.allSatisfy(\.isNumber) ? (numberWords[word] ?? word)
+                : word.map { numberWords[String($0)] ?? String($0) }.joined())
+            for (i, letter) in letters.enumerated() {
+                let next = i + 1 < letters.count ? letters[i + 1] : nil
+                let sound: Character?
+                switch letter {
+                case "b", "p": sound = "P"
+                case "c": sound = (next == "e" || next == "i" || next == "y") ? "S" : "K"
+                case "k", "g", "q": sound = "K"
+                case "d", "t": sound = "T"
+                case "f", "v": sound = "F"
+                case "s", "z": sound = "S"
+                case "x": sound = "K"
+                case "j": sound = "J"
+                case "l", "m", "n", "r": sound = Character(letter.uppercased())
+                default: sound = nil
+                }
+                if let sound, out.last != sound { out.append(sound) }
+            }
+        }
+        return out
     }
 
     /// Characters in common, in order, against both lengths (0–1).
@@ -148,6 +256,8 @@ struct Speller {
         "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7",
         "eight": "8", "nine": "9", "ten": "10",
     ]
+
+    private static let numberWords = Dictionary(uniqueKeysWithValues: numbers.map { ($0.value, $0.key) })
 
     static func words(_ text: String) -> [String] {
         text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
