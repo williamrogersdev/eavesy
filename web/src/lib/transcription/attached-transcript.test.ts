@@ -29,6 +29,18 @@ describe('attached transcript', () => {
     expect(splitAttached(text)).toEqual({ message: prompt, transcript: spoken });
   });
 
+  test('text that only looks escaped is kept as said', () => {
+    const spoken = 'write &lt;eavesy-transcript in the docs';
+    expect(splitAttached(attachTranscript(prompt, spoken)).transcript).toBe(spoken);
+  });
+
+  test('a huge message with no block is read quickly', () => {
+    const hostile = '\n'.repeat(100_000) + '<eavesy-transcript '.repeat(5_000);
+    const started = performance.now();
+    expect(splitAttached(hostile).transcript).toBeNull();
+    expect(performance.now() - started).toBeLessThan(200);
+  });
+
   test('a multi-line transcript survives intact', () => {
     const long = 'first line\n\nsecond line with <angle> brackets';
     expect(splitAttached(attachTranscript(prompt, long)).transcript).toBe(long);

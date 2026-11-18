@@ -9,7 +9,8 @@ const TAG = 'eavesy-transcript';
 
 export const ATTACHED_NOTE = 'Eavesy rewrote the message above for an AI agent. This is the full transcript, tidied only by removing filler words and spelling known names.';
 
-const ATTACHED = new RegExp(`\\n*<${TAG}(?:\\s[^>]*)?>\\n?([\\s\\S]*?)\\n?</${TAG}>\\s*$`);
+const OPEN = `<${TAG}`;
+const CLOSE = `</${TAG}>`;
 
 /** `message` with `transcript` attached after it, in a block an agent can tell apart. */
 export function attachTranscript(message: string, transcript: string): string {
@@ -17,17 +18,31 @@ export function attachTranscript(message: string, transcript: string): string {
   return `${message.trimEnd()}\n\n<${TAG} note="${ATTACHED_NOTE}">\n${escapeTag(transcript.trim())}\n</${TAG}>`;
 }
 
-/** The tag said aloud inside a transcript can't close its block early. */
+/**
+ * The tag said aloud inside a transcript can't close its block early: a
+ * zero-width space goes after its "<", and comes out again when read back.
+ * Speech is never written down with one, so nothing said is changed.
+ */
+const ZWSP = '\u200B';
 const SPOKEN_TAG = new RegExp(`<(/?${TAG})`, 'g');
-const ESCAPED_TAG = new RegExp(`&lt;(/?${TAG})`, 'g');
-const escapeTag = (text: string) => text.replace(SPOKEN_TAG, '&lt;$1');
+const ESCAPED_TAG = new RegExp(`<${ZWSP}(/?${TAG})`, 'g');
+const escapeTag = (text: string) => text.replace(SPOKEN_TAG, `<${ZWSP}$1`);
 const unescapeTag = (text: string) => text.replace(ESCAPED_TAG, '<$1');
 
-/** A message and the transcript attached to it, when one is. */
+/**
+ * A message and the transcript attached to it, when one is: a block that
+ * closes at the very end of the text. Found from the end with plain index
+ * lookups, so any text, however long, is read once.
+ */
 export function splitAttached(text: string): { message: string; transcript: string | null } {
-  const match = ATTACHED.exec(text);
-  if (!match) return { message: text, transcript: null };
-  return { message: text.slice(0, match.index).trimEnd(), transcript: unescapeTag(match[1].trim()) };
+  const trimmed = text.trimEnd();
+  if (!trimmed.endsWith(CLOSE)) return { message: text, transcript: null };
+  const closeAt = trimmed.length - CLOSE.length;
+  const openAt = trimmed.lastIndexOf(OPEN, closeAt);
+  const after = trimmed[openAt + OPEN.length];
+  const tagEnd = openAt < 0 || (after !== '>' && !/\s/.test(after ?? '')) ? -1 : trimmed.indexOf('>', openAt);
+  if (tagEnd < 0 || tagEnd >= closeAt) return { message: text, transcript: null };
+  return { message: trimmed.slice(0, openAt).trimEnd(), transcript: unescapeTag(trimmed.slice(tagEnd + 1, closeAt).trim()) };
 }
 
 /** Whether `text` is a rewritten message with its transcript attached. */
