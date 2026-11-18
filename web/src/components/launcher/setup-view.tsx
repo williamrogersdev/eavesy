@@ -76,12 +76,14 @@ export function SetupView({
   const ready = setupPermissionsReady(permissions, paired);
   const hearing = useLiveLines(step === TRY_IT && listening ? liveSessionId : null, 2).map((line) => line.text).join(' ');
 
-  // Signing in finishes in the browser: once it has, move on by itself.
-  const wasPaired = useRef(paired);
+  // Signing in finishes in the browser: when the sign-in started here lands, move on by itself.
+  const waitedForBrowser = useRef(false);
   useEffect(() => {
-    if (paired && !wasPaired.current && step === SIGN_IN) setStep(PERMISSIONS);
-    wasPaired.current = paired;
-  }, [paired, step, setStep]);
+    if (connecting) waitedForBrowser.current = true;
+    if (!paired || !waitedForBrowser.current) return;
+    waitedForBrowser.current = false;
+    if (step === SIGN_IN) setStep(PERMISSIONS);
+  }, [connecting, paired, step, setStep]);
 
   // Dictating into this panel can't go through ⌘V: Eavesy hands the words over itself.
   useEffect(() => {

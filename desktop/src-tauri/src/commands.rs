@@ -568,6 +568,8 @@ pub fn setup_step_shown(app: AppHandle, step: u8) -> Result<(), String> {
         serde_json::json!({
             "step": step,
             "step_name": name,
+            // `step` numbers changed meaning when sign-in moved first: compare by name, or by this.
+            "step_order": 2,
             "from_step_name": from_name,
             "went_back": from_name.is_some() && from > step,
             "paired": settings::device_token(&app).is_some(),
@@ -1145,7 +1147,7 @@ mod tests {
     fn setup_steps_are_named_in_the_launchers_order() {
         // The launcher's setupStep numbering (STEPS in setup-view.tsx) must match.
         let names: Vec<_> = (0..4).map(setup_step_name).collect();
-        assert_eq!(names, [Some("permissions"), Some("try_it"), Some("sign_in"), None]);
+        assert_eq!(names, [Some("sign_in"), Some("permissions"), Some("try_it"), None]);
     }
 
     #[test]

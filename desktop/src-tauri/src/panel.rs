@@ -78,7 +78,8 @@ pub fn yield_while_settings_open(app: &tauri::AppHandle) {
         let start = Instant::now();
         loop {
             std::thread::sleep(Duration::from_millis(250));
-            let back = app.get_webview_window("main").and_then(|main| main.is_focused().ok()).unwrap_or(false);
+            // No launcher window to yield for ends the hold, as does a click back into it.
+            let back = app.get_webview_window("main").map_or(true, |main| main.is_focused().unwrap_or(false));
             if settings_hold_finished(start.elapsed(), crate::make_room::settings_open(), back) { break; }
         }
         SETTINGS_YIELD.store(false, Ordering::SeqCst);
@@ -146,7 +147,12 @@ pub fn set_setup_layout(app: tauri::AppHandle, active: bool) -> Result<(), Strin
     } else {
         crate::settings::load(&app).panel_size.map_or(DEFAULT_SIZE, |size| (size.width, size.height))
     };
-    resize_panel(app, width, height)
+    let resized = resize_panel(app, width, height);
+    if resized.is_err() {
+        // Not resized: the next call tries again, and the person's size can still be saved.
+        SETUP_LAYOUT.store(!active, Ordering::SeqCst);
+    }
+    resized
 }
 const MAX_SIZE: (f64, f64) = (960.0, 1200.0);
 
