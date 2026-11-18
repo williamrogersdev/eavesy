@@ -38,7 +38,13 @@ export async function save(db: AppDb, userId: string, input: SaveSnippet): Promi
   if (input.id) {
     const update = db.update(snippets).set({ trigger, triggerKey: key, text: input.text, field: input.field, updatedAt: now })
       .where(and(eq(snippets.userId, userId), eq(snippets.id, id)));
-    await db.batch([update, ...untag]);
+    try {
+      await db.batch([update, ...untag]);
+    } catch (error) {
+      // Another device gave a snippet this phrase since the list above was read.
+      if (String(error).includes('UNIQUE')) return 'taken';
+      throw error;
+    }
     return 'saved';
   }
   // The cap is checked inside the insert, so two devices can't race past it.

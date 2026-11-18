@@ -178,7 +178,10 @@ fn paste_text_with_learning(app: &AppHandle, text: &str, learn: bool) -> Result<
                 .show();
             return Err(message);
         }
-        crate::paste_learning::observe(app.clone(), learning_target, text.to_string());
+        // Text Eavesy didn't hear (a form-fill value) is not watched for fixes.
+        if learn {
+            crate::paste_learning::observe(app.clone(), learning_target, text.to_string());
+        }
     }
 
     // The key press is posted, not awaited: give the app time to read the

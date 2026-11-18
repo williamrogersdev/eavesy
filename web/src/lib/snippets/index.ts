@@ -36,9 +36,12 @@ export function fieldLabel(field: string | null | undefined): string | null {
   return SNIPPET_FIELDS.find((option) => option.key === field)?.label ?? null;
 }
 
-/** One snippet per phrase, whatever its case or spacing. */
+/**
+ * One snippet per phrase, whatever its case, spacing or commas: the Mac
+ * matches "my, email" as "my email" (`key` in desktop/src-tauri/src/snippets.rs).
+ */
 export function triggerKey(trigger: string): string {
-  return trigger.trim().split(/\s+/).join(' ').toLowerCase();
+  return trigger.split(/[\s,]+/).filter(Boolean).join(' ').toLowerCase();
 }
 
 /**

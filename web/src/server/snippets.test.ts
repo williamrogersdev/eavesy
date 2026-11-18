@@ -22,6 +22,7 @@ function setup() {
 describe('snippet rules', () => {
   test('a trigger is a spoken phrase of two or more words', () => {
     expect(triggerKey('  My   Email ')).toBe('my email');
+    expect(triggerKey('my, email')).toBe('my email');
     expect(snippetProblem('email', 'a@b.co')).toContain('two words');
     expect(snippetProblem('12 34', 'x')).toContain('words you can say');
     expect(snippetProblem('my email', ' ')).toContain('text to insert');
@@ -49,6 +50,7 @@ describe('snippets API', () => {
     await t.request('PUT', { trigger: 'my email', text: 'a@example.com', field: 'email' });
     const taken = await t.request('PUT', { trigger: 'MY EMAIL', text: 'b@example.com' });
     expect(taken.status).toBe(409);
+    expect((await t.request('PUT', { trigger: 'my, email', text: 'b@example.com' })).status).toBe(409);
     await t.request('PUT', { trigger: 'my other email', text: 'b@example.com', field: 'email' });
     const rows = await snippets.list(t.db, 'u1');
     expect(rows.find((row) => row.trigger === 'my email')?.field).toBeNull();

@@ -59,7 +59,8 @@ fn key(phrase: &str) -> String {
 
 /// Every snippet phrase in `text` swapped for its text: whole phrases only, any
 /// case, with any spacing or a comma between their words (polishing may add
-/// one). A phrase joined to a letter, digit, at-sign, slash or dash stays as
+/// one). Commas count as spacing in a phrase, as on the server
+/// (`triggerKey`); punctuation around a phrase stays where it was. A phrase joined to a letter, digit, at-sign, slash or dash stays as
 /// written. One pass, longest phrase first, so one expansion never feeds
 /// another. A dictation that is nothing but the phrase becomes just the
 /// snippet's text, without the full stop polishing gave it, so it can go
@@ -118,6 +119,15 @@ mod tests {
         assert_eq!(expand("Send it to my email, thanks.", &snippets), "Send it to me@example.com, thanks.");
         assert_eq!(expand("Book here: My Booking  Link.", &snippets), "Book here: https://cal.com/me.");
         assert_eq!(expand("Use my, email please", &snippets), "Use me@example.com please");
+    }
+
+    #[test]
+    fn commas_around_a_phrase_stay_and_a_phrase_with_more_words_is_expanded_in_place() {
+        let snippets = [snippet("my email", "me@example.com")];
+        assert_eq!(expand("My email, and my phone.", &snippets), "me@example.com, and my phone.");
+        assert_eq!(expand("Yes, my email.", &snippets), "Yes, me@example.com.");
+        assert_eq!(expand("My email, please.", &snippets), "me@example.com, please.");
+        assert_eq!(expand("My email,", &snippets), "me@example.com");
     }
 
     #[test]

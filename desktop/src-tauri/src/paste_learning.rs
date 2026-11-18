@@ -866,7 +866,11 @@ mod mac {
     /// What the focused text field says it is for: its label, placeholder,
     /// help and identifiers, as the app gives them. None when no text field
     /// has the keyboard, or it is a password field. Its text is never read.
-    pub fn field_hints() -> Option<Vec<String>> {
+    pub fn field_hints() -> Option<(Target, Vec<String>)> {
+        #[link(name = "CoreFoundation", kind = "framework")]
+        extern "C" {
+            fn CFEqual(a: Ref, b: Ref) -> bool;
+        }
         let target = capture()?;
         let field = target.0 as Ref;
         unsafe {
@@ -874,17 +878,26 @@ mod mac {
                 .iter()
                 .filter_map(|name| string(field, name))
                 .collect();
-            // A native form's label is often its own element, linked from the field.
+            // A native form's label is often its own element, linked from the
+            // field. A static text label holds its words in AXValue, so that is
+            // read only from a static text element, never from the field itself.
             if let Some(label) = attribute(field, "AXTitleUIElement") {
-                AXUIElementSetMessagingTimeout(label, 0.25);
-                hints.extend(["AXValue", "AXTitle", "AXDescription"].iter().filter_map(|name| string(label, name)));
+                if !CFEqual(label, field) {
+                    AXUIElementSetMessagingTimeout(label, 0.25);
+                    let names: &[&str] = if string(label, "AXRole").as_deref() == Some("AXStaticText") {
+                        &["AXValue", "AXTitle", "AXDescription"]
+                    } else {
+                        &["AXTitle", "AXDescription"]
+                    };
+                    hints.extend(names.iter().filter_map(|name| string(label, name)));
+                }
                 CFRelease(label);
             }
             hints.retain(|hint| !hint.trim().is_empty() && hint.chars().count() <= 200);
-            Some(hints)
+            Some((target, hints))
         }
     }
-    fn still_focused(target: &Target) -> bool {
+    pub fn still_focused(target: &Target) -> bool {
         focus(target) == Some(true)
     }
     /// Whether `target` has the keyboard, or None when the focused element
@@ -1510,7 +1523,7 @@ pub fn utf16_chunks(text: &str, max: usize) -> Vec<Vec<u16>> {
 }
 
 #[cfg(target_os = "macos")]
-pub use mac::{capture, field_hints, observe, replace, superseded, LiveField};
+pub use mac::{capture, field_hints, observe, replace, still_focused, superseded, LiveField};
 #[cfg(not(target_os = "macos"))]
 pub fn replace(_app: &tauri::AppHandle, _previous: &str, _text: &str) -> Result<(), String> {
     Err("replacing pasted words is only supported on macOS".into())

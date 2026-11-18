@@ -1,13 +1,14 @@
 import { z } from 'zod';
 import type { AppDb } from '@/db/client';
 import * as snippets from '@/db/repo/snippets';
-import { MAX_SNIPPET_TEXT, MAX_SNIPPETS, isSnippetField, snippetProblem } from '@/lib/snippets';
+import { MAX_SNIPPET_TEXT, MAX_SNIPPETS, MAX_TRIGGER, isSnippetField, snippetProblem } from '@/lib/snippets';
 import type { ResolvedIngestActor } from './device-auth';
 
 const saveBody = z.object({
   id: z.string().min(1).max(100).optional(),
-  trigger: z.string().max(200),
-  text: z.string().max(MAX_SNIPPET_TEXT + 1),
+  // Generous enough that snippetProblem, not the parser, explains a long phrase or text.
+  trigger: z.string().max(MAX_TRIGGER * 4),
+  text: z.string().max(MAX_SNIPPET_TEXT * 2),
   field: z.string().max(40).nullable().optional(),
 });
 

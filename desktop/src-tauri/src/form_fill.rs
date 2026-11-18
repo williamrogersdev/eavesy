@@ -4,6 +4,9 @@
 //! field's own text is never read, and password fields are skipped.
 //! The kinds match `SNIPPET_FIELDS` in `web/src/lib/snippets/index.ts`.
 
+// Off macOS the shortcut only explains itself, so the pasting half goes unused there.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code))]
+
 use tauri::AppHandle;
 
 /// Each kind with the words that name it, most specific first: "email
@@ -73,7 +76,48 @@ enum Outcome {
     NoField,
     Unknown,
     NothingSaved(&'static str),
+    /// The field lost the keyboard before the value went in: nothing was pasted.
+    FocusMoved,
     Failed(String),
+}
+
+impl Outcome {
+    fn event(&self) -> (&'static str, Option<&'static str>) {
+        match self {
+            Outcome::Filled(kind) => ("filled", Some(*kind)),
+            Outcome::NoField => ("no_field", None),
+            Outcome::Unknown => ("unknown_field", None),
+            Outcome::NothingSaved(kind) => ("nothing_saved", Some(*kind)),
+            Outcome::FocusMoved => ("focus_moved", None),
+            Outcome::Failed(_) => ("paste_failed", None),
+        }
+    }
+
+    /// What Eavesy tells the user, as (title, body); nothing once filled.
+    fn notice(self, on_mac: bool, accessibility: bool) -> Option<(String, String)> {
+        let say = |title: &str, body: &str| Some((title.to_string(), body.to_string()));
+        match self {
+            Outcome::Filled(_) => None,
+            Outcome::NoField if !on_mac => say("Fill field works on macOS only", "Say the snippet’s phrase while you dictate instead."),
+            Outcome::NoField if !accessibility => say("Fill field needs Accessibility", "Allow Eavesy in System Settings → Privacy & Security → Accessibility, then try again."),
+            Outcome::NoField => say("Nothing to fill", "Click into a text field first. Password fields are never filled."),
+            Outcome::Unknown => say("Eavesy couldn’t tell what this field asks for", "Say the snippet’s phrase while you dictate instead."),
+            Outcome::NothingSaved(kind) => Some((
+                format!("No {} saved", label(kind)),
+                format!("Add a snippet in Eavesy Settings → Dictionary and set it to fill {}.", label(kind)),
+            )),
+            Outcome::FocusMoved => say("Nothing was filled", "The field changed before Eavesy could fill it. Click into it and try again."),
+            Outcome::Failed(why) => Some(("Couldn’t fill the field".to_string(), why)),
+        }
+    }
+}
+
+/// The value for a field described by `hints`, or why there is none.
+fn choose<'a>(hints: Option<&[String]>, snippets: &'a [crate::snippets::Snippet]) -> Result<(&'static str, &'a str), Outcome> {
+    let hints = hints.ok_or(Outcome::NoField)?;
+    let kind = kind_of(hints).ok_or(Outcome::Unknown)?;
+    let snippet = crate::snippets::for_field(snippets, kind).ok_or(Outcome::NothingSaved(kind))?;
+    Ok((kind, snippet.text.as_str()))
 }
 
 /// Runs off the shortcut's thread: the front app's accessibility tree can be slow.
@@ -81,46 +125,36 @@ pub fn fill(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let outcome = fill_now(&app);
-        let (event, kind) = match &outcome {
-            Outcome::Filled(kind) => ("filled", Some(*kind)),
-            Outcome::NoField => ("no_field", None),
-            Outcome::Unknown => ("unknown_field", None),
-            Outcome::NothingSaved(kind) => ("nothing_saved", Some(*kind)),
-            Outcome::Failed(_) => ("paste_failed", None),
-        };
+        let (event, kind) = outcome.event();
         crate::telemetry::track("form_fill", serde_json::json!({ "outcome": event, "kind": kind }));
-        let notice = match outcome {
-            Outcome::Filled(_) => None,
-            Outcome::NoField if !crate::dictation::accessibility_trusted() => {
-                Some(("Fill field needs Accessibility".to_string(), "Allow Eavesy in System Settings → Privacy & Security → Accessibility, then try again.".to_string()))
-            }
-            Outcome::NoField => Some(("Nothing to fill".to_string(), "Click into a text field first. Password fields are never filled.".to_string())),
-            Outcome::Unknown => Some(("Eavesy couldn’t tell what this field asks for".to_string(), "Say the snippet’s phrase while you dictate instead.".to_string())),
-            Outcome::NothingSaved(kind) => Some((
-                format!("No {} saved", label(kind)),
-                format!("Add a snippet in Eavesy Settings → Dictionary and set it to fill {}.", label(kind)),
-            )),
-            Outcome::Failed(why) => Some(("Couldn’t fill the field".to_string(), why)),
-        };
-        if let Some((title, body)) = notice {
+        if let Some((title, body)) = outcome.notice(cfg!(target_os = "macos"), crate::dictation::accessibility_trusted()) {
             crate::commands::show_notice(app, title, body);
         }
     });
 }
 
+#[cfg(target_os = "macos")]
 fn fill_now(app: &AppHandle) -> Outcome {
-    #[cfg(target_os = "macos")]
-    let hints = crate::paste_learning::field_hints();
-    #[cfg(not(target_os = "macos"))]
-    let hints: Option<Vec<String>> = None;
-    let Some(hints) = hints else { return Outcome::NoField };
-    let Some(kind) = kind_of(&hints) else { return Outcome::Unknown };
+    let found = crate::paste_learning::field_hints();
     let snippets = crate::snippets::cached(app);
-    let Some(snippet) = crate::snippets::for_field(&snippets, kind) else { return Outcome::NothingSaved(kind) };
-    match crate::commands::paste_text_quietly(app, &snippet.text) {
+    let (kind, text) = match choose(found.as_ref().map(|(_, hints)| hints.as_slice()), &snippets) {
+        Ok(chosen) => chosen,
+        Err(outcome) => return outcome,
+    };
+    // A personal value goes only into the field it was chosen for.
+    let Some((field, _)) = &found else { return Outcome::NoField };
+    if !crate::paste_learning::still_focused(field) {
+        return Outcome::FocusMoved;
+    }
+    match crate::commands::paste_text_quietly(app, text) {
         Ok(()) => Outcome::Filled(kind),
         Err(why) => Outcome::Failed(why),
     }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn fill_now(_app: &AppHandle) -> Outcome {
+    Outcome::NoField
 }
 
 #[cfg(test)]
@@ -167,7 +201,48 @@ mod tests {
 
     #[test]
     fn the_label_decides_before_the_placeholder() {
-        assert_eq!(kind(&["Name", "you@example.com"]), Some("name"));
+        assert_eq!(kind(&["Email", "Phone"]), Some("email"));
+        assert_eq!(kind(&["Phone", "Email"]), Some("phone"));
+        assert_eq!(kind(&["Postcode", "Email"]), Some("postcode"));
         assert_eq!(kind(&["field_17", "Phone"]), Some("phone"));
+    }
+
+    fn snippet(text: &str, field: Option<&str>) -> crate::snippets::Snippet {
+        crate::snippets::Snippet { trigger: "my thing".into(), text: text.into(), field: field.map(str::to_string) }
+    }
+
+    #[test]
+    fn a_field_gets_its_saved_value_or_a_reason() {
+        let saved = [snippet("me@example.com", Some("email")), snippet("hello", None)];
+        let hints = |words: &[&str]| words.iter().map(|w| w.to_string()).collect::<Vec<_>>();
+        assert_eq!(choose(Some(&hints(&["Email"])), &saved), Ok(("email", "me@example.com")));
+        assert_eq!(choose(Some(&hints(&["Phone"])), &saved), Err(Outcome::NothingSaved("phone")));
+        assert_eq!(choose(Some(&hints(&["Search"])), &saved), Err(Outcome::Unknown));
+        assert_eq!(choose(None, &saved), Err(Outcome::NoField));
+    }
+
+    #[test]
+    fn every_outcome_but_a_fill_says_why() {
+        assert_eq!(Outcome::Filled("email").notice(true, true), None);
+        assert_eq!(Outcome::NoField.notice(false, false).unwrap().0, "Fill field works on macOS only");
+        assert_eq!(Outcome::NoField.notice(true, false).unwrap().0, "Fill field needs Accessibility");
+        assert_eq!(Outcome::NoField.notice(true, true).unwrap().0, "Nothing to fill");
+        assert_eq!(Outcome::NothingSaved("phone").notice(true, true).unwrap().0, "No phone number saved");
+        assert_eq!(Outcome::FocusMoved.notice(true, true).unwrap().0, "Nothing was filled");
+        assert_eq!(Outcome::FocusMoved.event(), ("focus_moved", None));
+    }
+
+    #[test]
+    fn the_kinds_match_the_ones_settings_offers() {
+        // web/src/lib/snippets/index.ts is the list Settings tags snippets with.
+        let web = include_str!("../../../web/src/lib/snippets/index.ts");
+        let start = web.find("SNIPPET_FIELDS = [").expect("the web list");
+        let end = start + web[start..].find("] as const").expect("its end");
+        let offered: Vec<&str> = web[start..end].split("key: '").skip(1).filter_map(|rest| rest.split('\'').next()).collect();
+        let ours: Vec<&str> = KINDS.iter().map(|(key, _, _)| *key).collect();
+        let (mut offered_sorted, mut ours_sorted) = (offered.clone(), ours.clone());
+        offered_sorted.sort_unstable();
+        ours_sorted.sort_unstable();
+        assert_eq!(offered_sorted, ours_sorted);
     }
 }
