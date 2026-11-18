@@ -81,7 +81,7 @@ function ConnectMacPage() {
         body: JSON.stringify({ code }),
       });
       if (response.status === 404) throw new Error('This sign-in link expired. Click Sign in in the Eavesy app to get a new one.');
-      if (response.status === 409) throw new Error(`This ${device} is still signed in to another Eavesy account. Sign out in the Eavesy app's settings, then click Sign in again.`);
+      if (response.status === 409) throw new Error(`This ${device} is still signed in to another Eavesy account. Sign in with that account instead.`);
       if (!response.ok) throw new Error('Something went wrong. Please try again.');
       setPhase('done');
     } catch (cause) {

@@ -838,6 +838,8 @@ export const devicePairingCodes = sqliteTable(
     platform: text('platform', { enum: ['macos', 'ios'] }),
     rawToken: text('raw_token'),
     claimedByUserId: text('claimed_by_user_id'),
+    /** Why approving in the browser failed, so the device stops waiting and says so. */
+    failure: text('failure', { enum: ['device_already_registered'] }),
     expiresAt: integer('expires_at').notNull(),
     createdAt: integer('created_at').notNull(),
   },

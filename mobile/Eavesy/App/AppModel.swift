@@ -415,7 +415,13 @@ final class AppModel {
                     } catch let error as APIError where error.isPermanent {
                         // Waiting longer won't help. The server answers 404 for a code that
                         // expired or was already used; anything else is a refusal.
-                        if case .http(404, _) = error {} else { ending = "Eavesy didn't accept that sign-in. Try again." }
+                        // 409: approving was refused because this iPhone still belongs to another account.
+                        if case .http(404, _) = error {
+                        } else if case .http(409, _) = error {
+                            ending = "This iPhone is still signed in to another Eavesy account. Sign in with that account instead."
+                        } else {
+                            ending = "Eavesy didn't accept that sign-in. Try again."
+                        }
                         break
                     } catch {
                         continue
