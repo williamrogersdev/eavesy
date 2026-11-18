@@ -62,10 +62,10 @@ export function rewriteSource(sent: string): { source: string; carried: boolean 
 
 /**
  * The words that go out: a prompt for an AI agent the model wrote gets the
- * transcript it came from attached. Plain cleanup, verbatim words and tones
- * for people go out as they are.
+ * transcript it came from attached, when the account turned that on. Plain
+ * cleanup, verbatim words and tones for people go out as they are.
  */
-export function deliverable(result: { text: string; polished: boolean }, tone: { style: string; forAgents: boolean }, transcript: string): { text: string; reformatted: boolean } {
-  const reformatted = result.polished && tone.forAgents && tone.style !== 'verbatim' && !!transcript.trim();
+export function deliverable(result: { text: string; polished: boolean }, tone: { style: string; forAgents: boolean; attach: boolean }, transcript: string): { text: string; reformatted: boolean } {
+  const reformatted = tone.attach && result.polished && tone.forAgents && tone.style !== 'verbatim' && !!transcript.trim();
   return { text: reformatted ? attachTranscript(result.text, transcript) : result.text, reformatted };
 }

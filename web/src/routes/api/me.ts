@@ -28,7 +28,7 @@ import type { MeetingBotsEnv } from '@/server/meeting-bots/control';
 import { botsAvailable } from '@/server/meeting-bots/service';
 
 /** What the Mac app may change with its device token; the rest needs a web sign-in. */
-const MAC_WRITABLE = new Set(['notesModel', 'assistantModel', 'spokenLanguages', 'customVocabulary', 'dictationStyle', 'dictationForAgents', 'meetingCaptureDefault', 'notetakerName']);
+const MAC_WRITABLE = new Set(['notesModel', 'assistantModel', 'spokenLanguages', 'customVocabulary', 'dictationStyle', 'dictationForAgents', 'dictationAttachTranscript', 'meetingCaptureDefault', 'notetakerName']);
 
 const updateSchema = z.object({
   displayName: z.string().max(100).optional(),
@@ -45,6 +45,7 @@ const updateSchema = z.object({
   byoAnthropicKey: z.string().max(200).nullable().optional(),
   dictationStyle: z.string().refine(isDictationStyle, 'unsupported style').optional(),
   dictationForAgents: z.boolean().optional(),
+  dictationAttachTranscript: z.boolean().optional(),
   emailRecaps: z.boolean().optional(),
   emailRecapTranscript: z.boolean().optional(),
   shareNotesOffer: z.boolean().optional(),
@@ -100,6 +101,7 @@ export const Route = createFileRoute('/api/me')({
           customVocabulary: parseVocabulary(u.customVocabularyJson),
           dictationStyle: dictationStyle(u.dictationStyle),
           dictationForAgents: u.dictationForAgents,
+          dictationAttachTranscript: u.dictationAttachTranscript,
           emailRecaps: u.emailRecaps,
           emailRecapTranscript: u.emailRecapTranscript,
           shareNotesOffer: u.shareNotesOffer,
@@ -157,6 +159,7 @@ export const Route = createFileRoute('/api/me')({
         }
         if (body.dictationStyle) patch.dictationStyle = body.dictationStyle === 'natural' ? null : body.dictationStyle;
         if (body.dictationForAgents !== undefined) patch.dictationForAgents = body.dictationForAgents;
+        if (body.dictationAttachTranscript !== undefined) patch.dictationAttachTranscript = body.dictationAttachTranscript;
         if (body.emailRecaps !== undefined) {
           // Recaps go to the account's own address, so a guest account has nowhere to send them.
           const [owner] = await db.select({ email: users.email, isAnonymous: users.isAnonymous }).from(users).where(eq(users.id, actor.userId)).limit(1);

@@ -9,7 +9,7 @@ import { addCaption, EMPTY_RUNNING, runningText, type LiveCaption } from '@/lib/
 import { mergeTranscript } from '@/lib/desktop/live-edit';
 import { learnedLabel, learnedPending, type LearningEvent } from '@/lib/desktop/learning';
 import { hasAttachedTranscript, splitAttached } from '@/lib/transcription/attached-transcript';
-import { isWritingChoice, sameWriting, WRITING_CHOICES, writingChoice, writingFor, writingFrom, type DictationStyle, type Writing } from '@/lib/transcription/dictation-style';
+import { ATTACH_TRANSCRIPT_HINT, isWritingChoice, sameWriting, WRITING_CHOICES, writingChoice, writingFor, writingFrom, type DictationStyle, type Writing } from '@/lib/transcription/dictation-style';
 import { prettyAccel } from '@/lib/launcher/accel';
 import { requestTranslation } from '@/lib/translation/client';
 import { languageName, type Language } from '@/lib/translation/languages';
@@ -78,7 +78,7 @@ type Look = { lines: 0 | 1 | 2 | 4 | 8; tint: string; opacity: number };
 
 const DEFAULT_LOOK: Look = { lines: 0, tint: 'auto', opacity: 64 };
 /** The window's height with the dictation options open (`OPTIONS_HEIGHT` in hud.rs). */
-const OPTIONS_HEIGHT = 256;
+const OPTIONS_HEIGHT = 292;
 
 /** How long Stop waits for a live correction to reach the app before stopping anyway. */
 const LIVE_EDIT_WAIT_MS = 1500;
@@ -395,8 +395,10 @@ function useHudSettings(recording: boolean): { shortcut: string; talkShortcut: s
  * more for a finished dictation the server didn't say the tone of. A
  * finished dictation's own `written` outranks it where there is one.
  */
-function useWriting(state: HudState | null): [Writing | null, (next: Writing | null) => void] {
+function useWriting(state: HudState | null): [Writing | null, (next: Writing | null) => void, boolean, (next: boolean) => void] {
   const [prefs, setPrefs] = useState<Writing | null>(browserPreviewWriting);
+  // Whether an AI prompt carries the full transcript (Settings → Dictation). Off unless turned on.
+  const [attach, setAttach] = useState(() => !tauri() && new URLSearchParams(window.location.search).has('attach'));
   const [reload, setReload] = useState(0);
   const untold = state?.phase === 'done' && state.mode === 'audio' && !!state.sessionId && !state.written ? state.sessionId : null;
   useEvent('account:changed', () => setReload((n) => n + 1));
@@ -407,9 +409,10 @@ function useWriting(state: HudState | null): [Writing | null, (next: Writing | n
       void invoke('account_call', { method: 'GET', path: '/api/me', body: null })
         .then((me) => {
           if (disposed) return;
-          const raw = me as { dictationStyle?: unknown; dictationForAgents?: unknown } | null;
+          const raw = me as { dictationStyle?: unknown; dictationForAgents?: unknown; dictationAttachTranscript?: unknown } | null;
           const writing = writingFrom({ style: raw?.dictationStyle ?? 'natural', forAgents: raw?.dictationForAgents });
           if (writing) setPrefs({ style: writing.style, forAgents: writing.forAgents });
+          if (raw) setAttach(raw.dictationAttachTranscript === true);
         })
         .catch(() => { if (attempt < 4 && !disposed) window.setTimeout(() => load(attempt + 1), 500 * 2 ** attempt); });
     };
@@ -417,7 +420,7 @@ function useWriting(state: HudState | null): [Writing | null, (next: Writing | n
     load(reload || untold ? 4 : 0);
     return () => { disposed = true; };
   }, [reload, untold]);
-  return [prefs, setPrefs];
+  return [prefs, setPrefs, attach, setAttach];
 }
 
 /**
@@ -467,7 +470,7 @@ function Hud() {
   const [languageQuery, setLanguageQuery] = useState('');
   const [languageActive, setLanguageActive] = useState(0);
   const [recentLanguages, setRecentLanguages] = useState(loadRecentLanguages);
-  const [prefs, setPrefs] = useWriting(state);
+  const [prefs, setPrefs, attach, setAttach] = useWriting(state);
   const peekDwell = useRef<number | null>(null);
   // Bumped (at most once a second) while the pointer moves over the control.
   const [pointerMoved, setPointerMoved] = useState(0);
@@ -1161,6 +1164,16 @@ function Hud() {
     const { ok, error } = await save;
     if (!ok) setActionError(hudError(error, 'Couldn’t change how it’s written. Try again?'));
   };
+  // Attach transcript: kept on the account, in turn with the tone's saves.
+  const toggleAttach = async () => {
+    const next = !attach;
+    setAttach(next);
+    setActionError(null);
+    if (!tauri()) return;
+    const save = writeSave.current.then(() => invoke('account_call', { method: 'PATCH', path: '/api/me', body: { dictationAttachTranscript: next } }).then(() => true, () => false));
+    writeSave.current = save;
+    if (!await save) { setAttach(!next); setActionError('Couldn’t change that. Try again?'); }
+  };
   const change = async (next: Writing) => {
     const sessionId = state.sessionId;
     const todo = needsRewrite(next, row);
@@ -1494,6 +1507,12 @@ function Hud() {
     else if (dictating && choosing && !opening && !rowOnly) below = (
       <div className="ctl-options">
         {writeMenu(prefs ?? PLAIN, cancelDisabled, (next) => { void pickWhileRecording(next); void showOptions(false); })}
+        {writingChoice(prefs ?? PLAIN) === 'ai' && (
+          <button type="button" role="switch" aria-checked={attach} disabled={cancelDisabled} className="ctl-switch-row ctl-option-switch"
+            title={ATTACH_TRANSCRIPT_HINT} onClick={() => void toggleAttach()}>
+            <span>Attach transcript</span><span className="ctl-switch" aria-hidden />
+          </button>
+        )}
         <button type="button" role="switch" aria-checked={typeLive} disabled={cancelDisabled} className="ctl-switch-row ctl-option-switch"
           title={typeLive ? 'Your words are typed where your cursor is while you talk. Turn off to paste them when you stop.' : 'Your words are pasted when you stop. Turn on to type them where your cursor is while you talk.'}
           onClick={() => void toggleTypeLive()}>

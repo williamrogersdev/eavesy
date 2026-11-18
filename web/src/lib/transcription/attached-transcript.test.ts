@@ -68,13 +68,16 @@ describe('what goes out', () => {
   const said = 'fix the build and leave the API alone';
   const rewrite = { text: 'Fix the build. Leave the API.', polished: true };
   test('a prompt for an AI agent gets its transcript attached', () => {
-    const out = deliverable(rewrite, { style: 'natural', forAgents: true }, said);
+    const out = deliverable(rewrite, { style: 'natural', forAgents: true, attach: true }, said);
     expect(out.reformatted).toBe(true);
     expect(splitAttached(out.text)).toEqual({ message: rewrite.text, transcript: said });
   });
   test('verbatim, a tone for people and a fallback go out as they are', () => {
-    expect(deliverable(rewrite, { style: 'verbatim', forAgents: true }, said)).toEqual({ text: rewrite.text, reformatted: false });
-    expect(deliverable(rewrite, { style: 'professional', forAgents: false }, said)).toEqual({ text: rewrite.text, reformatted: false });
-    expect(deliverable({ ...rewrite, polished: false }, { style: 'natural', forAgents: true }, said)).toEqual({ text: rewrite.text, reformatted: false });
+    expect(deliverable(rewrite, { style: 'verbatim', forAgents: true, attach: true }, said)).toEqual({ text: rewrite.text, reformatted: false });
+    expect(deliverable(rewrite, { style: 'professional', forAgents: false, attach: true }, said)).toEqual({ text: rewrite.text, reformatted: false });
+    expect(deliverable({ ...rewrite, polished: false }, { style: 'natural', forAgents: true, attach: true }, said)).toEqual({ text: rewrite.text, reformatted: false });
+  });
+  test('a prompt goes out without the transcript unless Attach transcript is on', () => {
+    expect(deliverable(rewrite, { style: 'natural', forAgents: true, attach: false }, said)).toEqual({ text: rewrite.text, reformatted: false });
   });
 });

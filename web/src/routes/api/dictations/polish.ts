@@ -85,9 +85,10 @@ export const Route = createFileRoute('/api/dictations/polish')({
         // Told back with the words, for the Mac app's tone row: the tone in
         // force for them (the setting the row shows and changes) and whether
         // the model applied it. When it didn't, the words went out plain.
-        // A prompt for an AI agent goes out with the full transcript attached,
-        // so the agent has everything that was said, and can tell it was rewritten.
-        const out = deliverable(result, tone, stripFillers(text));
+        // A prompt for an AI agent goes out with the full transcript attached
+        // when the account asks for it (Attach transcript), so the agent has
+        // everything that was said, and can tell it was rewritten.
+        const out = deliverable(result, { ...tone, attach: user?.dictationAttachTranscript === true }, stripFillers(text));
         return Response.json({ ...result, ...out, written: { ...tone, applied: result.polished } });
       },
     },

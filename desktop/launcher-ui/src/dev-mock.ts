@@ -426,6 +426,7 @@ function mockAccount(noProjects: boolean, manyWords: boolean, noPrompts = false,
     spokenLanguages: ['en'],
     dictationStyle: 'concise',
     dictationForAgents: true,
+    dictationAttachTranscript: false,
     notesModel: null,
     assistantModel: 'claude-opus-5-5',
     customVocabulary: manyWords

@@ -290,8 +290,9 @@ fn meeting_size(wanted: Option<(f64, f64)>, area: Option<(f64, f64)>) -> (f64, f
 /// ellipsis before anything else in the row gives way.
 const BAR: (f64, f64) = (340.0, 40.0);
 /// The controls with the dictation options open under them: the six ways the
-/// words are written, then "Type as I talk". They take the live words' place.
-const OPTIONS_HEIGHT: f64 = 256.0;
+/// words are written, "Attach transcript" (for an AI prompt), then "Type as I
+/// talk". They take the live words' place.
+const OPTIONS_HEIGHT: f64 = 292.0;
 
 /// Recording or writing it down, with `lines` of live words under the controls.
 fn live_size(lines: u8) -> (f64, f64) {
