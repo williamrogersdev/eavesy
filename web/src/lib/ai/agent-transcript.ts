@@ -1,7 +1,8 @@
 import type { LearnedCorrection } from '@/lib/dictionary/learning';
 import { DEFAULT_DICTATION_STYLE, withoutSwearing, type DictationStyle } from '@/lib/transcription/dictation-style';
 import type Anthropic from '@anthropic-ai/sdk';
-import { count, inventedTerms } from '@/lib/transcription/invented-terms';
+import { count, droppedTerms, inventedTerms } from '@/lib/transcription/invented-terms';
+import { BUILT_IN_TERMS } from '@/lib/transcription/vocabulary';
 import { MODELS } from './client';
 import {
   chunkTurns,
@@ -44,10 +45,17 @@ ${SHARED_RULES}${UNCLEAR_RULE}
 - Break the text into short paragraphs by topic. When the speaker lists things ("first… then…", "a few things: …"), make it a numbered or bulleted list.${contextBlock(context)}`;
 }
 
-function dictationPrompt(context: string | null) {
+/**
+ * "As spoken" for an AI agent: the same cleanup, laid out for a prompt box.
+ * Only layout changes; the speaker's words and sentences stay theirs.
+ */
+const AGENT_LAYOUT_RULE = `
+- It goes to an AI agent (for example a coding assistant) as the speaker's own message. Lay it out for that: separate requests, background and constraints into short paragraphs, and make steps or requirements the speaker lists a numbered list. Never reword, restate, reorder or summarise to do it, and never turn a question, a hunch or a musing into an instruction.`;
+
+function dictationPrompt(context: string | null, forAgents = false) {
   return `You clean up a dictation: one person speaking, whose words are typed at their cursor in whatever app they are using (a chat, an email, a coding agent, a document), as if they had typed them.
 
-${SHARED_RULES}
+${SHARED_RULES}${forAgents ? AGENT_LAYOUT_RULE : ''}
 - Give your best reading of words that are hard to make out; never insert markers. The words come from speech recognition, so a word that makes no sense where it is may be a mishearing of a name or term from the context below: use that spelling only when the words heard sound almost the same as the term. Otherwise keep the word as heard. Most dictations mention none of those terms: never put one in place of words that were clearly said.
 - Keep a short dictation as plain sentences. Break a long one into short paragraphs by topic, and when the speaker lists things ("first… then…", "a few things: …"), make it a numbered or bulleted list.
 
@@ -261,7 +269,10 @@ export async function polishDictation(
   const said = args.text.trim();
   // Exactly as said: the recognizer's words, untouched, and no wait for a model.
   if (style === 'verbatim') return { text: said, polished: true };
-  const restyle = style !== 'natural' || !!args.forAgents;
+  // Only a tone someone picked rewrites. "As spoken" for an agent is the same
+  // cleanup, checked as strictly, with a prompt's layout: going to an agent
+  // is no reason to reword what was said.
+  const restyle = style !== 'natural';
   const plain = restyle ? withoutSwearing(stripFillers(said)) : stripFillers(said);
   const known = (args.corrections ?? []).filter(entry => count(said, entry.from) > 0).map(entry => entry.to).join(' ');
   // A tone someone asked for is worth a call however short the words are, and
@@ -270,13 +281,14 @@ export async function polishDictation(
   if (!client || (!known && !args.asked && said.split(/\s+/).length < MIN_POLISH_WORDS)) return { text: plain, polished: false };
   const turns: Turn[] = [{ speaker: null, text: said }];
   try {
-    const system = restyle ? styledDictationPrompt(style, !!args.forAgents, args.context) : dictationPrompt(args.context);
+    const system = restyle ? styledDictationPrompt(style, !!args.forAgents, args.context) : dictationPrompt(args.context, !!args.forAgents);
     const validationInput = known ? [...turns, { speaker: null, text: known }] : turns;
     const terms = [...(args.terms ?? []), ...(args.confirmedSpellings ?? [])];
     const usable = (candidate: string) =>
       (restyle ? restyledIsValid(validationInput, candidate) : cleanedChunkIsValid(validationInput, candidate, 'solo'))
       && preservesSpellings(said, candidate, args.confirmedSpellings ?? [])
-      && inventedTerms(said, candidate, terms, args.corrections).length === 0;
+      && inventedTerms(said, candidate, terms, args.corrections).length === 0
+      && droppedTerms(said, candidate, [...BUILT_IN_TERMS, ...terms]).length === 0;
     // The Mac app is holding a paste for this: a slow answer gets a second
     // try alongside, and the first usable one is the dictation.
     const candidate = await hedged((signal) => cleanChunk(client, turns, system, signal), hedgeAfterMs(said.length), usable);

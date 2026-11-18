@@ -22,7 +22,7 @@ export const Route = createFileRoute('/api/team')({
           const membership = await teamsRepo.membershipOf(db, userId);
           if (!membership) {
             const email = await callerEmail(db, userId);
-            return Response.json({ team: null, invitations: email ? await teamsRepo.invitesFor(db, email) : [] });
+            return Response.json({ team: null, email, invitations: email ? await teamsRepo.invitesFor(db, email) : [] });
           }
           const [members, invites, context] = await Promise.all([
             teamsRepo.listMembers(db, membership.teamId),

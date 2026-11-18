@@ -5,10 +5,9 @@ import { BrandMark } from '@/components/brand-mark';
 import { Bubble, Mascot } from '@/components/launcher/ui';
 import { SpokenLanguages } from '@/components/settings/spoken-languages';
 import { AppAlert } from '@/components/ui/app-page';
-import { appReturnPath } from '@/lib/auth-return';
 import { isRecord, optionalString } from '@/lib/json';
 import { useRouter } from '@/lib/next-compat/navigation';
-import { MAX_ONBOARDING_PROJECTS, takeProjectDraft } from '@/lib/onboarding';
+import { MAX_ONBOARDING_PROJECTS, afterOnboardingPath, takeProjectDraft } from '@/lib/onboarding';
 import { languagesFromLocales } from '@/lib/transcription/language';
 
 const NEXT_STEPS = [
@@ -68,7 +67,7 @@ function OnboardingPage() {
       });
       if (!response.ok) throw new Error('Could not finish setup. Please try again.');
       const returnTo = new URLSearchParams(window.location.search).get('redirect_url');
-      await router.push(appReturnPath(returnTo, '/app/record?first=1'));
+      await router.push(afterOnboardingPath(returnTo));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Something went wrong. Please try again.');
       setSaving(false);

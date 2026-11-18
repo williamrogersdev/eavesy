@@ -1,3 +1,4 @@
+import { appReturnPath } from '@/lib/auth-return';
 import { PROJECT_LIMITS } from '@/lib/projects';
 
 /** Enough for the few things someone is working on now; more come later from the app. */
@@ -35,4 +36,17 @@ export function takeProjectDraft(
     projects: [...projects, ...added].slice(0, MAX_ONBOARDING_PROJECTS),
     draft: finish ? '' : draft.slice(cut + 1).trimStart(),
   };
+}
+
+/** Where someone new lands after setup: their first recording. */
+export const FIRST_RUN_PATH = '/app/record?first=1';
+
+/**
+ * Where to go once setup is done. A plain `/app` is the default every sign-up
+ * returns to, not a page anyone asked for, so it leads to the first recording
+ * instead; a real destination (an invitation, a Mac waiting to pair) is kept.
+ */
+export function afterOnboardingPath(redirectUrl: unknown): string {
+  const target = appReturnPath(redirectUrl, FIRST_RUN_PATH);
+  return target === '/app' || target === '/app/' ? FIRST_RUN_PATH : target;
 }

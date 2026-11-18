@@ -1,5 +1,26 @@
-import { expect, test } from 'bun:test';
-import { inventedTerms, likeness } from './invented-terms';
+import { describe, expect, test } from 'bun:test';
+import { droppedTerms, inventedTerms, likeness } from './invented-terms';
+
+describe('droppedTerms', () => {
+  const terms = ['Eavesy', 'Repackify', 'pallet', 'Gaylord Boxes'];
+
+  test('catches a heard term the rewrite swapped for another word', () => {
+    // Real rewrites from the owner's dictations.
+    expect(droppedTerms('it injects the word, like, Eavesy or, like, or Pagify', 'It injects the word Eavesdrop or paginate', terms)).toEqual(['Eavesy']);
+    expect(droppedTerms('we moved Repackify to the new cache', 'We moved Redis to the new cache.', terms)).toEqual(['Repackify']);
+    expect(droppedTerms('ship the pallet tomorrow', 'Ship the parcel tomorrow.', terms)).toEqual(['pallet']);
+    expect(droppedTerms('order the Gaylord Boxes', 'Order the cardboard boxes.', terms)).toEqual(['Gaylord Boxes']);
+  });
+
+  test('lets a term be cut with a false start, inflected, moved or kept', () => {
+    expect(droppedTerms('so Repackify, I mean the site is down', 'The site is down.', terms)).toEqual([]);
+    expect(droppedTerms('Repackify Repackify is down', 'Repackify is down.', terms)).toEqual([]);
+    expect(droppedTerms('stack the pallet by the door', 'Stack the pallets by the door.', terms)).toEqual([]);
+    expect(droppedTerms('the dashboard for Repackify is slow', 'Repackify’s dashboard is slow.', terms)).toEqual([]);
+    expect(droppedTerms('open eavesy and check', 'Open Eavesy and check.', terms)).toEqual([]);
+    expect(droppedTerms('nothing to see here', 'Nothing to see here.', terms)).toEqual([]);
+  });
+});
 
 const terms = ['Repackify', 'Gaylord Boxes', '1db', 'Rust', 'convex', 'code'];
 
