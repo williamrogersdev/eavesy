@@ -39,6 +39,8 @@ export const Route = createFileRoute('/api/devices/pair/status')({
         if (!row || row.expiresAt <= Date.now()) {
           return Response.json({ status: 'expired' }, { status: 404 });
         }
+        // 409 so a device stops waiting: approving this code in the browser was refused.
+        if (row.failure) return Response.json({ status: 'failed', error: row.failure }, { status: 409 });
         if (!row.rawToken) return Response.json({ status: 'pending' });
 
         // Hand the token over once: only the poll that clears it may return it.

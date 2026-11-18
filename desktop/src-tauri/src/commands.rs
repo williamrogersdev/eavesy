@@ -920,6 +920,10 @@ async fn pair_device_inner(app: &AppHandle, generation: u64) -> Result<(), Strin
         if response.status() == reqwest::StatusCode::NOT_FOUND {
             return Err("The sign-in link expired. Click Sign in at eavesy.com to get a new one.".to_string());
         }
+        if response.status() == reqwest::StatusCode::CONFLICT {
+            // Approving in the browser was refused; this code will never pair.
+            return Err("This Mac is still signed in to another Eavesy account. Click Sign in at eavesy.com again and use that account.".to_string());
+        }
         if !response.status().is_success() {
             continue;
         }

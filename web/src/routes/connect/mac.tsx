@@ -54,7 +54,13 @@ function ConnectMacPage() {
   useEffect(() => {
     if (!code) return;
     void fetch(`/api/devices/pair?code=${encodeURIComponent(code)}`)
-      .then(async (response): Promise<unknown> => (response.ok ? response.json() : null))
+      .then(async (response): Promise<unknown> => {
+        if (response.status === 409) {
+          setError('This device is still signed in to another Eavesy account. In the Eavesy app, click Sign in again and use that account.');
+          setPhase('error');
+        }
+        return response.ok ? response.json() : null;
+      })
       .then((value) => {
         const requestedAt = isRecord(value) ? optionalNumber(value.requestedAt) : undefined;
         if (!isRecord(value) || requestedAt === undefined) return;
@@ -81,7 +87,7 @@ function ConnectMacPage() {
         body: JSON.stringify({ code }),
       });
       if (response.status === 404) throw new Error('This sign-in link expired. Click Sign in in the Eavesy app to get a new one.');
-      if (response.status === 409) throw new Error(`This ${device} is still signed in to another Eavesy account. Sign out in the Eavesy app's settings, then click Sign in again.`);
+      if (response.status === 409) throw new Error(`This ${device} is still signed in to another Eavesy account. In the Eavesy app, click Sign in again and use that account.`);
       if (!response.ok) throw new Error('Something went wrong. Please try again.');
       setPhase('done');
     } catch (cause) {

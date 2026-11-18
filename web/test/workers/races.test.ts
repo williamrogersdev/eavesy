@@ -31,6 +31,7 @@ vi.mock('../../src/server/auth', () => ({
 
 const segmentPut = handler(SegmentRoute, 'PUT');
 const pairPost = handler(PairRoute, 'POST');
+const pairGet = handler(PairRoute, 'GET');
 const pairStatus = handler(PairStatusRoute, 'POST');
 
 beforeAll(async () => {
@@ -310,5 +311,35 @@ describe('pairing codes', () => {
         await sha256(CODE),
       ),
     ).toEqual({ claimed_by_user_id: null });
+  });
+
+  it('tells the waiting device when approval was refused, and refuses the code from then on', async () => {
+    await insertDeviceActor('user_holder', DEVICE);
+    await insertUser('user_taker');
+    await insertCode();
+    actor.userId = 'user_taker';
+    expect((await claim()).status).toBe(409);
+
+    const poll = await pairStatus({
+      request: new Request('https://eavesy.test/api/devices/pair/status', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'cf-connecting-ip': '203.0.113.11' },
+        body: JSON.stringify({ code: CODE, deviceId: DEVICE }),
+      }),
+      params: {},
+    });
+    expect(poll.status).toBe(409);
+    expect(await poll.json()).toEqual({ status: 'failed', error: 'device_already_registered' });
+
+    // The device stopped waiting, so the code stays refused, for any account, and says why.
+    actor.userId = 'user_holder';
+    const again = await claim();
+    expect(again.status).toBe(409);
+    expect(await again.json()).toEqual({ error: 'device_already_registered' });
+    const check = await pairGet({
+      request: new Request(`https://eavesy.test/api/devices/pair?code=${CODE}`),
+      params: {},
+    });
+    expect(check.status).toBe(409);
   });
 });

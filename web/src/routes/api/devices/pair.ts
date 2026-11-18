@@ -44,11 +44,15 @@ export const Route = createFileRoute('/api/devices/pair')({
               expiresAt: devicePairingCodes.expiresAt,
               rawToken: devicePairingCodes.rawToken,
               claimedByUserId: devicePairingCodes.claimedByUserId,
+              failure: devicePairingCodes.failure,
             })
             .from(devicePairingCodes)
             .where(eq(devicePairingCodes.codeHash, codeHash))
             .limit(1)
         )[0];
+        if (pairing?.failure && pairing.expiresAt > Date.now()) {
+          return Response.json({ error: pairing.failure }, { status: 409 });
+        }
         if (!pairing || pairing.expiresAt <= Date.now() || pairing.rawToken || pairing.claimedByUserId) {
           return Response.json({ error: 'pairing_code_expired' }, { status: 404 });
         }
@@ -89,12 +93,22 @@ export const Route = createFileRoute('/api/devices/pair')({
                   eq(devicePairingCodes.codeHash, codeHash),
                   isNull(devicePairingCodes.claimedByUserId),
                   isNull(devicePairingCodes.rawToken),
+                  isNull(devicePairingCodes.failure),
                   gt(devicePairingCodes.expiresAt, Date.now()),
                 ),
               )
               .returning()
           )[0];
           if (!pairing) {
+            // A refused code stays refused (the device already stopped waiting for it), and says why.
+            const refused = (
+              await db
+                .select({ failure: devicePairingCodes.failure })
+                .from(devicePairingCodes)
+                .where(and(eq(devicePairingCodes.codeHash, codeHash), gt(devicePairingCodes.expiresAt, Date.now())))
+                .limit(1)
+            )[0]?.failure;
+            if (refused) return Response.json({ error: refused }, { status: 409 });
             return Response.json({ error: 'pairing_code_expired' }, { status: 404 });
           }
           try {
@@ -117,9 +131,11 @@ export const Route = createFileRoute('/api/devices/pair')({
             });
             return Response.json({ ok: true, deviceId: pairing.deviceId });
           } catch (error) {
+            const conflict = error instanceof Error && error.message === 'device_already_registered';
+            // A conflict won't fix itself on this code: tell the waiting device so it stops polling.
             await db
               .update(devicePairingCodes)
-              .set({ claimedByUserId: null })
+              .set(conflict ? { claimedByUserId: null, failure: 'device_already_registered' } : { claimedByUserId: null })
               .where(
                 and(
                   eq(devicePairingCodes.codeHash, codeHash),
@@ -127,9 +143,7 @@ export const Route = createFileRoute('/api/devices/pair')({
                   isNull(devicePairingCodes.rawToken),
                 ),
               );
-            if (error instanceof Error && error.message === 'device_already_registered') {
-              return Response.json({ error: error.message }, { status: 409 });
-            }
+            if (conflict) return Response.json({ error: 'device_already_registered' }, { status: 409 });
             throw error;
           }
         }
