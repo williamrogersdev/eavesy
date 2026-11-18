@@ -9,7 +9,7 @@ import { TemplateManager } from '@/components/settings/template-manager';
 import { refreshMe } from '@/lib/api/use-me';
 import { NOTES_LANGUAGES } from '@/lib/transcription/language';
 import { DEFAULT_ASSISTANT_MODEL, DEFAULT_NOTES_MODEL, isModelChoice, modelNote, modelOptions } from '@/lib/ai/model-choice';
-import { dictationStyle, isWritingChoice, WRITING_CHOICES, writingChoice, writingFor, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { ATTACH_TRANSCRIPT_HINT, dictationStyle, isWritingChoice, WRITING_CHOICES, writingChoice, writingFor, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { SpokenLanguages } from '@/components/settings/spoken-languages';
 import { MAX_TERM_LENGTH, MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocabulary';
 import { ChipInput } from '@/components/ui/chip-input';
@@ -35,6 +35,7 @@ interface Me {
   customVocabulary: string[];
   dictationStyle: DictationStyle;
   dictationForAgents: boolean;
+  dictationAttachTranscript: boolean;
   emailRecaps: boolean;
   emailRecapTranscript: boolean;
   emailRecapsAvailable: boolean;
@@ -141,7 +142,7 @@ function SettingsPage() {
     }
   };
 
-  const saveLanguage = async (change: Partial<Pick<Me, 'defaultLanguage' | 'notesLanguage' | 'notesModel' | 'assistantModel' | 'spokenLanguages' | 'dictationStyle' | 'dictationForAgents'>>) => {
+  const saveLanguage = async (change: Partial<Pick<Me, 'defaultLanguage' | 'notesLanguage' | 'notesModel' | 'assistantModel' | 'spokenLanguages' | 'dictationStyle' | 'dictationForAgents' | 'dictationAttachTranscript'>>) => {
     const previous = me;
     setError(null);
     if (previous) setMe({ ...previous, ...change });
@@ -322,6 +323,16 @@ function SettingsPage() {
                   ))}
                 </select>
               </Row>
+              {writingChoice({ style: me.dictationStyle, forAgents: me.dictationForAgents }) === 'ai' && (
+                <Row label="Attach transcript" hint={ATTACH_TRANSCRIPT_HINT} htmlFor="settings-dictation-attach">
+                  <input
+                    id="settings-dictation-attach"
+                    type="checkbox"
+                    checked={me.dictationAttachTranscript}
+                    onChange={(e) => void saveLanguage({ dictationAttachTranscript: e.target.checked })}
+                  />
+                </Row>
+              )}
             </AppSection>
             <AppSection
               title="Custom words"
@@ -494,6 +505,7 @@ function parseMe(value: unknown): Me | null {
       : [],
     dictationStyle: dictationStyle(value.dictationStyle),
     dictationForAgents: value.dictationForAgents === true,
+    dictationAttachTranscript: value.dictationAttachTranscript === true,
     emailRecaps: value.emailRecaps === true,
     emailRecapTranscript: value.emailRecapTranscript === true,
     emailRecapsAvailable: value.emailRecapsAvailable === true,

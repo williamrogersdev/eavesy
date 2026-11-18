@@ -62,10 +62,19 @@ export function rewriteSource(sent: string): { source: string; carried: boolean 
 
 /**
  * The words that go out: a prompt for an AI agent the model wrote gets the
- * transcript it came from attached. Plain cleanup, verbatim words and tones
- * for people go out as they are.
+ * transcript it came from attached, when the account turned that on. Plain
+ * cleanup, verbatim words and tones for people go out as they are.
  */
-export function deliverable(result: { text: string; polished: boolean }, tone: { style: string; forAgents: boolean }, transcript: string): { text: string; reformatted: boolean } {
-  const reformatted = result.polished && tone.forAgents && tone.style !== 'verbatim' && !!transcript.trim();
-  return { text: reformatted ? attachTranscript(result.text, transcript) : result.text, reformatted };
+export function deliverable(result: { text: string; polished: boolean }, tone: { style: string; forAgents: boolean; attach: boolean }, transcript: string): { text: string; attached: boolean } {
+  const attached = tone.attach && result.polished && tone.forAgents && tone.style !== 'verbatim' && !!transcript.trim();
+  return { text: attached ? attachTranscript(result.text, transcript) : result.text, attached };
+}
+
+/**
+ * A message that carried its transcript but can't be rewritten (too long,
+ * or an empty block): kept whole while Attach transcript is on, else just
+ * the message above the block, as the switch says.
+ */
+export function keptUnrewritten(sent: string, attach: boolean): string {
+  return attach ? sent : splitAttached(sent).message;
 }

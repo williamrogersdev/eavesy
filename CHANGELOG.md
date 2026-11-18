@@ -8,7 +8,7 @@ uses [semantic versioning](https://semver.org/) for the macOS app.
 
 ### Changed
 
-- A dictation rewritten as a prompt for an AI agent now carries the full transcript, word for word, in a labelled `<eavesy-transcript>` block below it, wherever it is pasted or copied. A new tone starts from that transcript, so nothing gets lost. The Mac HUD and the capture history say when a message was rewritten.
+- With the new **Attach transcript** switch on (off by default, under "AI prompt" in the HUD's writing menu and in Settings → Dictation), a dictation rewritten as a prompt for an AI agent carries the full transcript, word for word, in a labelled `<eavesy-transcript>` block below it, wherever it is pasted or copied. A new tone starts from that transcript, so nothing gets lost. The Mac HUD and the capture history say when a message was rewritten.
 
 ## [0.12.0] - 2026-11-18 - desktop
 

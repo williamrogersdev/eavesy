@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ATTACHED_NOTE, attachTranscript, deliverable, hasAttachedTranscript, rewriteSource, splitAttached } from './attached-transcript';
+import { ATTACHED_NOTE, attachTranscript, deliverable, hasAttachedTranscript, keptUnrewritten, rewriteSource, splitAttached } from './attached-transcript';
 
 describe('attached transcript', () => {
   const said = 'so can you rename the summarize file to summary and fix the imports, the build keeps failing';
@@ -68,13 +68,21 @@ describe('what goes out', () => {
   const said = 'fix the build and leave the API alone';
   const rewrite = { text: 'Fix the build. Leave the API.', polished: true };
   test('a prompt for an AI agent gets its transcript attached', () => {
-    const out = deliverable(rewrite, { style: 'natural', forAgents: true }, said);
-    expect(out.reformatted).toBe(true);
+    const out = deliverable(rewrite, { style: 'natural', forAgents: true, attach: true }, said);
+    expect(out.attached).toBe(true);
     expect(splitAttached(out.text)).toEqual({ message: rewrite.text, transcript: said });
   });
   test('verbatim, a tone for people and a fallback go out as they are', () => {
-    expect(deliverable(rewrite, { style: 'verbatim', forAgents: true }, said)).toEqual({ text: rewrite.text, reformatted: false });
-    expect(deliverable(rewrite, { style: 'professional', forAgents: false }, said)).toEqual({ text: rewrite.text, reformatted: false });
-    expect(deliverable({ ...rewrite, polished: false }, { style: 'natural', forAgents: true }, said)).toEqual({ text: rewrite.text, reformatted: false });
+    expect(deliverable(rewrite, { style: 'verbatim', forAgents: true, attach: true }, said)).toEqual({ text: rewrite.text, attached: false });
+    expect(deliverable(rewrite, { style: 'professional', forAgents: false, attach: true }, said)).toEqual({ text: rewrite.text, attached: false });
+    expect(deliverable({ ...rewrite, polished: false }, { style: 'natural', forAgents: true, attach: true }, said)).toEqual({ text: rewrite.text, attached: false });
+  });
+  test('a carried message that can\'t be rewritten follows the switch', () => {
+    const sent = attachTranscript(rewrite.text, said);
+    expect(keptUnrewritten(sent, true)).toBe(sent);
+    expect(keptUnrewritten(sent, false)).toBe(rewrite.text);
+  });
+  test('a prompt goes out without the transcript unless Attach transcript is on', () => {
+    expect(deliverable(rewrite, { style: 'natural', forAgents: true, attach: false }, said)).toEqual({ text: rewrite.text, attached: false });
   });
 });

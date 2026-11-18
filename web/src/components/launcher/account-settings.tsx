@@ -7,10 +7,10 @@ import { accountCall, errMsg } from '@/lib/desktop/bridge';
 import { DEFAULT_ASSISTANT_MODEL, DEFAULT_NOTES_MODEL, isModelChoice, modelNote, modelOptions } from '@/lib/ai/model-choice';
 import { isRecord } from '@/lib/json';
 import { PROJECT_LIMITS } from '@/lib/projects';
-import { DICTATION_EXAMPLE, DICTATION_STYLES, dictationStyle, effectiveDictation, isDictationStyle, WRITING_CHOICES, writingChoice, writingFor, type DictationStyle } from '@/lib/transcription/dictation-style';
+import { ATTACH_TRANSCRIPT_HINT, DICTATION_EXAMPLE, DICTATION_STYLES, dictationStyle, effectiveDictation, isDictationStyle, WRITING_CHOICES, writingChoice, writingFor, type DictationStyle } from '@/lib/transcription/dictation-style';
 import { languageName, NOTES_LANGUAGES } from '@/lib/transcription/language';
 import { MAX_VOCABULARY_TERMS } from '@/lib/transcription/vocabulary';
-import { Button, Card, IconButton, Row, Select, TagInput } from './ui';
+import { Button, Card, IconButton, Row, Select, Switch, TagInput } from './ui';
 
 const SAVE_DELAY_MS = 500;
 
@@ -56,6 +56,8 @@ export interface AccountPrefs {
   words: string[];
   style: DictationStyle;
   forAgents: boolean;
+  /** Whether a dictation written as an AI prompt carries its full transcript. */
+  attachTranscript: boolean;
   /** The Claude model for meeting notes and questions; null is Eavesy's default. */
   notesModel: string | null;
   /** The Claude model Eavesy's assistant runs on; null is Eavesy's default. */
@@ -86,6 +88,7 @@ export function useAccountPrefs(accountKey: string | null) {
           words: strings(me.customVocabulary),
           style: dictationStyle(me.dictationStyle),
           forAgents: me.dictationForAgents === true,
+          attachTranscript: me.dictationAttachTranscript === true,
           notesModel: isModelChoice(me.notesModel) ? me.notesModel : null,
           assistantModel: isModelChoice(me.assistantModel) ? me.assistantModel : null,
         });
@@ -219,6 +222,15 @@ export function DictationCard({ account, projects, onOpenProject }: {
             }}
           />
         </Row>
+        {choice === 'ai' && (
+          <Switch
+            checked={prefs?.attachTranscript ?? false}
+            disabled={!prefs}
+            onCheckedChange={(on) => update({ attachTranscript: on }, { dictationAttachTranscript: on })}
+            label="Attach transcript"
+            hint={ATTACH_TRANSCRIPT_HINT}
+          />
+        )}
         <div className="ev-set-body"><StyleExample style={style} forAgents={forAgents} /></div>
         <Status error={error} />
       </Card>

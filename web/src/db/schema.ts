@@ -43,6 +43,8 @@ export const users = sqliteTable(
     dictationStyle: text('dictation_style'),
     /** Whether dictations are structured as a prompt for an AI agent, in addition to their tone. */
     dictationForAgents: integer('dictation_for_agents', { mode: 'boolean' }).notNull().default(false),
+    /** Whether a dictation rewritten as an AI prompt carries the full transcript below it. Off unless turned on. */
+    dictationAttachTranscript: integer('dictation_attach_transcript', { mode: 'boolean' }).notNull().default(false),
     /**
      * Whether a recap of each finished meeting is emailed to the account's own address.
      * On for new accounts: the SQL default stays false to avoid a users-table

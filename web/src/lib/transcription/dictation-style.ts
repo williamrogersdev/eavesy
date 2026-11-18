@@ -110,6 +110,9 @@ export const WRITING_CHOICES: readonly { id: WritingChoice; label: string; hint:
   { id: 'ai', label: 'AI prompt', hint: 'Laid out as a prompt for Claude, ChatGPT or a coding agent, in your own words. With a tone you last picked, rewritten as a prompt in that tone.' },
 ];
 
+/** Beside "AI prompt": whether the prompt carries everything that was said. */
+export const ATTACH_TRANSCRIPT_HINT = 'Adds everything you said, word for word, below the prompt, so the AI has what the rewrite left out.';
+
 export function writingChoice(writing: Writing): WritingChoice {
   return writing.forAgents && writing.style !== 'verbatim' ? 'ai' : writing.style;
 }
