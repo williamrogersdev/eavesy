@@ -33,6 +33,8 @@ struct EnglishWords: Sendable {
         for ending in Self.endings where word.count > ending.count + 2 && word.hasSuffix(ending) {
             let stem = String(word.dropLast(ending.count))
             if words.contains(stem) { return true }
+            // "companies": the y the ending took.
+            if ending == "es", stem.hasSuffix("i"), words.contains(stem.dropLast() + "y") { return true }
             // "stopped", "running": the doubled consonant before the ending.
             if stem.count > 2, stem.last == stem.dropLast().last, words.contains(String(stem.dropLast())) { return true }
             // "making", "used": the e the ending took.

@@ -103,6 +103,25 @@ final class SpellerTests: XCTestCase {
             "that Repackify I bought,")
     }
 
+    // The Mac's own word list, as dictation uses it.
+    func testRealWordsStayWithTheMacsWordList() throws {
+        try XCTSkipIf(EnglishWords.system.contains("zzzqx"), "no word list on this Mac")
+        let speller = Speller(vocabulary: ["Eavesy", "Repackify"])
+        for text in ["the repack of it", "with easy access", "for pacify well", "the companies repackaged", "we reapplied it"] {
+            let heard = final(text.split(separator: " ").enumerated().map { (String($1), Int64($0 * 300), Int64($0 * 300 + 300)) })
+            XCTAssertEqual(speller.spell(heard), heard, text)
+        }
+        XCTAssertEqual(
+            speller.spell(final([("what", 0, 300), ("repackupy", 300, 900), ("has", 900, 1100)])).text, "what Repackify has")
+    }
+
+    // A short name's few consonants don't make a real word sound like it.
+    func testARealWordOverAShortNamesHitStays() {
+        let speller = speller(["Eavesy"], heard: [("Eavesy", 1000, 1400)])
+        let heard = final([("so", 500, 1000), ("fast", 1000, 1400), ("now", 1400, 1700)])
+        XCTAssertEqual(speller.spell(heard), heard)
+    }
+
     private let english = EnglishWords(
         ["what", "has", "on", "there", "for", "pacify", "well", "with", "easy", "is", "repack", "of", "they", "are",
          "be", "being", "used", "it", "the", "one", "plug", "in", "internal", "assistant", "admin"])
@@ -149,7 +168,9 @@ final class SpellerTests: XCTestCase {
         XCTAssertTrue(english.contains("admins"))
         XCTAssertTrue(english.contains("Used"))
         XCTAssertTrue(english.contains("aren't"))
-        XCTAssertTrue(english.contains("team's") == false)
+        XCTAssertFalse(english.contains("team's"))
+        XCTAssertTrue(EnglishWords(["team", "company"]).contains("team's"))
+        XCTAssertTrue(EnglishWords(["company"]).contains("companies"))
         XCTAssertFalse(english.contains("repackupy"))
         XCTAssertEqual(EnglishWords.tokens("They aren’t, Fy's"), ["they", "aren't", "fy's"])
         XCTAssertTrue(EnglishWords(nil).contains("repackupy"))

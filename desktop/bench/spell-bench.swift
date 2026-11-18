@@ -24,7 +24,7 @@ import Speech
             .split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         let clips = try String(contentsOfFile: args[2], encoding: .utf8)
             .split(separator: "\n").map(String.init).filter { !$0.isEmpty }
-        FileManager.default.createFile(atPath: args[3], contents: nil)
+        guard FileManager.default.createFile(atPath: args[3], contents: Data()) else { fatalError("Can't write \(args[3])") }
         let out = try FileHandle(forWritingTo: URL(fileURLWithPath: args[3]))
         let locale = Locale(identifier: "en_US")
 

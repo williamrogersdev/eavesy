@@ -8,9 +8,9 @@ import Foundation
 /// wrong. Both hear the same audio: where the second one heard one of the
 /// user's words, the accurate words said over the same stretch are swapped
 /// for it, as long as they sound like it. Everything else stays the accurate
-/// transcriber's. On 80 of the owner's recordings this got 39 of 75
-/// dictionary words right, against 15 for the accurate one alone and 38 for
-/// the second one alone, and fewer words wrong overall than either.
+/// transcriber's. desktop/bench/spell-bench.sh measures it: on 60 of the
+/// owner's clips it got "Repackify" right 30 times, against 12 for the
+/// accurate transcriber alone and 25 for the second one alone.
 ///
 /// "Sound like it" is by letters or, failing that, by consonant sounds: the
 /// accurate transcriber writes "Repackify" as "Rebecca 5" or "interpacted",
@@ -152,7 +152,12 @@ struct Speller {
             for term in terms where term.isName && key.first == term.key.first {
                 if said.contains(where: { Self.spoken($0).hasPrefix(term.key) }) { continue }
                 let score = Self.likeness(key, term.key)
-                if score >= Self.unheardLikeness, score > (best?.score ?? 0) { best = (score, window, term) }
+                // It must sound like the name too, not only be spelled like it.
+                let text = window.map { words[$0].text }.joined(separator: " ")
+                guard score >= Self.unheardLikeness, score > (best?.score ?? 0),
+                    Self.likeness(Self.sounds(text), Self.sounds(term.spelling)) >= Self.unheardLikeness
+                else { continue }
+                best = (score, window, term)
             }
         }
         return best.map { ($0.window, $0.term) }
@@ -173,7 +178,9 @@ struct Speller {
                 let end = over[b]
                 guard end - start == b - a else { break }
                 let text = words[start...end].map(\.text).joined()
-                let score = max(likeness(spoken(text), term.key), likeness(sounds(text), sounds(term.spelling)))
+                // Short sound keys say little: "fast" and "Eavesy" share F-S.
+                let bySound = sounds(term.spelling).count >= 3 ? likeness(sounds(text), sounds(term.spelling)) : 0
+                let score = max(likeness(spoken(text), term.key), bySound)
                 let fit = timeFit(words[start].startMs, words[end].endMs, hit.startMs, hit.endMs)
                 runs.append((score, fit, start...end))
             }
