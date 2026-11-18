@@ -5,7 +5,7 @@ import { Bubble, Mascot } from '@/components/launcher/ui';
 import { LauncherPreview } from '@/components/marketing/launcher-preview';
 import { GithubMark } from '@/components/github-mark';
 import { siteConfig } from '@/lib/site';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link } from '@/components/ui/app-link';
 import { seoHead } from '@/lib/seo-head';
 import { objectExists } from '@/server/r2';
@@ -50,14 +50,22 @@ function DownloadMacPage() {
   const [device, setDevice] = useState<Device>('unknown');
   const [started, setStarted] = useState(false);
 
+  const navigate = Route.useNavigate();
+  const autoStarted = useRef(false);
+
   useEffect(() => {
     const detected = detectDevice();
     setDevice(detected);
-    if (start && available && detected === 'mac') {
-      setStarted(true);
-      window.location.assign(DMG_URL);
-    }
-  }, [start, available]);
+    if (!start || autoStarted.current) return;
+    autoStarted.current = true;
+    const download = available && detected === 'mac';
+    if (download) setStarted(true);
+    // Take ?start=1 out of the address first. Left there, every reload,
+    // restored tab or address-bar suggestion downloads the DMG again.
+    void navigate({ search: {}, replace: true }).finally(() => {
+      if (download) window.location.assign(DMG_URL);
+    });
+  }, [start, available, navigate]);
 
   return (
     <main>
