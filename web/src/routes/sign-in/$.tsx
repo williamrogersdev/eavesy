@@ -53,8 +53,8 @@ function ConfiguredSignInPage() {
 }
 
 function AlreadySignedIn({ href }: { href: string }) {
-  const pairing = href.includes('pair=') || href.startsWith('/connect/mac');
   const connecting = href.startsWith('/connect/mcp');
+  const pairing = !connecting && (href.includes('pair=') || href.startsWith('/connect/mac'));
   return (
     <div className="flex w-full max-w-sm flex-col items-center gap-4 rounded-2xl border border-ev-line bg-ev-paper p-8 text-center shadow-[var(--ev-e-2)]">
       <BrandMark size={40} />

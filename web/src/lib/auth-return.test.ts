@@ -5,6 +5,8 @@ test('pairing target survives onboarding and rejects external destinations', () 
   expect(appReturnPath('/connect/mac?code=ABC123')).toBe('/connect/mac?code=ABC123');
   expect(appReturnPath('/connect/mcp?client_id=c&state=s')).toBe('/connect/mcp?client_id=c&state=s');
   expect(appReturnPath('/connect/other')).toBe('/app');
+  expect(appReturnPath('/connect/mcpx')).toBe('/app');
+  expect(appReturnPath('/connect/mcp/extra')).toBe('/app');
   for (const value of ['//evil.example/app', '/\\evil.example/app', 'https://evil.example/app', '/onboarding', '/application', '/app/../../sign-in', '/app\n//evil']) {
     expect(appReturnPath(value)).toBe('/app');
   }
