@@ -48,6 +48,15 @@ pub enum LauncherPosition {
     #[default]
     TopCenter,
     BottomCenter,
+    BottomLeft,
+    BottomRight,
+}
+
+impl LauncherPosition {
+    /// Whether the control rests at the bottom of the screen, so the panel opens upwards.
+    pub fn is_bottom(self) -> bool {
+        matches!(self, Self::BottomLeft | Self::BottomCenter | Self::BottomRight)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -86,7 +95,8 @@ pub struct Settings {
     pub setup_completed: bool,
     #[serde(default)]
     pub recordings_root: Option<String>,
-    #[serde(default)]
+    // A spot a newer build added reads as the default here instead of resetting every setting.
+    #[serde(default, deserialize_with = "lenient_or_default")]
     pub launcher_position: LauncherPosition,
     #[serde(default)]
     pub hud_frame: Option<HudFrame>,
@@ -210,6 +220,11 @@ fn lenient<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned>(des
             Ok(None)
         }
     }
+}
+
+/// `lenient` for a field that has a default: anything unreadable is the default.
+fn lenient_or_default<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned + Default>(deserializer: D) -> Result<T, D::Error> {
+    Ok(lenient(deserializer)?.unwrap_or_default())
 }
 
 pub const DEFAULT_AGENT_HOLD_SECS: u32 = 300;
@@ -848,6 +863,15 @@ mod tests {
         assert_eq!(settings.segment_sec(), 30);
         settings.segment_sec = Some(240);
         assert_eq!(settings.segment_sec(), 240);
+    }
+
+    #[test]
+    fn an_unknown_launcher_position_reads_as_the_default_and_keeps_the_rest() {
+        let saved: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","launcher_position":"somewhere_new"}"#).unwrap();
+        assert!(matches!(saved.launcher_position, LauncherPosition::TopCenter));
+        assert_eq!(saved.toggle_hotkey, "a");
+        let corner: Settings = serde_json::from_str(r#"{"toggle_hotkey":"a","dictation_hotkey":"b","launcher_position":"bottom_left"}"#).unwrap();
+        assert!(matches!(corner.launcher_position, LauncherPosition::BottomLeft));
     }
 
     #[test]

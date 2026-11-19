@@ -115,6 +115,11 @@ pub fn refresh(app: &AppHandle) {
     if let Ok(menu) = build_menu(app) {
         let _ = tray.set_menu(Some(menu));
     }
+    // Re-sync the glyph and the Dock badge too, in case an earlier update couldn't be scheduled.
+    let handle = app.clone();
+    if let Err(error) = app.run_on_main_thread(move || apply_recording_glyph(&handle)) {
+        eprintln!("tray: couldn't schedule the recording glyph: {error}");
+    }
 }
 
 /// Swaps the menu bar glyph while a capture records. The idle glyph is a
@@ -130,11 +135,13 @@ pub fn set_recording(app: &AppHandle, recording: bool) {
     }
 }
 
-/// Brings the glyph in line with `WANT_RECORDING`. Main thread only. The
+/// Brings the glyph and the Dock badge in line with `WANT_RECORDING`, the one source of truth
+/// for both, so they never disagree (and `install` re-syncs both). Main thread only. The
 /// shown state is recorded only once the swap worked, so a missing tray or a
 /// failed swap is retried by the next call (and by `install`).
 fn apply_recording_glyph(app: &AppHandle) {
     let want = WANT_RECORDING.load(Ordering::SeqCst);
+    dock::show_recording(want);
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
     // On every state change, not only when the glyph swaps: the capture's
     // kind is known by now (the control's state is written before this runs).
@@ -202,6 +209,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn badge_maps_recording_to_a_dot_and_otherwise_clears() {
+        assert_eq!(dock::badge(true), Some(dock::RECORDING_BADGE));
+        assert_eq!(dock::badge(false), None);
+    }
+
+    #[test]
     fn shortcuts_render_as_glyphs_and_fn_is_not_a_menu_accelerator() {
         assert_eq!(glyphs("Cmd+Shift+D"), "⌘⇧D");
         assert_eq!(glyphs("Cmd+Shift+Space"), "⌘⇧Space");
@@ -221,4 +234,47 @@ mod tests {
         assert_eq!(tooltip_now(&settings, true, false), "Eavesy is recording");
         assert_eq!(tooltip_now(&settings, false, true), tooltip(&settings));
     }
+}
+
+/// The Dock icon says what the menu bar glyph says: a badge while the mic or screen records,
+/// nothing otherwise. Main thread only.
+mod dock {
+    /// The badge's label: a dot, read with the red badge as "recording".
+    pub(super) const RECORDING_BADGE: &str = "\u{25CF}";
+
+    pub(super) fn badge(recording: bool) -> Option<&'static str> {
+        recording.then_some(RECORDING_BADGE)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[allow(deprecated, unexpected_cfgs)]
+    pub fn show_recording(recording: bool) {
+        use tauri_nspanel::{
+            cocoa::{
+                base::{id, nil},
+                foundation::NSString,
+            },
+            objc::{class, msg_send, sel, sel_impl},
+        };
+        unsafe {
+            let app: id = msg_send![class!(NSApplication), sharedApplication];
+            let tile: id = msg_send![app, dockTile];
+            if tile == nil {
+                return;
+            }
+            match badge(recording) {
+                Some(text) => {
+                    let label = NSString::alloc(nil).init_str(text);
+                    let _: () = msg_send![tile, setBadgeLabel: label];
+                    let _: () = msg_send![label, release];
+                }
+                None => {
+                    let _: () = msg_send![tile, setBadgeLabel: nil];
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn show_recording(_recording: bool) {}
 }
