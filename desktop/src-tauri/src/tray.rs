@@ -117,7 +117,9 @@ pub fn refresh(app: &AppHandle) {
     }
     // Re-sync the glyph and the Dock badge too, in case an earlier update couldn't be scheduled.
     let handle = app.clone();
-    let _ = app.run_on_main_thread(move || apply_recording_glyph(&handle));
+    if let Err(error) = app.run_on_main_thread(move || apply_recording_glyph(&handle)) {
+        eprintln!("tray: couldn't schedule the recording glyph: {error}");
+    }
 }
 
 /// Swaps the menu bar glyph while a capture records. The idle glyph is a

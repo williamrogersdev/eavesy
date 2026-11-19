@@ -29,8 +29,8 @@ fn companion_positions(origin: PhysicalPosition<i32>, area: PhysicalSize<u32>, p
         // Docked at the bottom: the panel opens upwards and ends where the control does.
         let hud_y = origin.y + (area.height as i32 - margin - pill.height as i32).max(0);
         let hud = PhysicalPosition::new(horizontal(pill.width), hud_y);
-        // A panel taller than the work area can't end at the control: the clamp keeps it on
-        // screen, starting at the top of the area, which matters more.
+        // A panel taller than the work area can't end at the control: the clamp starts it at the
+        // top of the area instead, so its own top stays reachable and the rest runs off the bottom.
         let launcher_y = (hud_y + pill.height as i32 - panel.height as i32).clamp(origin.y, max_panel_y);
         return (PhysicalPosition::new(horizontal(panel.width), launcher_y), hud);
     }
