@@ -1060,7 +1060,7 @@ export interface Settings {
   assistant_memory?: boolean;
 }
 
-export type LauncherPosition = 'top_left' | 'top_center' | 'top_right' | 'bottom_center';
+export type LauncherPosition = 'top_left' | 'top_center' | 'top_right' | 'bottom_left' | 'bottom_center' | 'bottom_right';
 
 export interface SetupStatus {
   paired: boolean;

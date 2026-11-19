@@ -222,7 +222,9 @@ const SPOTS: { value: LauncherPosition; label: string; className: string }[] = [
   { value: 'top_left', label: 'Top left', className: 'top-4 left-2' },
   { value: 'top_center', label: 'Top center', className: 'top-4 left-1/2 -translate-x-1/2' },
   { value: 'top_right', label: 'Top right', className: 'top-4 right-2' },
+  { value: 'bottom_left', label: 'Bottom left', className: 'bottom-1 left-2' },
   { value: 'bottom_center', label: 'Bottom center', className: 'bottom-1 left-1/2 -translate-x-1/2' },
+  { value: 'bottom_right', label: 'Bottom right', className: 'bottom-1 right-2' },
 ];
 
 function PositionPicker({ value, custom, disabled, onPick }: {

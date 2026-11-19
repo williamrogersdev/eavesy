@@ -48,6 +48,15 @@ pub enum LauncherPosition {
     #[default]
     TopCenter,
     BottomCenter,
+    BottomLeft,
+    BottomRight,
+}
+
+impl LauncherPosition {
+    /// Whether the control rests at the bottom of the screen, so the panel opens upwards.
+    pub fn is_bottom(self) -> bool {
+        matches!(self, Self::BottomLeft | Self::BottomCenter | Self::BottomRight)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]

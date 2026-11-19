@@ -125,7 +125,10 @@ pub fn set_recording(app: &AppHandle, recording: bool) {
     // The meeting item says "recording" in the same breath as the glyph.
     crate::meeting_bar::refresh(app);
     let handle = app.clone();
-    if let Err(error) = app.run_on_main_thread(move || apply_recording_glyph(&handle)) {
+    if let Err(error) = app.run_on_main_thread(move || {
+        apply_recording_glyph(&handle);
+        dock::show_recording(WANT_RECORDING.load(Ordering::SeqCst));
+    }) {
         eprintln!("tray: couldn't schedule the recording glyph: {error}");
     }
 }
@@ -202,6 +205,12 @@ mod tests {
     use super::*;
 
     #[test]
+    fn dock_badge_shows_only_while_recording() {
+        assert_eq!(dock::badge(true), Some(dock::RECORDING_BADGE));
+        assert_eq!(dock::badge(false), None);
+    }
+
+    #[test]
     fn shortcuts_render_as_glyphs_and_fn_is_not_a_menu_accelerator() {
         assert_eq!(glyphs("Cmd+Shift+D"), "⌘⇧D");
         assert_eq!(glyphs("Cmd+Shift+Space"), "⌘⇧Space");
@@ -221,4 +230,47 @@ mod tests {
         assert_eq!(tooltip_now(&settings, true, false), "Eavesy is recording");
         assert_eq!(tooltip_now(&settings, false, true), tooltip(&settings));
     }
+}
+
+/// The Dock icon says what the menu bar glyph says: a badge while the mic or screen records,
+/// nothing otherwise. Main thread only.
+mod dock {
+    /// The badge's label: a dot, read with the red badge as "recording".
+    pub(super) const RECORDING_BADGE: &str = "\u{25CF}";
+
+    pub(super) fn badge(recording: bool) -> Option<&'static str> {
+        recording.then_some(RECORDING_BADGE)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[allow(deprecated, unexpected_cfgs)]
+    pub fn show_recording(recording: bool) {
+        use tauri_nspanel::{
+            cocoa::{
+                base::{id, nil},
+                foundation::NSString,
+            },
+            objc::{class, msg_send, sel, sel_impl},
+        };
+        unsafe {
+            let app: id = msg_send![class!(NSApplication), sharedApplication];
+            let tile: id = msg_send![app, dockTile];
+            if tile == nil {
+                return;
+            }
+            match badge(recording) {
+                Some(text) => {
+                    let label = NSString::alloc(nil).init_str(text);
+                    let _: () = msg_send![tile, setBadgeLabel: label];
+                    let _: () = msg_send![label, release];
+                }
+                None => {
+                    let _: () = msg_send![tile, setBadgeLabel: nil];
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub fn show_recording(_recording: bool) {}
 }

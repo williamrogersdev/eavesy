@@ -912,7 +912,7 @@ fn follow_panel(app: &AppHandle) {
     // A control docked low opened the panel upwards: hand it back at the bottom.
     let low = match saved {
         Some(frame) => crate::placement::in_lower_half(app, frame.x + frame.width / 2.0, frame.y, frame.height),
-        None => matches!(settings::load(app).launcher_position, settings::LauncherPosition::BottomCenter),
+        None => settings::load(app).launcher_position.is_bottom(),
     };
     let y = if low {
         position.y + size.height - height

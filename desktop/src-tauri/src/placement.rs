@@ -18,14 +18,14 @@ fn companion_positions(origin: PhysicalPosition<i32>, area: PhysicalSize<u32>, p
     let margin = (16.0 * scale).round() as i32;
     let horizontal = |width: u32| {
         let offset = match position {
-            LauncherPosition::TopLeft => margin,
-            LauncherPosition::TopRight => area.width as i32 - margin - width as i32,
+            LauncherPosition::TopLeft | LauncherPosition::BottomLeft => margin,
+            LauncherPosition::TopRight | LauncherPosition::BottomRight => area.width as i32 - margin - width as i32,
             LauncherPosition::TopCenter | LauncherPosition::BottomCenter => (area.width as i32 - width as i32) / 2,
         };
         origin.x + offset.max(0)
     };
     let max_panel_y = origin.y + (area.height as i32 - panel.height as i32).max(0);
-    if matches!(position, LauncherPosition::BottomCenter) {
+    if position.is_bottom() {
         // Docked at the bottom: the panel opens upwards and ends where the control does.
         let hud_y = origin.y + (area.height as i32 - margin - pill.height as i32).max(0);
         let hud = PhysicalPosition::new(horizontal(pill.width), hud_y);
@@ -115,6 +115,17 @@ mod tests {
         assert_eq!(pill.y + 40, 25 + 875 - 16);
         assert_eq!(panel.y + 440, pill.y + 40);
         assert_eq!(panel.x + 210, pill.x + 136);
+    }
+    #[test]
+    fn bottom_corners_dock_low_and_hug_their_side() {
+        let area = PhysicalSize::new(1440, 875);
+        let (panel, pill) = companion_positions(PhysicalPosition::new(0,25), area, PhysicalSize::new(420,440), PhysicalSize::new(272,40), 1.0, LauncherPosition::BottomLeft);
+        assert_eq!((panel.x, pill.x), (16, 16));
+        assert_eq!(pill.y + 40, 25 + 875 - 16);
+        assert_eq!(panel.y + 440, pill.y + 40);
+        let (panel, pill) = companion_positions(PhysicalPosition::new(0,25), area, PhysicalSize::new(420,440), PhysicalSize::new(272,40), 1.0, LauncherPosition::BottomRight);
+        assert_eq!((panel.x + 420, pill.x + 272), (1440 - 16, 1440 - 16));
+        assert_eq!(panel.y + 440, pill.y + 40);
     }
     #[test]
     fn top_left_hugs_the_left_margin() {
