@@ -125,19 +125,18 @@ pub fn set_recording(app: &AppHandle, recording: bool) {
     // The meeting item says "recording" in the same breath as the glyph.
     crate::meeting_bar::refresh(app);
     let handle = app.clone();
-    if let Err(error) = app.run_on_main_thread(move || {
-        apply_recording_glyph(&handle);
-        dock::show_recording(WANT_RECORDING.load(Ordering::SeqCst));
-    }) {
+    if let Err(error) = app.run_on_main_thread(move || apply_recording_glyph(&handle)) {
         eprintln!("tray: couldn't schedule the recording glyph: {error}");
     }
 }
 
-/// Brings the glyph in line with `WANT_RECORDING`. Main thread only. The
+/// Brings the glyph and the Dock badge in line with `WANT_RECORDING`, the one source of truth
+/// for both, so they never disagree (and `install` re-syncs both). Main thread only. The
 /// shown state is recorded only once the swap worked, so a missing tray or a
 /// failed swap is retried by the next call (and by `install`).
 fn apply_recording_glyph(app: &AppHandle) {
     let want = WANT_RECORDING.load(Ordering::SeqCst);
+    dock::show_recording(want);
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
     // On every state change, not only when the glyph swaps: the capture's
     // kind is known by now (the control's state is written before this runs).
