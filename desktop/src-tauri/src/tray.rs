@@ -115,6 +115,9 @@ pub fn refresh(app: &AppHandle) {
     if let Ok(menu) = build_menu(app) {
         let _ = tray.set_menu(Some(menu));
     }
+    // Re-sync the glyph and the Dock badge too, in case an earlier update couldn't be scheduled.
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || apply_recording_glyph(&handle));
 }
 
 /// Swaps the menu bar glyph while a capture records. The idle glyph is a
@@ -204,7 +207,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn dock_badge_shows_only_while_recording() {
+    fn badge_maps_recording_to_a_dot_and_otherwise_clears() {
         assert_eq!(dock::badge(true), Some(dock::RECORDING_BADGE));
         assert_eq!(dock::badge(false), None);
     }
