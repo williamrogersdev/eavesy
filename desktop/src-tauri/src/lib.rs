@@ -45,6 +45,7 @@ mod meeting_watch;
 mod make_room;
 mod moments;
 mod panel;
+mod permission_guide;
 mod permissions;
 mod placement;
 mod projects;

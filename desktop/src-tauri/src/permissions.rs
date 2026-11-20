@@ -132,7 +132,11 @@ pub fn request_speech(app: AppHandle) -> Result<Permissions, String> {
 /// Asks for Screen & System Audio Recording alone.
 #[tauri::command(async)]
 pub fn request_screen(app: AppHandle) -> Result<Permissions, String> {
-    crate::audio::request_permission(app, Request::Screen)
+    let permissions = crate::audio::request_permission(app.clone(), Request::Screen)?;
+    if !permissions.screen {
+        crate::permission_guide::show_after_prompt(&app, "screen");
+    }
+    Ok(permissions)
 }
 
 /// Shows the Accessibility prompt ("Eavesy would like to control this computer"), which offers
@@ -143,7 +147,11 @@ pub fn request_accessibility(app: AppHandle) -> bool {
         return true;
     }
     crate::panel::yield_while_prompt_shows(&app, accessibility_granted);
-    imp::prompt_accessibility()
+    let granted = imp::prompt_accessibility();
+    if !granted {
+        crate::permission_guide::show_after_prompt(&app, "accessibility");
+    }
+    granted
 }
 
 /// Shows the Input Monitoring prompt (needed for the Fn / Globe shortcut). macOS applies a new
@@ -160,7 +168,11 @@ pub fn request_input_monitoring_inner(app: &AppHandle) -> PermissionStatus {
     }
     crate::panel::yield_while_prompt_shows(app, || input_monitoring_status().granted());
     imp::request_input_monitoring();
-    input_monitoring_status()
+    let status = input_monitoring_status();
+    if !status.granted() {
+        crate::permission_guide::show_after_prompt(app, "input_monitoring");
+    }
+    status
 }
 
 /// Asks to show notifications. Returns the status after the user answers.
@@ -185,6 +197,12 @@ pub fn accessibility_granted() -> bool {
 
 pub fn input_monitoring_status() -> PermissionStatus {
     imp::input_monitoring_status()
+}
+
+/// Whether Screen & System Audio Recording is on for Eavesy. macOS may keep reporting false
+/// until Eavesy relaunches after the grant.
+pub fn screen_recording_granted() -> bool {
+    imp::screen_recording_granted()
 }
 
 pub fn notification_status() -> PermissionStatus {
@@ -219,6 +237,11 @@ mod imp {
         fn AXIsProcessTrustedWithOptions(options: CFTypeRef) -> bool;
         static kAXTrustedCheckOptionPrompt: CFTypeRef;
         fn CGRequestListenEventAccess() -> bool;
+    }
+
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
     }
 
     #[link(name = "IOKit", kind = "framework")]
@@ -260,6 +283,10 @@ mod imp {
             ));
             AXIsProcessTrustedWithOptions(options.0)
         }
+    }
+
+    pub fn screen_recording_granted() -> bool {
+        unsafe { CGPreflightScreenCaptureAccess() }
     }
 
     pub fn input_monitoring_status() -> PermissionStatus {
@@ -331,6 +358,9 @@ mod imp {
         true
     }
     pub fn prompt_accessibility() -> bool {
+        true
+    }
+    pub fn screen_recording_granted() -> bool {
         true
     }
     pub fn input_monitoring_status() -> PermissionStatus {

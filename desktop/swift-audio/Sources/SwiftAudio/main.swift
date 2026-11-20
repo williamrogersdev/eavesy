@@ -15,6 +15,10 @@ if CommandLine.arguments.contains("--watch-mic") {
     MicWatch.run()
 }
 
+if CommandLine.arguments.contains("--permission-guide") {
+    PermissionGuide.run(arguments: CommandLine.arguments)
+}
+
 if CommandLine.arguments.contains("--prepare-speech") {
     SpeechModelSetup.run(arguments: CommandLine.arguments)
 }
