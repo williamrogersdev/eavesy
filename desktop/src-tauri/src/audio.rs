@@ -945,7 +945,7 @@ pub fn meeting_in_progress(app: &AppHandle) -> Option<crate::meeting_attachments
 }
 
 /// The engine's stderr: the capture log, rotated before it grows too large.
-fn capture_log(app: &AppHandle) -> Stdio {
+pub(crate) fn capture_log(app: &AppHandle) -> Stdio {
     captures_dir(app)
         .ok()
         .and_then(|dir| {

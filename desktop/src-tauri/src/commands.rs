@@ -1005,6 +1005,9 @@ pub fn open_keyboard_settings(app: AppHandle, input_monitoring: bool) -> Result<
         "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
     } else { "x-apple.systempreferences:com.apple.Keyboard-Settings.extension" };
     app.shell().open(url, None).map_err(|e| e.to_string())?;
+    if input_monitoring {
+        crate::permission_guide::show(&app, "input_monitoring");
+    }
     crate::make_room::after_opening_settings(&app);
     crate::panel::yield_while_settings_open(&app);
     Ok(())
@@ -1141,6 +1144,7 @@ pub fn open_privacy_settings(app: AppHandle, pane: String) -> Result<(), String>
         }
     };
     app.shell().open(url, None).map_err(|e| e.to_string())?;
+    crate::permission_guide::show(&app, &pane);
     crate::make_room::after_opening_settings(&app);
     crate::panel::yield_while_settings_open(&app);
     Ok(())
