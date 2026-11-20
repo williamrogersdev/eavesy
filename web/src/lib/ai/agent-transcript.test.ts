@@ -32,9 +32,12 @@ describe('polishDictation', () => {
 
   test('exactly as said accepts fixed mishearings and split sentences', async () => {
     const heard = 'Um so like their going to, uh, they\'re going to send the the report on friday and and we should of checked it you know before';
-    const { client } = fakeClient('They\'re going to send the report on Friday, and we should have checked it before.');
+    const { client, calls } = fakeClient('They\'re going to send the report on Friday, and we should have checked it before.');
     const result = await polishDictation(client, { text: heard, context: null, style: 'verbatim' });
     expect(result).toEqual({ text: 'They\'re going to send the report on Friday, and we should have checked it before.', polished: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].system).toContain('words still come in the order they were said');
+    expect(calls[0].system).toContain('"er"');
   });
 
   test('exactly as said drops fillers when the model answers instead of cleaning', async () => {

@@ -20,7 +20,7 @@ import {
 export const CLEANUP_CHUNK_CHARS = 12_000;
 const CLEANUP_CONCURRENCY = 3;
 
-const FILLER_RULE = `- Remove every filler word and verbal tic that carries no meaning: "um", "uh", "you know", "I mean", "sort of", "kind of", "basically", "literally", "right?", and "like" whenever it isn't a verb, a comparison or "about" (as in "like five minutes"). Also drop "so", "okay" and "yeah" when they only open a sentence out of habit, not when they answer something. This is the part people notice most: when in doubt about a "like", it goes.`;
+const FILLER_RULE = `- Remove every filler word and verbal tic that carries no meaning: "um", "uh", "er", "you know", "I mean", "sort of", "kind of", "basically", "literally", "right?", and "like" whenever it isn't a verb, a comparison or "about" (as in "like five minutes"). Also drop "so", "okay" and "yeah" when they only open a sentence out of habit, not when they answer something. This is the part people notice most: when in doubt about a "like", it goes.`;
 
 const SHARED_RULES = `Do:
 ${FILLER_RULE}
@@ -76,7 +76,7 @@ Do:
 ${FILLER_RULE}
 - Remove stutters, repeated words and false starts. When the speaker corrects themselves, keep only the corrected version.
 - Fix a word speech recognition clearly got wrong: only when the word as heard makes no sense in its sentence and a word that sounds the same does (a wrong "their", "there" or "they're"; "should of" for "should have"). A word that makes sense where it is stays, even if another would fit better. Spell names and terms the way the context below spells them, but only when the words heard sound almost the same.
-- Fix grammar, punctuation, capitalisation and sentence boundaries so every sentence reads as a complete, logical sentence. Join run-ons, split rambling sentences, and fix a missing or doubled word, or the order of words within a clause, where the spoken version doesn't make sense written down.
+- Fix grammar, punctuation, capitalisation and sentence boundaries so every sentence reads as a complete, logical sentence. Join run-ons, split rambling sentences, and fix a missing or doubled word, or the order of words inside one plainly garbled clause, where the spoken version doesn't make sense written down. Splitting and joining never moves anything: the words still come in the order they were said.
 - Keep the language the speaker used.
 
 Do not:

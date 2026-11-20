@@ -4,7 +4,7 @@
  * plain text; `natural` also lays them out (lists, paragraphs, code).
  */
 export const DICTATION_STYLES = [
-  { id: 'verbatim', label: 'Exactly as said', hint: 'Your own words, cleaned up: fillers dropped, grammar and misheard words fixed. Not reworded or laid out.' },
+  { id: 'verbatim', label: 'Exactly as said', hint: 'Your own words, cleaned up: fillers and stutters dropped, misheard words and grammar fixed. No new wording, lists or formatting.' },
   { id: 'natural', label: 'As spoken', hint: 'Tidied up, in your own words and tone.' },
   { id: 'professional', label: 'Professional', hint: 'Clear, polished and neutral. No swearing.' },
   { id: 'friendly', label: 'Friendly', hint: 'Warm, upbeat and supportive. No swearing.' },
