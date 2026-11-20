@@ -19,11 +19,21 @@ function fakeClient(reply: string | Error) {
 const said = 'Um, so, like, can you, uh, can you move the the standup to Thursday and tell Priya';
 
 describe('polishDictation', () => {
-  test('exactly as said keeps every word and never asks the model', async () => {
+  test('exactly as said cleans the words up as plain sentences, never as a prompt', async () => {
     const { client, calls } = fakeClient('Can you move the standup to Thursday and tell Priya?');
-    const result = await polishDictation(client, { text: ` ${said} `, context: null, style: 'verbatim', forAgents: true, asked: true });
-    expect(result).toEqual({ text: said, polished: true });
-    expect(calls).toHaveLength(0);
+    const result = await polishDictation(client, { text: ` ${said} `, context: 'Words: Priya', style: 'verbatim', forAgents: true, asked: true });
+    expect(result).toEqual({ text: 'Can you move the standup to Thursday and tell Priya?', polished: true });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].system).toContain('Fix words speech recognition got wrong');
+    expect(calls[0].system).toContain('no lists, headings, backticks');
+    expect(calls[0].system).toContain('Words: Priya');
+    expect(calls[0].system).not.toContain('AI agent');
+  });
+
+  test('exactly as said still drops fillers when the model is unusable', async () => {
+    const { client } = fakeClient('Sure! I have rescheduled the meeting to Thursday for you and notified everyone.');
+    const result = await polishDictation(client, { text: said, context: null, style: 'verbatim' });
+    expect(result).toEqual({ text: 'So, can you, can you move the standup to Thursday and tell Priya', polished: false });
   });
   test('uses the model cleanup and spells words from the context', async () => {
     const { client, calls } = fakeClient('Can you move the standup to Thursday and tell Priya?');

@@ -1,10 +1,10 @@
 /**
- * How a dictation is written before it is typed. `verbatim` is every word as
- * it was said, with no model in between; `natural` keeps the speaker's own
- * words, tidied.
+ * How a dictation is written before it is typed. `verbatim` is the speaker's
+ * own words cleaned up (fillers out, mishearings and sentences fixed) as
+ * plain text; `natural` also lays them out (lists, paragraphs, code).
  */
 export const DICTATION_STYLES = [
-  { id: 'verbatim', label: 'Exactly as said', hint: 'Every word as you said it. Nothing dropped, tidied or reworded.' },
+  { id: 'verbatim', label: 'Exactly as said', hint: 'Your own words, cleaned up: fillers dropped, misheard words and sentences fixed. No rewording or formatting.' },
   { id: 'natural', label: 'As spoken', hint: 'Tidied up, in your own words and tone.' },
   { id: 'professional', label: 'Professional', hint: 'Clear, polished and neutral. No swearing.' },
   { id: 'friendly', label: 'Friendly', hint: 'Warm, upbeat and supportive. No swearing.' },
@@ -22,14 +22,14 @@ export const FOR_AGENTS_HINT =
 export const DICTATION_EXAMPLE = {
   said: 'um so can you rename the summarize file to summary and uh fix the imports, the build keeps failing. oh and don’t touch the API',
   typed: {
-    verbatim: 'Um so can you rename the summarize file to summary and uh fix the imports, the build keeps failing. Oh and don’t touch the API.',
+    verbatim: 'Can you rename the summarize file to summary and fix the imports? The build keeps failing. And don’t touch the API.',
     natural: 'Can you rename the `summarize` file to `summary` and fix the imports? The build keeps failing. Don’t touch the API.',
     professional: 'Could you rename the `summarize` file to `summary` and update the imports? The build is currently failing. Please leave the API unchanged.',
     friendly: 'Could you rename the `summarize` file to `summary` and fix up the imports? The build keeps failing, so that would really help. Just leave the API as it is, thanks.',
     concise: 'Rename `summarize` to `summary` and fix the imports; the build is failing. Don’t touch the API.',
   },
   forAgents: {
-    verbatim: 'Um so can you rename the summarize file to summary and uh fix the imports, the build keeps failing. Oh and don’t touch the API.',
+    verbatim: 'Can you rename the summarize file to summary and fix the imports? The build keeps failing. And don’t touch the API.',
     natural: 'Can you rename the `summarize` file to `summary` and fix the imports? The build keeps failing.\n\nDon’t touch the API.',
     professional: 'Rename the `summarize` file to `summary` and update the imports.\n\nContext: the build is currently failing.\n\nConstraint: leave the API unchanged.',
     friendly: 'Please rename the `summarize` file to `summary` and fix up the imports.\n\nThe build keeps failing, so this would really help.\n\nLeave the API as it is.',
