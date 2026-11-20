@@ -22,14 +22,20 @@ final class PermissionGuideTests: XCTestCase {
     func testGoesBesideSettingsWhenItReachesTheBottom() {
         let settings = CGRect(x: 100, y: 40, width: 700, height: 860)
         let origin = PermissionGuide.origin(card: card, settings: settings, visible: visible)
-        XCTAssertEqual(origin.x, settings.maxX + 12)
-        XCTAssertGreaterThanOrEqual(origin.y, visible.minY)
+        XCTAssertEqual(origin, CGPoint(x: settings.maxX + 12, y: settings.minY))
     }
 
     func testFallsInsideTheCornerWhenSettingsFillsTheScreen() {
         let settings = visible
         let origin = PermissionGuide.origin(card: card, settings: settings, visible: visible)
-        XCTAssertTrue(visible.contains(CGRect(origin: origin, size: card)))
+        XCTAssertEqual(origin, CGPoint(x: visible.maxX - card.width - 12, y: visible.minY + 12))
+    }
+
+    func testStaysOnScreenBesideANarrowSettingsWindowAtTheLeftEdge() {
+        let settings = CGRect(x: 0, y: 0, width: 250, height: 944)
+        let narrowVisible = CGRect(x: 0, y: 0, width: 600, height: 944)
+        let origin = PermissionGuide.origin(card: card, settings: settings, visible: narrowVisible)
+        XCTAssertEqual(origin, CGPoint(x: 12, y: 12))
     }
 
     func testConvertsCoreGraphicsBoundsToCocoa() {

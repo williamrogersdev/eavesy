@@ -21,6 +21,9 @@ pub fn guided(pane: &str) -> bool {
     matches!(pane, "accessibility" | "screen" | "input_monitoring")
 }
 
+/// Screen Recording reads as not granted in this process until Eavesy relaunches, so for that
+/// pane the card never hears `granted`: it closes when System Settings closes, or when macOS's
+/// "Quit & Reopen" restarts Eavesy and closes the card's stdin.
 fn granted(pane: &str) -> bool {
     match pane {
         "accessibility" => crate::permissions::accessibility_granted(),
@@ -38,7 +41,7 @@ fn app_bundle_of(exe: &Path) -> Option<PathBuf> {
 }
 
 /// How long the card waits for System Settings when Eavesy opened it itself.
-const OPENED_WAIT: Duration = Duration::from_secs(8);
+const OPENED_WAIT: Duration = Duration::from_secs(30);
 /// How long it waits after a macOS prompt whose "Open System Settings" button opens it.
 const PROMPTED_WAIT: Duration = Duration::from_secs(120);
 
@@ -61,13 +64,18 @@ fn show_within(app: &AppHandle, pane: &str, wait: Duration) {
     }
     let Some(bundle) = std::env::current_exe().ok().as_deref().and_then(app_bundle_of) else { return };
     let Ok(bin) = crate::audio::capture_bin(app) else { return };
-    close();
+    // Hold the slot while the old card is replaced, so two calls at once can't orphan one.
+    let mut slot = GUIDE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(mut old) = slot.take() {
+        let _ = old.kill();
+        let _ = old.wait();
+    }
     let child = Command::new(bin)
         .args(["--permission-guide", pane, "--wait", &wait.as_secs().to_string(), "--app"])
         .arg(&bundle)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(crate::audio::capture_log(app))
         .spawn();
     let mut child = match child {
         Ok(child) => child,
@@ -78,7 +86,8 @@ fn show_within(app: &AppHandle, pane: &str, wait: Duration) {
     };
     let Some(mut stdin) = child.stdin.take() else { return };
     let pid = child.id();
-    *GUIDE.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+    *slot = Some(child);
+    drop(slot);
     let pane = pane.to_string();
     std::thread::spawn(move || {
         let start = Instant::now();
@@ -110,14 +119,6 @@ fn still_running(pid: u32) -> bool {
             }
         },
         _ => false,
-    }
-}
-
-/// Closes the card if one is up.
-pub fn close() {
-    if let Some(mut child) = GUIDE.lock().unwrap_or_else(|e| e.into_inner()).take() {
-        let _ = child.kill();
-        let _ = child.wait();
     }
 }
 

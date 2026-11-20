@@ -11,6 +11,7 @@ import Foundation
 /// It also quits when stdin closes, so it never outlives the app.
 enum PermissionGuide {
     struct Pane: Equatable {
+        let id: String
         let name: String
         /// The list's name, short enough for the card's title.
         let list: String
@@ -20,11 +21,14 @@ enum PermissionGuide {
     static func pane(_ id: String) -> Pane? {
         switch id {
         case "accessibility":
-            return Pane(name: "Accessibility", list: "Accessibility", reason: "so Eavesy can paste what you dictate")
+            return Pane(id: id, name: "Accessibility", list: "Accessibility", reason: "so Eavesy can paste what you dictate")
         case "screen":
-            return Pane(name: "Screen & System Audio Recording", list: "Screen Recording", reason: "so Eavesy can record meetings and your screen")
+            // macOS 15 renamed the list from "Screen Recording".
+            let name = ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 15
+                ? "Screen & System Audio Recording" : "Screen Recording"
+            return Pane(id: id, name: name, list: name, reason: "so Eavesy can record meetings and your screen")
         case "input_monitoring":
-            return Pane(name: "Input Monitoring", list: "Input Monitoring", reason: "so the Fn key shortcut works")
+            return Pane(id: id, name: "Input Monitoring", list: "Input Monitoring", reason: "so the Fn key shortcut works")
         default:
             return nil
         }
@@ -75,12 +79,18 @@ enum PermissionGuide {
         if right + card.width <= visible.maxX - gap {
             return CGPoint(x: right, y: max(settings.minY, visible.minY + gap))
         }
-        return CGPoint(x: settings.maxX - card.width - gap, y: max(settings.minY + gap, visible.minY + gap))
+        let insideRight = min(max(settings.maxX - card.width - gap, visible.minX + gap), visible.maxX - card.width - gap)
+        return CGPoint(x: insideRight, y: max(settings.minY + gap, visible.minY + gap))
     }
 
     /// Converts a CoreGraphics window bound (origin top-left of the main display) to Cocoa.
     static func cocoaRect(fromCG rect: CGRect, mainScreenHeight: CGFloat) -> CGRect {
         CGRect(x: rect.minX, y: mainScreenHeight - rect.maxY, width: rect.width, height: rect.height)
+    }
+
+    /// Whether System Settings is still running.
+    static func settingsRunning() -> Bool {
+        !NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.systempreferences").isEmpty
     }
 
     /// The front System Settings window, in CoreGraphics coordinates.
@@ -149,12 +159,21 @@ private final class GuideController {
         guard let panel else { return }
         if Date().timeIntervalSince(started) > 15 * 60 { finish(after: 0); return }
         guard let cg = PermissionGuide.settingsWindowCG() else {
-            // Settings hasn't opened yet, or was closed (a Space switch hides it briefly too).
+            // Not on screen: not open yet, closed, or on another Space, minimized or behind a
+            // full-screen app. Hide meanwhile, and quit only once System Settings has quit
+            // (closing its window quits it) or never showed up.
+            if seenSettings { panel.orderOut(nil) }
             let since = missingSince ?? Date()
             missingSince = since
-            let allowed: TimeInterval = seenSettings ? 1.5 : wait
-            if Date().timeIntervalSince(since) > allowed { finish(after: 0) }
-            if seenSettings { panel.orderOut(nil) }
+            let gone = seenSettings
+                ? !PermissionGuide.settingsRunning() && Date().timeIntervalSince(since) > 1
+                : Date().timeIntervalSince(since) > wait
+            if gone {
+                if !seenSettings {
+                    FileHandle.standardError.write(Data("permission guide: System Settings didn't open within \(Int(wait)) s\n".utf8))
+                }
+                finish(after: 0)
+            }
             return
         }
         missingSince = nil
@@ -301,7 +320,9 @@ private final class GuideView: NSVisualEffectView {
     /// The drop landed: macOS usually asks for the Mac's password next.
     private func showDropped() {
         title.stringValue = "Almost there"
-        detail.stringValue = "If macOS asks, enter your Mac password, then make sure Eavesy is switched on."
+        detail.stringValue = pane.id == "screen"
+            ? "Enter your Mac password if asked and switch Eavesy on. If macOS offers Quit & Reopen, choose it: Eavesy needs a restart to record."
+            : "If macOS asks, enter your Mac password, then make sure Eavesy is switched on."
     }
 
     func showGranted() {
