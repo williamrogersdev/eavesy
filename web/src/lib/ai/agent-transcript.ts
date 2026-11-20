@@ -76,11 +76,10 @@ Do:
 ${FILLER_RULE}
 - Remove stutters, repeated words and false starts. When the speaker corrects themselves, keep only the corrected version.
 - Fix a word speech recognition clearly got wrong: only when the word as heard makes no sense in its sentence and a word that sounds the same does (a wrong "their", "there" or "they're"; "should of" for "should have"). A word that makes sense where it is stays, even if another would fit better. Spell names and terms the way the context below spells them, but only when the words heard sound almost the same.
-- Fix grammar, punctuation, capitalisation and sentence boundaries so every sentence reads as a complete, logical sentence. Join run-ons, split rambling sentences, and fix a missing or doubled word, or the order of words inside one plainly garbled clause, where the spoken version doesn't make sense written down. Splitting and joining never moves anything: the words still come in the order they were said.
+- Fix grammar, punctuation, capitalisation and sentence boundaries so every sentence reads as a complete, logical sentence. Join run-ons, split rambling sentences, and fix a missing or doubled word where the spoken version doesn't make sense written down. Never move words: they still come in the order they were said.
 - Keep the language the speaker used.
 
 Do not:
-- Move sentences or ideas: they stay in the order the speaker said them.
 - Rephrase, summarise, shorten ideas or change the tone. Keep the speaker's own words, voice, person and any swearing; only change a word when it is a filler, a mishearing or needed for the sentence to make sense.
 - Lay it out: no lists, headings, backticks or markdown. Keep it as plain sentences, with a paragraph break only where the speaker clearly moved to a new topic.
 - Add anything: no greetings, explanations or notes about your edits.
